@@ -12,7 +12,7 @@ use chimera_core::midi_in::CcEvent;
 use chimera_core::midi_map::{Input, Mappable, MidiMap};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
-use chimera_core::project::{PartFrom, PartId, PartSource, PartStatus, SlotId, part_status};
+use chimera_core::project::{PartFrom, PartId, PartSource, PartStatus, SlotId, sound_status};
 use chimera_core::ui::UiState;
 use chimera_core::ui::hint::{self, Gesture};
 use chimera_core::ui::theme;
@@ -88,7 +88,7 @@ fn map(ui: &UiState) -> MidiMap {
 }
 
 fn status(ui: &UiState) -> PartStatus {
-    part_status(ui.project().part(P1), ui.project().pool())
+    sound_status(ui.project().part(P1), ui.project().pool())
 }
 
 /// Row 0's KEEP MAP word.

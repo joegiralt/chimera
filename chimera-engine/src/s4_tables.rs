@@ -19,3 +19,9 @@ pub const PART_EQ_DOOR_ADDR: u32 = VA_SOLO_DOOR_ADDR + DOOR_TABLE_STRIDE;
 pub const PART_PEAKS_DOOR_ADDR: u32 = PART_EQ_DOOR_ADDR + DOOR_TABLE_STRIDE;
 /// The stereo's table (`stereo::door::StereoDoor`, ADR 0294): the next.
 pub const STEREO_DOOR_ADDR: u32 = PART_PEAKS_DOOR_ADDR + DOOR_TABLE_STRIDE;
+/// A kit's library records' and marks' table (`project::KitDoor`, ADR
+/// 0305): the next, in two strides' room (`KIT_DOOR_ROOM`).
+pub const KIT_DOOR_ADDR: u32 = STEREO_DOOR_ADDR + DOOR_TABLE_STRIDE;
+/// `KitDoor`'s room: a mark and five entries. A table after it starts
+/// this far on.
+pub const KIT_DOOR_ROOM: u32 = 2 * DOOR_TABLE_STRIDE;

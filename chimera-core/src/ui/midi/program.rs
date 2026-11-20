@@ -25,7 +25,7 @@ use crate::midi_in::{PROGRAM_IN, PROGRAM_PENDING, Port};
 use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::project::{
-    Loads, Origin, PartFrom, PartId, PartSource, PartStatus, ReplaceGuard, SlotId, part_status,
+    Loads, Origin, PartFrom, PartId, PartSource, PartStatus, ReplaceGuard, SlotId, sound_status,
 };
 
 /// A Part's recall copy: the edited Sound it left, and where it left it.
@@ -191,7 +191,7 @@ impl UiState {
     fn program_part(&mut self, p: PartId, from: PartFrom) -> bool {
         let part = self.project.part(p);
         let (out, loads) = (part.origin(), part.loads());
-        let status = part_status(part, self.project.pool());
+        let status = sound_status(part, self.project.pool());
         if from_of(out) == from && !matches!(status, PartStatus::Stale(_)) {
             return false;
         }

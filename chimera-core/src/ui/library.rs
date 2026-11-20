@@ -425,7 +425,7 @@ impl UiState {
         part: PartId,
         name: SoundName,
     ) -> Option<Job> {
-        let p = &self.project;
+        let p = &mut self.project;
         let CardOut { out, event } =
             save_library_part(card, store, p, part, name, &about_page::THIS);
         self.saw(event);

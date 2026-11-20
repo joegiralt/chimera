@@ -95,7 +95,7 @@ const KIT_BYTES: usize = PADS_BYTES + 1;
 /// `kit`'s record; `None` is `Kit::DEFAULT`'s, built a pad at a time (no
 /// whole `Kit` on the save's stack).
 #[optimize(size)]
-fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError> {
+pub(super) fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError> {
     let mut b = [0; KIT_BYTES];
     for (p, out) in PadId::ALL.into_iter().zip(b.as_chunks_mut().0) {
         *out = match kit {
@@ -113,7 +113,7 @@ fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError
 /// nothing lost; an unknown code is OFF, lossy. `None`: neither length,
 /// `kit` untouched. In place: no whole `Kit` on the load's stack.
 #[optimize(size)]
-fn get_kit(b: &[u8], mut kit: Option<&mut Kit>) -> Option<bool> {
+pub(super) fn get_kit(b: &[u8], mut kit: Option<&mut Kit>) -> Option<bool> {
     let (pads, tonal) = match b.len() {
         PADS_BYTES => (b, Some(Tonal::Off)),
         KIT_BYTES => (&b[..PADS_BYTES], Tonal::from_code(b[PADS_BYTES])),
@@ -138,7 +138,10 @@ const KIT_SOUND_BYTES: usize = 1 + PAD_SOUND_BYTES;
 
 /// `kit`'s `KitSound` records, a pad each; `None` is `Kit::DEFAULT`'s.
 #[optimize(size)]
-fn put_kit_sounds(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError> {
+pub(super) fn put_kit_sounds(
+    w: &mut RecordWriter<'_>,
+    kit: Option<&Kit>,
+) -> Result<(), StoreError> {
     for p in PadId::ALL {
         let s = kit.map_or(&PadSound::DEFAULT, |k| k.pad(p).sound());
         let mut b = [0; KIT_SOUND_BYTES];
@@ -153,7 +156,7 @@ fn put_kit_sounds(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), Sto
 /// non-finite float the default's), and whether a save would write other
 /// bytes. `None`: the wrong length or no such pad.
 #[optimize(size)]
-fn get_kit_sound(b: &[u8]) -> Option<(PadId, PadSound, bool)> {
+pub(super) fn get_kit_sound(b: &[u8]) -> Option<(PadId, PadSound, bool)> {
     let [i, raw @ ..] = *<&[u8; KIT_SOUND_BYTES]>::try_from(b).ok()?;
     let s = PadSound::from_bytes(raw, &PadSound::DEFAULT);
     Some((PadId::new(i)?, s, s.to_bytes() != raw))
@@ -1018,6 +1021,8 @@ impl ProjectCheck {
                         *kit.pad_mut(p).sound_mut() = sound;
                     }
                 }
+                // The kit as loaded is the Part's mark (ADR 0305).
+                super::KitDoor::settle(t, n);
                 Ok(())
             }
             Context::None | Context::Fx | Context::Orbit => Ok(()),

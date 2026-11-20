@@ -7,8 +7,8 @@ use crate::storage::sound_crc;
 
 use super::arena::Cost;
 use super::pool::entry_len;
+use super::{KitDoor, TemplateCrc, project_crc};
 use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, PoolFull, Project, SlotId};
-use super::{TemplateCrc, project_crc};
 
 /// A Part against its slot: `Edited` is `*`, `Stale` is `◦`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,8 +19,22 @@ pub enum PartStatus {
     Stale(SlotId),
 }
 
+/// A Part's status: its Sound's (`sound_status`), and `Edited` too
+/// while it plays DRUM on a kit edited since its mark (ADR 0305): the
+/// Part's `*`, and what a replace asks about.
 #[optimize(size)]
-pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
+pub fn part_status(p: &Project, id: PartId) -> PartStatus {
+    match sound_status(p.part(id), &p.pool) {
+        PartStatus::Edited => PartStatus::Edited,
+        _ if KitDoor::seen(p, id).edited() => PartStatus::Edited,
+        s => s,
+    }
+}
+
+/// A Part's Sound against its slot: what a save to a slot, a revert and
+/// a program change weigh. A slot holds no kit.
+#[optimize(size)]
+pub fn sound_status(part: &Part, pool: &Pool) -> PartStatus {
     let s = slot_status(part, pool);
     // KEEP MAP's rows over a load are no edit (ADR 0253); a slot moved on
     // since the load still reads Stale.
@@ -36,7 +50,7 @@ pub fn part_status(part: &Part, pool: &Pool) -> PartStatus {
     s
 }
 
-/// `part_status` but for KEEP MAP.
+/// `sound_status` but for KEEP MAP.
 #[optimize(size)]
 fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
     let (slot, generation, crc) = match part.origin {
@@ -58,7 +72,7 @@ fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
 }
 
 /// Whether `s` is engine `e`'s INIT. Out of line: the INIT Sound's frame
-/// is not under `part_status`'s CRC (ADR 0025's stack check).
+/// is not under `sound_status`'s CRC (ADR 0025's stack check).
 #[inline(never)]
 #[optimize(size)]
 fn is_init(s: &Sound, e: crate::params::EngineType) -> bool {
@@ -243,7 +257,7 @@ impl PartActions {
 #[optimize(size)]
 pub fn part_actions(p: &Project, part: PartId) -> PartActions {
     let x = p.part(part);
-    let status = part_status(x, &p.pool);
+    let status = sound_status(x, &p.pool);
     let crc = sound_crc(&x.sound);
     // Counted once: every save below weighs the same bytes.
     let len = entry_len(&x.sound, &p.kept[part.index()]);
@@ -299,7 +313,7 @@ impl Project {
         self.bump();
         let x = self.part(a.part);
         if x.origin != a.origin
-            || part_status(x, &self.pool) != a.status
+            || sound_status(x, &self.pool) != a.status
             || sound_crc(&x.sound) != a.crc
         {
             return Err(ActionRefused::Gone);

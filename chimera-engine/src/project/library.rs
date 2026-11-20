@@ -12,17 +12,20 @@ use super::guard::Confirmed;
 use super::sources::source_cost;
 use super::store::{CardOut, MAX_LISTED, split};
 use super::{
-    Absence, PartFrom, PartId, PartSource, PoolFull, Project, ReplaceError, SlotId, SourceRef,
+    Absence, KitDoor, PartFrom, PartId, PartSource, PoolFull, Project, ReplaceError, SlotId,
+    SourceRef,
 };
+use crate::dsp::drum::types::Kit;
 use crate::midi_map::KeptMap;
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::{
-    BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
-    LibKind, LibraryDecoder, LoadError, NextId, Note, Peek, SaveError, Side, SideState, SoundCheck,
-    UserId, check_file, encode_library_part, held_for_file_len, lib_id, library_file,
-    load_ab_in_place, next_user_id, peek_library, save_ab, sound_crc, source_file, user_file,
+    BuildStamp, Card, CardFault, Check, DecodeInPlace, Event, FileError, FileKind, Generation,
+    HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId, LibKind, LibraryDecoder, LoadError, NextId, Note, Peek,
+    ReadTag, SaveError, Side, SideState, SoundCheck, UserId, check_file, encode_library_part,
+    held_for_file_len, lib_id, library_file, load_ab_in_place, next_user_id, peek_library, save_ab,
+    sound_crc, source_file, user_file,
 };
 
 /// What a library operation says to the screen.
@@ -109,18 +112,24 @@ fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, Lib
 }
 
 /// Part `part`'s Sound as `save_library_sound` saves it, with the map
-/// record its closed door kept (#862).
+/// record its closed door kept (#862) and, for a DRUM Part, its kit
+/// (ADR 0305): saved, the kit is the Part's mark.
 #[optimize(size)]
 pub fn save_library_part<S: Store>(
     card: &mut Card,
     store: &mut S,
-    p: &Project,
+    p: &mut Project,
     part: PartId,
     name: SoundName,
     stamp: &BuildStamp,
 ) -> CardOut<Result<UserId, LibNote>> {
     let s = &p.part(part).sound;
-    save_library(card, store, s, &p.kept[part.index()], name, stamp)
+    let kit = (s.engine() == EngineType::Drum).then(|| p.kits.kit(part));
+    let out = save_library(card, store, s, &p.kept[part.index()], kit, name, stamp);
+    if kit.is_some() && out.out.is_ok() {
+        KitDoor::settle(p, part);
+    }
+    out
 }
 
 /// `s` as a new library file named `name`: the directories made first, the
@@ -134,7 +143,7 @@ pub fn save_library_sound<S: Store>(
     name: SoundName,
     stamp: &BuildStamp,
 ) -> CardOut<Result<UserId, LibNote>> {
-    save_library(card, store, s, &KeptMap::EMPTY, name, stamp)
+    save_library(card, store, s, &KeptMap::EMPTY, None, name, stamp)
 }
 
 #[optimize(size)]
@@ -143,6 +152,7 @@ fn save_library<S: Store>(
     store: &mut S,
     s: &Sound,
     kept: &KeptMap,
+    kit: Option<&Kit>,
     name: SoundName,
     stamp: &BuildStamp,
 ) -> CardOut<Result<UserId, LibNote>> {
@@ -152,7 +162,8 @@ fn save_library<S: Store>(
         let id = free_id(st, r)?;
         let file = user_file(id);
         let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
-            encode_library_part(s, kept, stamp, w)
+            encode_library_part(s, kept, stamp, w)?;
+            kit.map_or(Ok(()), |k| KitDoor::put(k, w))
         })
         .map_err(|e| match e {
             SaveError::Store(e) => LibNote::Store(e),
@@ -755,6 +766,54 @@ pub fn peek_note<S: Store>(
     }
 }
 
+/// A library file as a Part's load reads it: the Sound onto the pool's
+/// scratch (`LibraryDecoder`), a DRUM Part's kit records onto the scratch
+/// kit (ADR 0305).
+struct PartDecoder<'a> {
+    sound: LibraryDecoder<'a>,
+    kit: &'a mut Kit,
+}
+
+impl PartDecoder<'_> {
+    /// A `Kit` or `KitSound` record: checked, and onto `kit` if given.
+    #[inline(always)]
+    #[optimize(size)]
+    fn kit_record(e: &Event<'_>, kit: Option<&mut Kit>) -> Result<(), FileError> {
+        match *e {
+            Event::Record(ReadTag::Known(t), p) => KitDoor::read(t, p, kit),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl Check for PartDecoder<'_> {
+    const KIND: FileKind = <LibraryDecoder<'_> as Check>::KIND;
+
+    #[optimize(size)]
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        Self::kit_record(&e, None)?;
+        self.sound.event(e)
+    }
+
+    #[optimize(size)]
+    fn end(&mut self) -> Result<(), FileError> {
+        self.sound.end()
+    }
+}
+
+impl DecodeInPlace for PartDecoder<'_> {
+    #[optimize(size)]
+    fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        Self::kit_record(&e, Some(&mut *self.kit))?;
+        self.sound.apply(e)
+    }
+
+    #[optimize(size)]
+    fn finish(&mut self) -> Result<(), FileError> {
+        self.sound.finish()
+    }
+}
+
 /// `file` decoded into the pool's scratch, nothing else touched: its
 /// sides re-peeked first, so a pair gone or re-written since the listing
 /// refuses. A clobbered scratch is harmless: only `adopt` reads it.
@@ -772,7 +831,14 @@ pub fn read_library_sound<S: Store>(
         }
         let ab = library_file(file.id);
         let (scratch, kept) = p.pool.scratch_kept();
-        let mut d = LibraryDecoder::new(scratch, kept);
+        // A file with no kit (a Sound's own save, or one from before
+        // ADR 0305) leaves the default.
+        let kit = p.kits.scratch_mut();
+        kit.reset();
+        let mut d = PartDecoder {
+            sound: LibraryDecoder::new(scratch, kept),
+            kit,
+        };
         match load_ab_in_place(s, r, ab, &mut d) {
             // The newer side failing its CRC leaves the older: not the row.
             Ok(h) => {
@@ -789,7 +855,7 @@ pub fn read_library_sound<S: Store>(
                 };
             }
         }
-        let (skips, over) = (d.skips(), d.over_budget());
+        let (skips, over) = (d.sound.skips(), d.sound.over_budget());
         let source = match p.pool.scratch_ref().source_ref() {
             Some(sr) => source_need(s, vol, p, sr)?,
             None => None,
@@ -933,6 +999,8 @@ impl Project {
             from: PartFrom::Slot(slot),
         })
         .expect("a slot just checked or stored decodes");
+        // A DRUM Sound brings its kit: the file's, or the default.
+        KitDoor::land(self, c.target().part);
         Ok(Adopted {
             slot,
             deduped: dedupe.is_some(),

@@ -6,7 +6,7 @@ mod screen;
 
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::{Line, PartId, PartStatus, SlotId, part_status, test_support};
+use chimera_core::project::{Line, PartId, PartStatus, SlotId, sound_status, test_support};
 use chimera_core::storage::sound_crc;
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
@@ -36,7 +36,7 @@ fn edit(ui: &mut UiState, p: PartId) {
 }
 
 fn status(ui: &UiState, p: PartId) -> PartStatus {
-    part_status(ui.project().part(p), ui.project().pool())
+    sound_status(ui.project().part(p), ui.project().pool())
 }
 
 fn crc(ui: &UiState, p: PartId) -> u32 {

@@ -371,14 +371,17 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The stereo (ADR 0294): `stereo::kern`, OUT PAN's split and the
     // Parts' WIDTHs, the next; its table a stride after the meters'
     // (`STEREO_DOOR_ADDR`).
+    // A kit's library records and marks (ADR 0305): its table a stride
+    // after the stereo's (`KIT_DOOR_ADDR`), in `KIT_DOOR_ROOM`; its code
+    // is `kit_library`'s group below.
     // The tables' addresses and stride are `s4_tables.rs`'s, as Rust's.
     let (ed, ed_slot, ed_assert) = (
         &format!(
-            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    . = __bank2_part_peaks_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_stereo_door = .;\n    KEEP(*(.bank2.door.stereo));\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n    *(.text.*6stereo4kern* .rodata.*6stereo4kern*);\n"
+            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    . = __bank2_part_peaks_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_stereo_door = .;\n    KEEP(*(.bank2.door.stereo));\n    . = __bank2_stereo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_kit_door = .;\n    KEEP(*(.bank2.door.kit));\n    . = __bank2_kit_door + 0x{KIT_DOOR_ROOM:X};\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n    *(.text.*6stereo4kern* .rodata.*6stereo4kern*);\n"
         ),
         "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         &format!(
-            "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");\nASSERT(__bank2_part_peaks_door == 0x{PART_PEAKS_DOOR_ADDR:08X}, \"the Parts' meters' table a stride after the EQ's\");\nASSERT(__bank2_stereo_door == 0x{STEREO_DOOR_ADDR:08X}, \"the stereo's table a stride after the meters'\");"
+            "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");\nASSERT(__bank2_part_peaks_door == 0x{PART_PEAKS_DOOR_ADDR:08X}, \"the Parts' meters' table a stride after the EQ's\");\nASSERT(__bank2_stereo_door == 0x{STEREO_DOOR_ADDR:08X}, \"the stereo's table a stride after the meters'\");\nASSERT(__bank2_kit_door == 0x{KIT_DOOR_ADDR:08X}, \"the kit's table a stride after the stereo's\");"
         ),
     );
     // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
@@ -428,7 +431,14 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // S4 groups.
     let delay_sync = "    *(.text.*5delay4sync* .rodata.*5delay4sync*
       .text.*12chimera_core2ui10delay_sync* .rodata.*12chimera_core2ui10delay_sync*);\n";
-    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}");
+    // A DRUM Part's kit in the library and in its status (ADR 0305,
+    // `project::KitDoor`): `project::kit_library::kern`, the kit's
+    // records, its CRC and its mark. An S4 group.
+    let kit_library =
+        "    *(.text.*7project11kit_library4kern* .rodata.*7project11kit_library4kern*);\n";
+    let s4 = format!(
+        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{kit_library}"
+    );
     fs::write(
         out_dir.join("bank2.x"),
         r#"

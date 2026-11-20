@@ -6,6 +6,7 @@ pub mod arena;
 mod codec;
 mod guard;
 mod ids;
+mod kit_library;
 mod kits;
 mod library;
 mod marks;
@@ -27,6 +28,9 @@ pub use guard::{
 };
 pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
+#[cfg(feature = "bank2")]
+pub use kit_library::kit_door_ok;
+pub use kit_library::{KitDoor, KitMark, KitSeen};
 pub use kits::{FollowHold, Kits, PadLights};
 pub use library::{
     AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
@@ -35,7 +39,7 @@ pub use library::{
 };
 pub use marks::{
     ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
-    part_actions, part_status, project_status,
+    part_actions, part_status, project_status, sound_status,
 };
 pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Loads, Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
@@ -453,7 +457,7 @@ impl Project {
         };
         Ok(others
             .iter()
-            .filter(|&o| o != p && part_status(self.part(o), &self.pool) == PartStatus::Stale(s))
+            .filter(|&o| o != p && sound_status(self.part(o), &self.pool) == PartStatus::Stale(s))
             .fold(PartSet::EMPTY, PartSet::with))
     }
 

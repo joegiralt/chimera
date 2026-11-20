@@ -562,7 +562,7 @@ pub enum PartMark {
 impl PartMark {
     pub fn of(p: &Project, part: PartId) -> Self {
         let x = p.part(part);
-        match part_status(x, p.pool()) {
+        match part_status(p, part) {
             PartStatus::Clean => PartMark::Clean,
             PartStatus::Stale(s) => PartMark::SlotMoved(s),
             PartStatus::Edited => PartMark::Edited(match x.origin() {

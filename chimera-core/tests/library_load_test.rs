@@ -18,7 +18,7 @@ use chimera_core::project::test_support::{scratch_of, set_free_to};
 use chimera_core::project::{
     Absence, AdoptError, Adopted, Confirmed, LibFile, LibNote, LibPage, LibRead, LibraryPart,
     PageAt, PartId, PartStatus, Project, ReplaceError, ReplaceGuard, Shelf, SourceNeed, SourceRef,
-    Staged, TemplateCrc, list_library, part_status, read_library_sound, save_library_sound,
+    Staged, TemplateCrc, list_library, read_library_sound, save_library_sound, sound_status,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, HEADER_LEN, Header, LibId, RecordTag,
@@ -286,7 +286,7 @@ fn adopt_stores_the_slot_and_the_part_reads_clean() {
     let loads = p.part(P1).loads();
     let a = p.adopt(confirmed(&p, P1, file), None).unwrap();
     assert!(!a.deduped);
-    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(P1), p.pool()), PartStatus::Clean);
     assert!(p.pool().get(a.slot).unwrap().matches(&sound(0)));
     assert_ne!(p.part(P1).loads(), loads);
 }

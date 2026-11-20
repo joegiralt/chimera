@@ -15,7 +15,7 @@ use chimera_core::MidiChannel;
 use chimera_core::midi_in::{CtrlEvent, PROGRAM_PENDING, Port};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::{Origin, PartFrom, PartId, PartStatus, SlotId, part_status};
+use chimera_core::project::{Origin, PartFrom, PartId, PartStatus, SlotId, sound_status};
 use chimera_core::ui::UiState;
 use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_hal::{ButtonId, Ms};
@@ -80,7 +80,7 @@ fn from(ui: &UiState, p: PartId) -> PartFrom {
 }
 
 fn status(ui: &UiState, p: PartId) -> PartStatus {
-    part_status(ui.project().part(p), ui.project().pool())
+    sound_status(ui.project().part(p), ui.project().pool())
 }
 
 fn edit(ui: &mut UiState, p: PartId) {

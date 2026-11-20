@@ -27,8 +27,8 @@ use super::{
     Confirmed, DeleteTarget, FreshFile, Line, LoadLink, LoadOutcome, Origin, OverwriteTarget,
     PartFrom, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectFile, ProjectNote,
     ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, SlotId, Subject, TemplateCrc,
-    clear_project, delete_project, list_projects, load_project, new_project_id, part_status,
-    project_crc, project_file, project_status, save_project,
+    clear_project, delete_project, list_projects, load_project, new_project_id, project_crc,
+    project_file, project_status, save_project, sound_status,
 };
 
 /// `Project::save_part_to`, which only a Part action reaches outside tests.
@@ -211,7 +211,7 @@ pub fn full_dense_slots(n: usize) -> (Box<Project>, TemplateCrc) {
 
 /// Panics with the first difference: the names, each slot (its bytes),
 /// each Part's Sound (`bits_eq`), mix, kit, Origin (slot and CRC, or engine;
-/// never the generation) and `part_status`, the FX, ORBIT, then
+/// never the generation) and `sound_status`, the FX, ORBIT, then
 /// `project_crc`.
 pub fn same(a: &Project, b: &Project) {
     assert_eq!(a.meta().name(), b.meta().name(), "project name");
@@ -251,8 +251,8 @@ pub fn same(a: &Project, b: &Project) {
             (o1, o2) => assert_eq!(o1, o2, "Part {n} origin"),
         }
         assert_eq!(
-            part_status(x, a.pool()),
-            part_status(y, b.pool()),
+            sound_status(x, a.pool()),
+            sound_status(y, b.pool()),
             "Part {n} status"
         );
     }

@@ -13,7 +13,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::set_free_to;
 use chimera_core::project::{
-    LoadLink, PartId, PartStatus, ProjectStatus, SourceRef, part_status, save_library_sound,
+    LoadLink, PartId, PartStatus, ProjectStatus, SourceRef, save_library_sound, sound_status,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileKind, Generation, Header, LibId, RecordTag, SourceHead, SystemSettings,
@@ -436,7 +436,7 @@ fn edit_loads_into_the_part_and_the_project_reads_modified() {
             .matches(&factory_sound(0))
     );
     let p = r.ui.project();
-    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(P1), p.pool()), PartStatus::Clean);
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
 }
 
@@ -482,7 +482,7 @@ fn save_part_first_that_takes_the_room_refuses_and_keeps_the_save() {
     r.work();
     let p = r.ui.project();
     assert_eq!(
-        part_status(p.part(P1), p.pool()),
+        sound_status(p.part(P1), p.pool()),
         PartStatus::Clean,
         "saved"
     );
@@ -1133,7 +1133,7 @@ fn factory_load_goes_through_guard_and_adopt() {
     assert_eq!(r.toast(), format!("LOADED TO SLOT {}", slot.index() + 1));
     let p = r.ui.project();
     assert!(p.pool().get(slot).unwrap().matches(&factory_sound(2)));
-    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(P1), p.pool()), PartStatus::Clean);
 }
 
 /// 48 to a page, lowest id first: `NEXT ›` turns to the last 2, whose page

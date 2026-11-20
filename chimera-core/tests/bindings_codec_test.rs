@@ -580,15 +580,15 @@ fn fuzz_seeds_hold_both_records() {
 #[cfg(feature = "bank2")]
 #[test]
 fn closed_door_keeps_parts_clean() {
-    use chimera_core::project::{PartId, PartStatus, part_status};
+    use chimera_core::project::{PartId, PartStatus, sound_status};
     let _g = open();
     let ui = Box::new(chimera_core::ui::UiState::new());
     let p = ui.project();
     let part = p.part(PartId::ALL[0]);
     assert!(!part.sound.map.is_empty());
-    assert_eq!(part_status(part, p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(part, p.pool()), PartStatus::Clean);
     chimera_core::bank2::DOOR_CELL.close();
-    assert_eq!(part_status(part, p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(part, p.pool()), PartStatus::Clean);
 }
 
 /// Closed, a Part's load that fails (an empty slot) leaves its Sound and
@@ -663,7 +663,7 @@ fn as_legacy(f: &[u8]) -> Vec<u8> {
 /// Parts both decode, then re-encode as `0x001F`.
 #[test]
 fn legacy_project_parts_load_clean() {
-    use chimera_core::project::{PartId, PartStatus, Project, part_status};
+    use chimera_core::project::{PartId, PartStatus, Project, sound_status};
     use common::codec_util::{decode_project, encode_project};
     let _g = open();
     let (p, _) = Project::boxed();
@@ -674,7 +674,7 @@ fn legacy_project_parts_load_clean() {
     for id in PartId::ALL {
         let part = q.part(id);
         assert!(!part.sound.map.is_empty(), "{id:?}");
-        assert_eq!(part_status(part, q.pool()), PartStatus::Clean, "{id:?}");
+        assert_eq!(sound_status(part, q.pool()), PartStatus::Clean, "{id:?}");
     }
 }
 
@@ -721,7 +721,7 @@ fn closed_door_project_slots_keep_the_record() {
 fn closed_door_stale_is_stale() {
     use chimera_core::project::test_support::save_part_to;
     use chimera_core::project::{
-        PartFrom, PartId, PartSource, PartStatus, Project, ReplaceGuard, SlotId, part_status,
+        PartFrom, PartId, PartSource, PartStatus, Project, ReplaceGuard, SlotId, sound_status,
     };
     let _g = open();
     chimera_core::bank2::DOOR_CELL.close();
@@ -735,10 +735,10 @@ fn closed_door_stale_is_stale() {
         p.replace_part(ReplaceGuard::check(&p, t, src).unwrap())
             .unwrap();
     }
-    assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Clean);
     p.edit_part(b).sound.params.filter.cutoff *= 0.5;
     save_part_to(&mut p, b, s);
-    assert_eq!(part_status(p.part(a), p.pool()), PartStatus::Stale(s));
+    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Stale(s));
 }
 
 /// The library's row for `id` on `st`.

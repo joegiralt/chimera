@@ -414,11 +414,12 @@ fn kits_are_compact_and_outside_the_parts() {
     // padded to 4.
     assert_eq!(size_of::<Pad>(), 80);
     assert_eq!(size_of::<Kit>(), 12 * 80 + 4);
-    // A kit, a selected pad, two `PadSet`s of lights and PAD FOLLOW's
-    // hold (ADR 0268) a Part, the whole padded to 4.
+    // A kit, a selected pad, two `PadSet`s of lights, PAD FOLLOW's hold
+    // (ADR 0268) and the kit's mark (ADR 0305, a tag and a CRC) a Part,
+    // and a library load's scratch kit (ADR 0305), the whole padded to 4.
     assert_eq!(
         size_of::<Kits>(),
-        hw::MAX_PARTS * (12 * 80 + 4 + 1 + 4 + 2) + 2
+        hw::MAX_PARTS * (12 * 80 + 4 + 1 + 4 + 2 + 8) + (12 * 80 + 4) + 2
     );
     // The audio's view (ITCM too): a Part's seqlock, TONAL, hit, two
     // `PadSet`s, seed and `KitBill` bits, and two slots of 12 pads at

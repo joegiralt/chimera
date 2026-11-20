@@ -11,8 +11,8 @@ use chimera_core::preset::Sound;
 use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
     ActionRefused, Origin, PartActionKind, PartActions, PartFrom, PartId, PartSet, PartSource,
-    PartStatus, Project, ProjectStatus, SlotId, part_actions, part_status, project_crc,
-    project_status,
+    PartStatus, Project, ProjectStatus, SlotId, part_actions, project_crc, project_status,
+    sound_status,
 };
 use chimera_core::storage::sound_crc;
 use common::project::{decode, encode, load, load_anyway};
@@ -32,7 +32,7 @@ fn init(part: PartId, e: EngineType) -> PartSource {
 }
 
 fn status(p: &Project, part: PartId) -> PartStatus {
-    part_status(p.part(part), p.pool())
+    sound_status(p.part(part), p.pool())
 }
 
 fn kinds(a: PartActions) -> Vec<PartActionKind> {

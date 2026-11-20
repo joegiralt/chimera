@@ -19,7 +19,7 @@ use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Absence, Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
     PartStatus, Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SourceSet,
-    Swap, encode_project, part_status, project_crc,
+    Swap, encode_project, project_crc, sound_status,
 };
 
 #[optimize(size)]
@@ -185,7 +185,7 @@ fn differ(p: &Project) -> Differ {
     let mut edited = PartId::ALL.into_iter().filter_map(|id| {
         let part = p.part(id);
         match part.origin {
-            Origin::Slot { slot, .. } if part_status(part, &p.pool) == PartStatus::Edited => {
+            Origin::Slot { slot, .. } if sound_status(part, &p.pool) == PartStatus::Edited => {
                 Some((id, slot))
             }
             _ => None,

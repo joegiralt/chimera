@@ -54,8 +54,8 @@ use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
 use super::{
-    LibraryPart, Origin, PartFrom, PartSource, PartStatus, Project, ProjectEntry, ProjectFile,
-    ProjectStatus, TemplateCrc, part_status, project_crc, project_status,
+    KitDoor, LibraryPart, Origin, PartFrom, PartSource, PartStatus, Project, ProjectEntry,
+    ProjectFile, ProjectStatus, TemplateCrc, part_status, project_crc, project_status,
 };
 use crate::confirm::Said;
 
@@ -105,17 +105,18 @@ impl Witnessed for PartSource {
     type Witness = u32;
 }
 
-/// An `Edited` Part asks; a `Clean` or `Stale` one doesn't.
+/// An `Edited` Part asks, its Sound's edits or its kit's (ADR 0305); a
+/// `Clean` or `Stale` one doesn't.
 impl Target for PartSource {
     #[optimize(size)]
     fn at_risk(&self, p: &Project, _: TemplateCrc) -> Option<Prompt> {
-        (part_status(p.part(self.part), p.pool()) == PartStatus::Edited)
-            .then_some(Prompt::SavePartFirst)
+        (part_status(p, self.part) == PartStatus::Edited).then_some(Prompt::SavePartFirst)
     }
 
     /// The Part's `sound_crc`, its Origin and, for a slot, the slot's
-    /// generation now: `part_status` reads only these and the slot's
-    /// contents, which move its generation.
+    /// generation now, then its kit as seen (ADR 0305): `part_status`
+    /// reads only these and the slot's contents, which move its
+    /// generation.
     #[optimize(size)]
     fn witness(&self, p: &Project) -> u32 {
         let part = p.part(self.part);
@@ -134,6 +135,7 @@ impl Target for PartSource {
             }
             Origin::Init(e) => c.update(&[1, e.disk_code()]),
         }
+        c.update(&KitDoor::seen(p, self.part).bytes());
         c.finish()
     }
 }

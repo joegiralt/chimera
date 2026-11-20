@@ -12,19 +12,26 @@ use crate::dsp::drum::types::{Kit, PadId, PadSet};
 use crate::hw::MAX_PARTS;
 
 use super::ids::PartId;
+use super::kit_library::KitMark;
 
 /// One `Kit` a Part, reached by `PartId` only, each Part's selected
 /// pad (what its pad cells edit), lit pads and PAD FOLLOW's hold. The selection, the lights and the hold are the UI's,
-/// never saved; they sit here, in ITCM, since D2 is full.
+/// never saved; they sit here, in ITCM, since D2 is full. With them, each
+/// kit's mark and a library load's scratch kit (ADR 0305), never saved
+/// either.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kits {
     kits: [Kit; MAX_PARTS],
     selected: [PadId; MAX_PARTS],
     lights: [PadLights; MAX_PARTS],
     hold: [FollowHold; MAX_PARTS],
+    marks: [KitMark; MAX_PARTS],
+    /// The kit of the library Sound in the pool's scratch: only `adopt`
+    /// reads it.
+    scratch: Kit,
 }
 
-crate::in_place::field_list!(Kits => Kits { kits, selected, lights, hold });
+crate::in_place::field_list!(Kits => Kits { kits, selected, lights, hold, marks, scratch });
 
 /// A Part's lit pads: those its voices sound, and those struck since the
 /// UI's last frame, so a hit too short to see sounding still flashes.
@@ -82,6 +89,8 @@ impl Kits {
         selected: [PadId::ALL[0]; MAX_PARTS],
         lights: [PadLights::DARK; MAX_PARTS],
         hold: [FollowHold::FREE; MAX_PARTS],
+        marks: [KitMark::Init; MAX_PARTS],
+        scratch: Kit::DEFAULT,
     };
 
     /// Every kit `Kit::DEFAULT`, built a kit at a time: no whole `Kits`
@@ -90,9 +99,8 @@ impl Kits {
     pub fn init_in_place(slot: &mut MaybeUninit<Kits>) -> &mut Kits {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; kit `i` is inside `kits`;
-        // every kit, `selected`, `lights` and `hold` (`field_list!` above) are
-        // written once
-        // before `assume_init_mut`.
+        // every kit, `selected`, `lights`, `hold`, `marks` and `scratch`
+        // (`field_list!` above) are written once before `assume_init_mut`.
         unsafe {
             let kits = addr_of_mut!((*p).kits).cast::<Kit>();
             for i in 0..MAX_PARTS {
@@ -101,6 +109,8 @@ impl Kits {
             addr_of_mut!((*p).selected).write([PadId::ALL[0]; MAX_PARTS]);
             addr_of_mut!((*p).lights).write([PadLights::DARK; MAX_PARTS]);
             addr_of_mut!((*p).hold).write([FollowHold::FREE; MAX_PARTS]);
+            addr_of_mut!((*p).marks).write([KitMark::Init; MAX_PARTS]);
+            addr_of_mut!((*p).scratch).write(Kit::init());
             slot.assume_init_mut()
         }
     }
@@ -120,6 +130,29 @@ impl Kits {
     #[optimize(size)]
     pub fn kit_mut(&mut self, p: PartId) -> &mut Kit {
         &mut self.kits[p.index()]
+    }
+
+    /// What Part `p`'s kit is weighed against (ADR 0305).
+    #[optimize(size)]
+    pub(in crate::project) fn mark(&self, p: PartId) -> KitMark {
+        self.marks[p.index()]
+    }
+
+    #[optimize(size)]
+    pub(in crate::project) fn set_mark(&mut self, p: PartId, m: KitMark) {
+        self.marks[p.index()] = m;
+    }
+
+    /// A library load's scratch kit, for the load to write.
+    #[optimize(size)]
+    pub(in crate::project) fn scratch_mut(&mut self) -> &mut Kit {
+        &mut self.scratch
+    }
+
+    /// The scratch kit into Part `p`'s: a library load's adopt.
+    #[optimize(size)]
+    pub(in crate::project) fn land(&mut self, p: PartId) {
+        self.kits[p.index()] = self.scratch;
     }
 
     /// Part `p`'s selected pad.
@@ -177,10 +210,12 @@ impl Kits {
         self.hold[p.index()] = FollowHold::AFTER_EDIT;
     }
 
-    /// Every kit back to `Kit::DEFAULT`, pad 1 selected, none lit: NEW.
+    /// Every kit back to `Kit::DEFAULT` and marked so, pad 1 selected,
+    /// none lit: NEW.
     #[optimize(size)]
     pub fn reset(&mut self) {
         self.kits.iter_mut().for_each(Kit::reset);
+        self.marks = [KitMark::Init; MAX_PARTS];
         self.selected = [PadId::ALL[0]; MAX_PARTS];
         self.lights = [PadLights::DARK; MAX_PARTS];
         self.hold = [FollowHold::FREE; MAX_PARTS];

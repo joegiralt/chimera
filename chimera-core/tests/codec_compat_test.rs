@@ -14,7 +14,7 @@ use chimera_core::name::{ProjectName, SoundName};
 use chimera_core::params::{EngineType, FilterParams, OutParams, ParamSnapshot};
 use chimera_core::preset::Sound;
 use chimera_core::project::{
-    Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, part_status,
+    Origin, PartFrom, PartId, PartSource, PartStatus, Project, SlotId, part_block, sound_status,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, Header, MIGRATIONS, Note, TRANSLATIONS,
@@ -501,7 +501,7 @@ fn project_fixture_loads() {
             2 => PartStatus::Clean,
             _ => PartStatus::Edited,
         };
-        assert_eq!(part_status(part, p.pool()), status, "Part {}", id.index());
+        assert_eq!(sound_status(part, p.pool()), status, "Part {}", id.index());
     }
 
     let first = p.part(PartId::ALL[0]);
