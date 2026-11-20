@@ -220,28 +220,28 @@ bench-algo.
       closed door draws nothing.
 
 ## Measurements
-Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 fda23e52 (tester-04
+Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 c93eeab4 (tester-04
 merged) against this change merged with it, each set built in both trees.
 Each budget line is 0.4's plus exactly its set's measured change, never
 ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +2,376 | +23,872 |
+| default | +2,264 | +23,904 |
 | orbit | +2,552 | +23,872 |
-| bank2-gate | +2,368 | +23,872 |
-| orbit,usb-config-writer | +2,552 | |
-| fault-inject | +2,608 | |
-| bench-algo | +2,552 | |
-| bench-algo,master-tape | +2,496 | |
-| bench-routing | +2,688 | |
-| bench-memory | +2,808 | |
-| bench-stress | +2,656 | |
-| bench-orbit | +2,456 | |
-| bench-tape | +2,808 | |
-| filter-probes | +2,600 | |
+| bank2-gate | +2,232 | +23,904 |
+| orbit,usb-config-writer | +2,560 | |
+| fault-inject | +2,632 | |
+| bench-algo | +2,440 | |
+| bench-algo,master-tape | +2,480 | |
+| bench-routing | +2,552 | |
+| bench-memory | +2,672 | |
+| bench-stress | +2,528 | |
+| bench-orbit | +2,280 | |
+| bench-tape | +2,840 | |
+| filter-probes | +2,632 | |
 
-- Bank 1 on ORBIT (903,156 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
+- Bank 1 on ORBIT (905,392 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
   EQ's band over tester-04's overview and meters and REV › DUCK's cell): the three settings' specs and
   `get`/`write`/`enum_*` arms (code, an exception to ADR 0198 as ADR
   0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
@@ -250,7 +250,7 @@ ADR 0198's slack:
 - Bank 2 on ORBIT: S4–S5 +23,872 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
-  467 KB. S0–S3 is untouched: 7,328 B free on ORBIT, as on 0.4 (under
+  467 KB. S0–S3 is untouched: 7,296 B free on ORBIT, as on 0.4 (under
   ADR 0251's 8 KB warning before this change).
 - RAM: ITCM +1,464 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
