@@ -184,6 +184,7 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Theme", "PAGES", NONE),
     ("Theme", "TEXT", NONE),
     ("Theme", "FOLLOW", NONE),
+    ("Theme", "ALGO_FIRST", NONE),
     ("Midi", "SYNC", NONE),
     ("Midi", "PUSH", SWITCH),
     ("Midi", "ECHO", SWITCH),
@@ -222,6 +223,8 @@ const NAMED_ARC: &[(&str, &str)] = &[
 /// Two-value choices that are two peers, not on and off: a toggle would
 /// read one of them as "off". They show the word (NONE).
 const TWO_PEERS: &[(&str, &str)] = &[
+    // PARAMS and OPS: two orders of the same pages.
+    ("Theme", "ALGO_FIRST"),
     // CLEAN and 2040: two filters (until DIRTY makes three).
     ("Filter", "KIND"),
     // REV2 and EXP: two circuits, neither off.

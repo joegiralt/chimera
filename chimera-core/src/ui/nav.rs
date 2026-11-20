@@ -13,7 +13,7 @@ use crate::ui::block_registry::{
 use crate::ui::orbit::{ORB_NODE, ORBIT_CHAIN, RING_NODE, SCN_NODE};
 use crate::ui::settings::leaves::OnePage;
 use crate::ui::settings::{Act, Kind, MANAGE_COMMANDS, Row, Screen, row_at};
-use crate::ui::theme_settings::Pages;
+use crate::ui::theme_settings::{AlgoFirst, Pages};
 
 pub use crate::ui::block_def::PageAt;
 pub use crate::ui::browser::Browse;
@@ -651,6 +651,10 @@ pub enum PartChain {
     Algo,
     /// ALGO with a FORMANT page: an operator is a formant or noise band.
     AlgoFormant,
+    /// ALGO, OSC opening on the operators' own pages (ADR 0300).
+    AlgoOps,
+    /// `AlgoOps` with a FORMANT page.
+    AlgoOpsFormant,
     Modal,
     Tape,
     Va,
@@ -662,6 +666,38 @@ impl PartChain {
         match Self::base(sound.engine()) {
             PartChain::Algo if sound.params.algo.kinds().any_formant() => PartChain::AlgoFormant,
             c => c,
+        }
+    }
+
+    /// This chain as ALGO PAGES' `first` orders it (ADR 0300): ALGO's
+    /// two chains swap for their operator-first twins, the rest stay.
+    pub const fn ordered(self, first: AlgoFirst) -> PartChain {
+        match (self, first) {
+            (PartChain::Algo | PartChain::AlgoOps, AlgoFirst::Parameter) => PartChain::Algo,
+            (PartChain::Algo | PartChain::AlgoOps, AlgoFirst::Operator) => PartChain::AlgoOps,
+            (PartChain::AlgoFormant | PartChain::AlgoOpsFormant, AlgoFirst::Parameter) => {
+                PartChain::AlgoFormant
+            }
+            (PartChain::AlgoFormant | PartChain::AlgoOpsFormant, AlgoFirst::Operator) => {
+                PartChain::AlgoOpsFormant
+            }
+            (
+                c @ (PartChain::Modal | PartChain::Tape | PartChain::Va | PartChain::Drum),
+                AlgoFirst::Parameter | AlgoFirst::Operator,
+            ) => c,
+        }
+    }
+
+    /// The chain shows FORMANT's page.
+    pub const fn has_formant_page(self) -> bool {
+        match self {
+            PartChain::AlgoFormant | PartChain::AlgoOpsFormant => true,
+            PartChain::Algo
+            | PartChain::AlgoOps
+            | PartChain::Modal
+            | PartChain::Tape
+            | PartChain::Va
+            | PartChain::Drum => false,
         }
     }
 
@@ -679,6 +715,8 @@ impl PartChain {
         match self {
             PartChain::Algo => &block_registry::ALGO_CHAIN,
             PartChain::AlgoFormant => &block_registry::ALGO_FORMANT_CHAIN,
+            PartChain::AlgoOps => &block_registry::ALGO_OPS_CHAIN,
+            PartChain::AlgoOpsFormant => &block_registry::ALGO_OPS_FORMANT_CHAIN,
             PartChain::Modal => &MODAL_PLUCK_CHAIN,
             PartChain::Tape => &block_registry::TAPE_CHAIN,
             PartChain::Va => &block_registry::VA_CHAIN,
@@ -688,7 +726,10 @@ impl PartChain {
 
     pub fn engine(self) -> EngineType {
         match self {
-            PartChain::Algo | PartChain::AlgoFormant => EngineType::Algo,
+            PartChain::Algo
+            | PartChain::AlgoFormant
+            | PartChain::AlgoOps
+            | PartChain::AlgoOpsFormant => EngineType::Algo,
             PartChain::Modal => EngineType::Modal,
             PartChain::Tape => EngineType::Tape,
             PartChain::Va => EngineType::Va,

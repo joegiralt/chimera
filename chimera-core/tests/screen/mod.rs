@@ -1643,6 +1643,19 @@ pub const CASES: &[ScreenCase] = &[
         to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_OP_PAGES[5]);
         set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
+    // ALGO PAGES at OPS (ADR 0300): OSC opens on OP1, the row runs
+    // OPERATOR 1, 2, 3.
+    ("row_osc_ops", |ui| {
+        use chimera_core::ui::theme_settings::{AlgoFirst, ThemeSettings};
+        init_part(ui, PartId::ALL[0]);
+        ui.set_theme(ThemeSettings {
+            algo_first: AlgoFirst::Operator,
+            ..ui.theme()
+        });
+        to_osc(ui);
+        feed(ui, Input::turn(EncoderId::E, 12)); // FEEDBACK 1.2, spelled out
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
     ("row_amp", |ui| {
         init_part(ui, PartId::ALL[0]);
         plus(ui, 3);
@@ -2344,6 +2357,11 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "PAD FOLLOW"]);
         feed(ui, Input::turn(EncoderId::A, 1));
         feed(ui, Input::turn(EncoderId::A, -1));
+    }),
+    // PERSONALIZE › ALGO PAGES (ADR 0300): FIRST turned to OPERATOR.
+    ("settings_personal_algo", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "ALGO PAGES"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
     }),
     // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
     ("settings_midi_sync", |ui| {

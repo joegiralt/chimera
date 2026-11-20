@@ -46,6 +46,7 @@ fn settings() -> SystemSettings {
             pages: Pages::Stack,
             text: TextSize::Large,
             pad_follow: PadFollow::Always,
+            algo_first: chimera_core::ui::theme_settings::AlgoFirst::Operator,
         },
         last_project: ProjectId::new(7),
     }

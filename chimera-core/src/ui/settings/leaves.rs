@@ -178,6 +178,8 @@ static SAVER_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_SAVER)];
 static MAP_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_MAP)];
 static TEXT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_TEXT)];
 static FOLLOW_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_FOLLOW)];
+static ALGO_PAGES_BLOCKS: [ChainBlock; 1] =
+    [ChainBlock::page(&crate::ui::block_registry::SYS_ALGO_PAGES)];
 static PUSH_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_PUSH)];
 static ABOUT_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_ABOUT)];
 static AUDIO_LOAD_BLOCKS: [ChainBlock; 1] = [ChainBlock::page(&SYS_AUDIO)];
@@ -199,6 +201,7 @@ pub static SAVER_LEAF: OnePage = OnePage::new("Screensaver", &SAVER_BLOCKS);
 pub static MAP_LEAF: OnePage = OnePage::new("Chain Map", &MAP_BLOCKS);
 pub static TEXT_LEAF: OnePage = OnePage::new("Text Size", &TEXT_BLOCKS);
 pub static FOLLOW_LEAF: OnePage = OnePage::new("Pad Follow", &FOLLOW_BLOCKS);
+pub static ALGO_PAGES_LEAF: OnePage = OnePage::new("Algo Pages", &ALGO_PAGES_BLOCKS);
 pub static PUSH_LEAF: OnePage = OnePage::new("Push Encoders", &PUSH_BLOCKS);
 pub static ABOUT_LEAF: OnePage = OnePage::new("About", &ABOUT_BLOCKS);
 pub static AUDIO_LOAD_LEAF: OnePage = OnePage::new("Audio Load", &AUDIO_LOAD_BLOCKS);

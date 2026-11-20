@@ -33,7 +33,6 @@ use chimera_midi::value::{U7, U14};
 
 use super::UiState;
 use super::cc::MidiSlot;
-use super::nav::PartChain;
 use super::part_page::Edit;
 use crate::addr::{BlockRef, Blocks, ParamAddr};
 use crate::block::Block;
@@ -500,7 +499,7 @@ impl UiState {
         ) || self.lib.busy()
             || self.src.loading();
         let at = self.active_part;
-        let chain = PartChain::of(&self.project.part(at).sound);
+        let chain = self.chain_of(at);
         let (before, rev) = (self.ctx(), self.project.rev());
         // The audio takes every move published since it last took one, over
         // however many passes: two can read the ms clock microseconds apart

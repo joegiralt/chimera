@@ -303,6 +303,7 @@ fn in_settings_and_set_theme() {
         pages: Pages::Stack,
         text: chimera_core::ui::theme::TextSize::Large,
         pad_follow: chimera_core::ui::theme_settings::PadFollow::Off,
+        algo_first: chimera_core::ui::theme_settings::AlgoFirst::Operator,
     };
     ui.set_theme(t);
     assert_eq!(ui.theme(), t);

@@ -838,6 +838,71 @@ static ALGO_FORMANT_BLOCKS: [ChainBlock; 5] = {
 pub static ALGO_FORMANT_CHAIN: ChainDef2 =
     ChainDef2::new("Algo", &ALGO_FORMANT_BLOCKS, &PART_MOD_SOURCES);
 
+/// The group pages after OSC's home, WAVE.
+const GROUPS: usize = 12;
+const _: () = assert!(ALGO_OSC_SUB_PAGES.len() == GROUPS + ALGO_OP_PAGES.len());
+
+/// ALGO PAGES at OPERATOR (ADR 0300): OP1 is OSC's home, OP2–OP6 follow,
+/// then WAVE and the group pages in their order. Every page of
+/// `ALGO_OSC_SUB_PAGES` is here, built from it.
+static ALGO_OPS_OSC_SUB_PAGES: [&BlockDef; 18] = {
+    let mut a = [&ALGO_WAVE; 18];
+    let mut i = 1;
+    while i < ALGO_OP_PAGES.len() {
+        a[i - 1] = &ALGO_OP_PAGES[i];
+        i += 1;
+    }
+    // a[5] is WAVE; the groups follow it.
+    let mut g = 0;
+    while g < GROUPS {
+        a[ALGO_OP_PAGES.len() + g] = ALGO_OSC_SUB_PAGES[g];
+        g += 1;
+    }
+    a
+};
+
+/// `ALGO_OPS_OSC_SUB_PAGES` with the FORMANT page after WAVE, as it
+/// follows WAVE in `ALGO_FORMANT_OSC_SUB_PAGES`.
+static ALGO_OPS_FORMANT_OSC_SUB_PAGES: [&BlockDef; 19] = {
+    let mut a = [&ALGO_FORMANT; 19];
+    let mut i = 0;
+    while i < 18 {
+        a[if i < ALGO_OP_PAGES.len() { i } else { i + 1 }] = ALGO_OPS_OSC_SUB_PAGES[i];
+        i += 1;
+    }
+    a
+};
+
+/// OSC with OP1 for its home, still OSC on the map.
+const fn ops_osc(subs: &'static [&'static BlockDef]) -> ChainBlock {
+    ChainBlock {
+        def: &ALGO_OP_PAGES[0],
+        sub_pages: subs,
+        map: Some(ALGO_WAVE.short),
+    }
+}
+
+const fn with_osc(osc: ChainBlock) -> [ChainBlock; 5] {
+    let mut b = [ALGO_BLOCKS[0]; 5];
+    let mut i = 1;
+    while i < 5 {
+        b[i] = ALGO_BLOCKS[i];
+        i += 1;
+    }
+    b[1] = osc;
+    b
+}
+
+static ALGO_OPS_BLOCKS: [ChainBlock; 5] = with_osc(ops_osc(&ALGO_OPS_OSC_SUB_PAGES));
+static ALGO_OPS_FORMANT_BLOCKS: [ChainBlock; 5] =
+    with_osc(ops_osc(&ALGO_OPS_FORMANT_OSC_SUB_PAGES));
+
+/// ALGO's chain under ALGO PAGES' OPERATOR.
+pub static ALGO_OPS_CHAIN: ChainDef2 = ChainDef2::new("Algo", &ALGO_OPS_BLOCKS, &PART_MOD_SOURCES);
+/// The same while an operator is a formant or a noise band.
+pub static ALGO_OPS_FORMANT_CHAIN: ChainDef2 =
+    ChainDef2::new("Algo", &ALGO_OPS_FORMANT_BLOCKS, &PART_MOD_SOURCES);
+
 static TAPE_SUB_PAGES: [&BlockDef; 2] = [&TAPE_MODEL, &PITCH];
 
 /// SRC · DECK · FLT · AMP · MOD: ALGO's shape with MODAL's first
@@ -1282,6 +1347,24 @@ pub static SYS_TEXT: BlockDef = BlockDef {
     ],
 };
 
+/// SETTINGS › PERSONALIZE › ALGO PAGES: FIRST, which of ALGO's views OSC
+/// opens on (ADR 0300). Held in the THEME block, stored in SYSTEM with it.
+pub static SYS_ALGO_PAGES: BlockDef = BlockDef {
+    id: 121,
+    name: "Algo Pages",
+    short: "ALG",
+    layout: PageLayout::CellGrid,
+    viz: VizType::None,
+    params: [
+        ParamSlot::param(BlockRef::Theme, ThemeSettings::ALGO_FIRST),
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+        EMPTY,
+    ],
+};
+
 /// SETTINGS › PERSONALIZE › PAD FOLLOW: whether a live hit moves KIT's pad
 /// (ADR 0268). Held in the THEME block, stored in SYSTEM with it.
 pub static SYS_FOLLOW: BlockDef = BlockDef {
@@ -1707,9 +1790,11 @@ pub static DEMO_BLOCKS: [ChainBlock; 15] = [
 ];
 
 /// The chains besides DEMO's leaves.
-const FIXED: [&ChainDef2; 26 + cfg!(feature = "usb-audio") as usize] = [
+const FIXED: [&ChainDef2; 29 + cfg!(feature = "usb-audio") as usize] = [
     &ALGO_CHAIN,
     &ALGO_FORMANT_CHAIN,
+    &ALGO_OPS_CHAIN,
+    &ALGO_OPS_FORMANT_CHAIN,
     &MODAL_PLUCK_CHAIN,
     &TAPE_CHAIN,
     &VA_CHAIN,
@@ -1729,6 +1814,7 @@ const FIXED: [&ChainDef2; 26 + cfg!(feature = "usb-audio") as usize] = [
     MAP_LEAF.chain(),
     TEXT_LEAF.chain(),
     FOLLOW_LEAF.chain(),
+    super::settings::leaves::ALGO_PAGES_LEAF.chain(),
     PUSH_LEAF.chain(),
     ABOUT_LEAF.chain(),
     AUDIO_LOAD_LEAF.chain(),
