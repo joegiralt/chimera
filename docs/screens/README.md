@@ -241,7 +241,7 @@ The UI component storyboard.
 | ![](settings_system_diag_demo_arc.png) | ARC | Glyph: ARC; a drives it unipolar, b bipolar |
 | ![](settings_system_diag_demo_none.png) | NONE | Glyph: NONE; a steps MODEL, its word has the whole band |
 | ![](settings_system_diag_demo_sw.png) | SW | Glyph: SWITCH; a flips LFO 1's SYNC, FREE / RETRIG |
-| ![](settings_system_diag_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (a tick per step) |
+| ![](settings_system_diag_demo_lvl.png) | LVL | Glyph: LEVEL BAR; a drives VOLUME (8 ticks), b operator A's FDBK (0.0 to 7.0 in tenths, a tick per whole number) |
 | ![](settings_system_diag_demo_xf.png) | XF | Glyph: CROSSFADER; a slides ALG A to B (MORPH), b dry to wet (DRV MIX); set values only |
 | ![](settings_system_diag_demo_stf.png) | STF | Glyph: STAFF; a moves a note on a three-line staff by TRANSPOSE semitones (♯ up, ♭ down, wraps past an octave); set values only |
 | ![](settings_system_diag_demo_scp.png) | SCP | Glyph: WAVE; a steps operator A's WAVE, a scope tracing one period of its own table (mip 0); static |

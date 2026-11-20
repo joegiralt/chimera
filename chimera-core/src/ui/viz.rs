@@ -945,13 +945,22 @@ where
 
 /// The ALGO page: A's layout moving to B's with MORPH. A link is drawn in
 /// MID once its blended weight reaches 0.5, FAINT below; an operator is a
-/// filled carrier once its blended carrier gain reaches 0.5.
-pub fn algo_diagram<D>(d: &mut D, a: &Algorithm, b: &Algorithm, morph: f32)
-where
+/// filled carrier once its blended carrier gain reaches 0.5. Each of
+/// `algo`'s operators that feeds back wears a loop (bank 2's
+/// `notes::loops`, ADR 0298: closed, none).
+pub fn algo_diagram<D>(
+    d: &mut D,
+    a: &Algorithm,
+    b: &Algorithm,
+    morph: f32,
+    algo: &crate::dsp::algo::params::AlgoParams,
+) where
     D: DrawTarget<Color = Rgb565>,
 {
     let on = |bit: bool| if bit { 1.0 } else { 0.0 };
     let l = alg_layout::blend(&alg_layout::layout(a), &alg_layout::layout(b), morph);
+    // The links drawn: the loops keep clear of them.
+    let mut links = [0u8; OPS];
     for src in 0..OPS {
         for dst in 0..OPS {
             let bit = 1 << dst;
@@ -961,12 +970,21 @@ where
                 morph,
             );
             if w > 0.0 {
+                links[src] |= bit;
                 let ((x0, y0), (x1, y1)) = (l.pos[src], l.pos[dst]);
                 let c = if w >= 0.5 { theme::MID } else { theme::FAINT };
                 draw::line(d, x0, y0, x1, y1, c, 1);
             }
         }
     }
+    crate::bank2::ui_door(|u| {
+        u.notes(crate::ui::notes::Ask::Loops {
+            on: &mut crate::ui::tape_strip::On(d),
+            algo,
+            at: &l,
+            links,
+        })
+    });
     for (op, &label) in crate::part::NUMERALS[1..=OPS].iter().enumerate() {
         let (x, y) = l.pos[op];
         let c = blend(

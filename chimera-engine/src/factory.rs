@@ -77,7 +77,7 @@ mod authored {
     use crate::dsp::SendLevel;
     use crate::dsp::algo::algorithms::AlgoId;
     use crate::dsp::algo::kinds::{Kinds, OpKind};
-    use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, INIT_FRMT};
+    use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk, INIT_FRMT};
     use crate::dsp::algo::waves::WaveId;
     use crate::dsp::filter::FilterKind;
     use crate::dsp::lfo::LfoParams;
@@ -166,7 +166,7 @@ mod authored {
                                 ..op(0, 99, [31, 9, 12, 4, 9])
                             },
                             AlgoOpParams {
-                                feedback: 5,
+                                feedback: Fdbk::tx(5),
                                 velocity: 4,
                                 ..op(4, 76, [31, 14, 3, 6, 9])
                             },
@@ -230,7 +230,7 @@ mod authored {
                             op(4, 72, [16, 6, 11, 2, 7]),
                             op(4, 64, [20, 4, 12, 2, 7]),
                             AlgoOpParams {
-                                feedback: 6,
+                                feedback: Fdbk::tx(6),
                                 ..op(4, 58, [14, 6, 10, 2, 7])
                             },
                             off,
@@ -352,7 +352,7 @@ mod authored {
                             op(8, 70, [31, 10, 4, 3, 8]),
                             op(4, 86, [31, 6, 9, 3, 8]),
                             AlgoOpParams {
-                                feedback: 3,
+                                feedback: Fdbk::tx(3),
                                 ..op(13, 64, [31, 8, 6, 3, 8])
                             },
                             op(4, 76, [31, 6, 9, 3, 8]),
@@ -580,12 +580,12 @@ mod authored {
                     },
                     AlgoOpParams {
                         skirt: 0,
-                        feedback: 2,
+                        feedback: Fdbk::tx(2),
                         key: 30,
                         ..band(99, F1, 72, S_AUTO, hit)
                     },
                     AlgoOpParams {
-                        feedback: 1,
+                        feedback: Fdbk::tx(1),
                         key: 30,
                         ..band(99, F2, 84, S_AUTO, hit)
                     },
@@ -676,7 +676,7 @@ mod authored {
                     },
                     AlgoOpParams {
                         skirt: 0,
-                        feedback: 3,
+                        feedback: Fdbk::tx(3),
                         key: 35,
                         ..band(97, F2, 72, S_F2, gate)
                     },

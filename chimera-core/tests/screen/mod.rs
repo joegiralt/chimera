@@ -1390,6 +1390,29 @@ pub const CASES: &[ScreenCase] = &[
         }
         feed(ui, Input::turn(EncoderId::D, 3));
     }),
+    // FINE on OP2 with DETUN off 0: the band reads the ratio and the cents
+    // (ADR 0298).
+    ("algo_fine_ratio", |ui| {
+        use chimera_core::ui::block_registry::{ALGO_DETUNE, ALGO_FINE};
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_FINE);
+        to_osc_sub(ui, &ALGO_DETUNE);
+        feed(ui, Input::turn(EncoderId::B, 2));
+        tap(ui, ButtonId::Seq); // back up to FINE
+        feed(ui, Input::turn(EncoderId::B, 7));
+    }),
+    // ALG's chart after FDBK was turned on FBK's page (ADR 0298): OP1 at
+    // 0.8 wears a soft loop, OP4 at 4.5 a bright one.
+    ("algo_alg_loops", |ui| {
+        use chimera_core::ui::block_registry::ALGO_FEEDBACK;
+        init_part(ui, PartId::ALL[0]);
+        to_osc(ui);
+        to_osc_sub(ui, &ALGO_FEEDBACK);
+        feed(ui, Input::turn(EncoderId::A, 8));
+        feed(ui, Input::turn(EncoderId::D, 45));
+        feed(ui, Input::press(ButtonId::Minus)); // back to ALG
+    }),
     // OP3's page on INIT: its envelope and wave in the band.
     ("algo_op_page_3", |ui| {
         use chimera_core::ui::block_registry::ALGO_OP_PAGES;
@@ -1631,6 +1654,19 @@ pub const CASES: &[ScreenCase] = &[
         init_part(ui, PartId::ALL[0]);
         to_osc(ui);
         to_osc_sub(ui, &chimera_core::ui::block_registry::ALGO_OP_PAGES[5]);
+        set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
+    }),
+    // ALGO PAGES at OPS (ADR 0300): OSC opens on OP1, the row runs
+    // OPERATOR 1, 2, 3.
+    ("row_osc_ops", |ui| {
+        use chimera_core::ui::theme_settings::{AlgoFirst, ThemeSettings};
+        init_part(ui, PartId::ALL[0]);
+        ui.set_theme(ThemeSettings {
+            algo_first: AlgoFirst::Operator,
+            ..ui.theme()
+        });
+        to_osc(ui);
+        feed(ui, Input::turn(EncoderId::E, 12)); // FEEDBACK 1.2, spelled out
         set_pages(ui, chimera_core::ui::theme_settings::Pages::Row);
     }),
     ("row_amp", |ui| {
@@ -2340,6 +2376,11 @@ pub const CASES: &[ScreenCase] = &[
         to_leaf(ui, &["PERSONALIZE", "PAD FOLLOW"]);
         feed(ui, Input::turn(EncoderId::A, 1));
         feed(ui, Input::turn(EncoderId::A, -1));
+    }),
+    // PERSONALIZE › ALGO PAGES (ADR 0300): FIRST turned to OPERATOR.
+    ("settings_personal_algo", |ui| {
+        to_leaf(ui, &["PERSONALIZE", "ALGO PAGES"]);
+        feed(ui, Input::turn(EncoderId::A, 1));
     }),
     // MIDI CONFIG › SYNC (ADR 0080): EXT, the default, focused.
     ("settings_midi_sync", |ui| {

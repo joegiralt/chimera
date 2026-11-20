@@ -46,6 +46,7 @@ fn settings() -> SystemSettings {
             pages: Pages::Stack,
             text: TextSize::Large,
             pad_follow: PadFollow::Always,
+            algo_first: chimera_core::ui::theme_settings::AlgoFirst::Operator,
         },
         last_project: ProjectId::new(7),
     }
@@ -670,6 +671,36 @@ fn a_system_from_before_pad_follow_is_idle() {
             .join(name);
         let f = std::fs::read(p).unwrap();
         assert_eq!(boot_bytes(&f).0.theme.pad_follow, PadFollow::Idle, "{name}");
+    }
+}
+
+/// A SYSTEM from before ALGO PAGES, either v1 fixture, loads PARAMS (ADR
+/// 0300), and each choice round-trips.
+#[test]
+fn a_system_from_before_algo_pages_is_params() {
+    use chimera_core::ui::theme_settings::AlgoFirst;
+    for name in [SYSTEM_FIXTURE, SYSTEM_MIDI_FIXTURE] {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/v1")
+            .join(name);
+        let f = std::fs::read(p).unwrap();
+        assert_eq!(
+            boot_bytes(&f).0.theme.algo_first,
+            AlgoFirst::Parameter,
+            "{name}"
+        );
+    }
+    for a in AlgoFirst::ALL {
+        let mut s = MemStore::new(1);
+        let want = SystemSettings {
+            theme: ThemeSettings {
+                algo_first: a,
+                ..ThemeSettings::DEFAULT
+            },
+            ..SystemSettings::DEFAULT
+        };
+        save(&mut s, &want);
+        assert_eq!(boot(&mut s).0.theme.algo_first, a);
     }
 }
 

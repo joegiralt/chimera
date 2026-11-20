@@ -197,7 +197,7 @@ fn algo_shape(p: &AlgoParams, routed: &[bool; OPS]) -> (u32, u32, u32) {
             OpKind::Noise => nois += nois_charge(linked.has(i)),
             OpKind::Table(_) => {}
         }
-        if p.ops[i].feedback > 0 && !matches!(kind, OpKind::Noise) {
+        if !p.ops[i].feedback.is_off() && !matches!(kind, OpKind::Noise) {
             tables += FEEDBACK;
         }
     }

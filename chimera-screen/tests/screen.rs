@@ -161,7 +161,9 @@ impl Sim {
             self.ui
                 .select_pad(p, how.pad.or(own).unwrap_or(PadId::ALL[0]));
         }
-        let chain = PartChain::of(&self.ui.project().part(p).sound).def();
+        let chain = PartChain::of(&self.ui.project().part(p).sound)
+            .ordered(self.ui.theme().algo_first)
+            .def();
         self.ui
             .go_for_test(Location::pages(p, chain.locate(def.id)?));
         self.ui.focus_for_test(how.focus.map_or(0, Slot::index));

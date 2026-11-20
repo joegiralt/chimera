@@ -763,7 +763,7 @@ fn the_costliest_patch_plays_six_voices_on_rev_v() {
     a.try_set_algs(AlgoId::A16, AlgoId::A17).unwrap();
     a.morph = 64;
     for op in a.ops.iter_mut() {
-        (op.level, op.feedback) = (99, 7);
+        (op.level, op.feedback) = (99, chimera_core::dsp::algo::params::Fdbk::tx(7));
     }
     let mut rig = Rig::rev_v();
     for n in CHORD_FULL {

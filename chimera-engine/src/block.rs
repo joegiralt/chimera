@@ -48,6 +48,9 @@ pub enum ValFmt {
     OneBased(u8),
     /// Discrete integer −N..=N shown with a sign (`-3`, `0`, `+3`).
     Signed(u8),
+    /// N + 1 steps of a tenth, shown to one decimal (`0.0` to N / 10):
+    /// ALGO's FDBK (ADR 0299). Snaps at each whole number.
+    Tenths(u8),
     /// Discrete choice 0..len-1 shown by name.
     Names(&'static [&'static str]),
     /// Stereo position: bipolar like `Bi`, shown as `L64`..`C`..`R63`.
@@ -93,6 +96,8 @@ impl ValFmt {
             // Discrete: shift-encoder jumps to 0 or max
             ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) => &[0.0, 1.0],
             ValFmt::Signed(_) => &[0.0, 0.5, 1.0],
+            // `ParamSpec::snap_target` steps Tenths by whole numbers.
+            ValFmt::Tenths(_) => &[0.0, 1.0],
             // MIN, the default, MAX.
             ValFmt::Bpm => &[0.0, BPM_SNAP, 1.0],
             // `ParamSpec::snap_target` steps LogHz by octaves.
@@ -119,14 +124,18 @@ impl ValFmt {
     pub fn is_discrete(self) -> bool {
         matches!(
             self,
-            ValFmt::Int(_) | ValFmt::OneBased(_) | ValFmt::Names(_) | ValFmt::Signed(_)
+            ValFmt::Int(_)
+                | ValFmt::OneBased(_)
+                | ValFmt::Names(_)
+                | ValFmt::Signed(_)
+                | ValFmt::Tenths(_)
         )
     }
 
     /// Max integer value (only meaningful for the discrete variants).
     pub fn max_int(self) -> u8 {
         match self {
-            ValFmt::Int(n) | ValFmt::OneBased(n) => n,
+            ValFmt::Int(n) | ValFmt::OneBased(n) | ValFmt::Tenths(n) => n,
             ValFmt::Signed(n) => n.saturating_mul(2),
             ValFmt::Names(names) => names.len().saturating_sub(1) as u8,
             ValFmt::Uni
@@ -423,12 +432,15 @@ impl ParamSpec {
         }
     }
 
-    /// `v` clamped to the range; Stepped/Enum rounded to nearest (UI input).
+    /// `v` clamped to the range; Stepped rounded to its nearest step, Enum
+    /// to its nearest choice, whose step is 1 (UI input). One rounding for
+    /// both, and a whole-number step rounds as before, bit for bit:
+    /// `v / 1.0` and `r * 1.0` are exact.
     pub fn quantize(&self, v: f32) -> f32 {
         let v = clampf(v, self.min, self.max);
         match self.kind {
             ParamKind::Continuous => v,
-            ParamKind::Stepped | ParamKind::Enum => libm::roundf(v),
+            ParamKind::Stepped | ParamKind::Enum => libm::roundf(v / self.step) * self.step,
         }
     }
 
@@ -488,8 +500,27 @@ impl ParamSpec {
     /// per block.
     #[inline(never)]
     pub fn snap_target(&self, v: f32, delta: i8) -> f32 {
-        if let ValFmt::LogHz { per_octave, .. } = self.fmt {
-            let o = f32::from(per_octave);
+        // LogHz by octaves, Tenths by whole numbers.
+        let by = match self.fmt {
+            ValFmt::LogHz { per_octave, .. } => Some(f32::from(per_octave)),
+            ValFmt::Tenths(_) => Some(1.0),
+            ValFmt::Uni
+            | ValFmt::Hold
+            | ValFmt::Inf
+            | ValFmt::Bi
+            | ValFmt::Int(_)
+            | ValFmt::OneBased(_)
+            | ValFmt::Signed(_)
+            | ValFmt::Names(_)
+            | ValFmt::Pan
+            | ValFmt::Route
+            | ValFmt::Keybd
+            | ValFmt::Law(_)
+            | ValFmt::Bpm
+            | ValFmt::Vowel
+            | ValFmt::Knob(..) => None,
+        };
+        if let Some(o) = by {
             let k = v / o;
             let k = if delta > 0 {
                 libm::floorf(k + 0.005) + 1.0
@@ -524,6 +555,13 @@ impl ParamSpec {
             scale: Scale::Octaves,
             ..self
         }
+    }
+
+    /// This stepped spec in steps of `step` (FDBK's tenths): `quantize`
+    /// rounds to them and a tick moves one.
+    pub const fn stepping(self, step: f32) -> Self {
+        assert!(matches!(self.kind, ParamKind::Stepped) && step > 0.0);
+        Self { step, ..self }
     }
 
     /// This spec under id `id`: another block's entry as its own.

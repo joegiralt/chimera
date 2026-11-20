@@ -20,7 +20,10 @@ fn demo_pages_step_like_before() {
     PageId::Demo(reg::DEMO_MOTION.id).apply_encoder(4, 1, &mut p);
     assert_eq!(p.envelopes[1].attack, 0.189 + 1.0 / 128.0);
     PageId::Demo(reg::DEMO_FM.id).apply_encoder(3, 2, &mut p);
-    assert_eq!(p.algo.ops[2].feedback, 2);
+    assert_eq!(
+        p.algo.ops[2].feedback,
+        chimera_core::dsp::algo::params::Fdbk::tenths(2)
+    );
 }
 
 /// A Sound carries no FX blocks any more.

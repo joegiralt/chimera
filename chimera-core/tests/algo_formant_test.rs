@@ -453,7 +453,8 @@ fn modulator_peaks(fb: u8) -> Vec<f32> {
             (p.ops[0].level, p.ops[4].level) = (0, 99);
             p.try_set_kind(5, OpKind::Formant).unwrap();
             let o = &mut p.ops[5];
-            (o.frmt, o.bw, o.level, o.feedback) = (80, bw, 70, fb);
+            (o.frmt, o.bw, o.level, o.feedback) =
+                (80, bw, 70, chimera_core::dsp::algo::params::Fdbk::tx(fb));
             db(op6_peak(&p, A3, 400, 100))
         })
         .into()
@@ -500,7 +501,7 @@ fn feedback_moves_the_formant_not_the_pitch() {
     let mut p = one(OpKind::Formant, 80, 72, 1);
     let a = render_algo(&p, A3, 400);
     // FDBK 5: 7 is chaotic, so no pitch reads to 0.1 cent (Task 11 ruling).
-    p.ops[0].feedback = 5;
+    p.ops[0].feedback = chimera_core::dsp::algo::params::Fdbk::tx(5);
     let b = render_algo(&p, A3, 400);
     let c = fundamental_cents(&b, 220.0);
     assert!(c.abs() < 0.1, "{c} cents");
@@ -542,7 +543,13 @@ fn formant_operators_are_stable() {
     p.try_set_algs(AlgoId::A17, p.algs().1).unwrap();
     p.try_set_kind(0, OpKind::Formant).unwrap();
     for o in &mut p.ops {
-        (o.level, o.feedback, o.frmt, o.bw, o.skirt) = (99, 7, 168, 216, 3);
+        (o.level, o.feedback, o.frmt, o.bw, o.skirt) = (
+            99,
+            chimera_core::dsp::algo::params::Fdbk::tx(7),
+            168,
+            216,
+            3,
+        );
     }
     let out = render_algo(&p, C3, 30 * 750);
     assert!(out.iter().all(|x| x.is_finite()));

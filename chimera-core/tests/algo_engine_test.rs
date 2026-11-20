@@ -56,7 +56,7 @@ fn stack(a: AlgoId, b: AlgoId, morph: u8) -> AlgoParams {
         *o = AlgoOpParams {
             level: 99,
             coarse: [4, 8, 10, 13, 16, 19][i],
-            feedback: 3,
+            feedback: chimera_core::dsp::algo::params::Fdbk::tx(3),
             ..AlgoOpParams::default()
         };
     }
@@ -69,7 +69,7 @@ fn stack(a: AlgoId, b: AlgoId, morph: u8) -> AlgoParams {
 fn sines(p: AlgoParams, level: u8) -> AlgoParams {
     let mut p = p;
     for i in 0..6 {
-        (p.ops[i].feedback, p.ops[i].level) = (0, level);
+        (p.ops[i].feedback, p.ops[i].level) = (chimera_core::dsp::algo::params::Fdbk::OFF, level);
         p.try_set_kind(i, OpKind::Table(WaveId::W1)).unwrap();
     }
     p
@@ -246,7 +246,8 @@ fn extreme_parameter_bytes_render_finite_and_bounded() {
         d2r: 255,
         rr: 255,
         rate_scale: 255,
-        feedback: 255,
+        // A byte past the top can't be made: `Fdbk` holds it to 7.0.
+        feedback: chimera_core::dsp::algo::params::Fdbk::tenths(255),
         velocity: 255,
         frmt: 255,
         bw: 255,

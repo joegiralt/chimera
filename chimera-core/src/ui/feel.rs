@@ -62,6 +62,9 @@ pub fn accel(v: &View) -> Accel {
 /// choice (a list turn is a row a detent already), nor a cell drawn on
 /// the staff (TRANSPOSE: its notes fill the band); and one whose words
 /// leave the fine turn's hint room (no words of its own).
+/// Inlined: out of line, a caller the linker keeps in bank 1 would
+/// call into bank 2 past the door.
+#[inline(always)]
 pub fn takes(v: &View, w: Words) -> bool {
     matches!(v, View::Param { .. })
         && accel(v) == Accel::Param
@@ -174,6 +177,7 @@ pub fn hint(v: &View, w: Words, band: Band, push: Pushes) -> Hint {
     }
     match band {
         Band::Sound | Band::Mixer { mix: false } if takes(v, w) => match w {
+            _ if band == Band::Sound && is_fdbk(v) => &FDBK_TURNS,
             Words::Learn => &FINE_LEARN,
             Words::Pad => &PAD_FINE,
             _ => &FINE,
@@ -185,7 +189,7 @@ pub fn hint(v: &View, w: Words, band: Band, push: Pushes) -> Hint {
 
 /// The words this module adds, named so they link into bank 2 with it
 /// (`bank2.x`'s `.rodata.*feel*`), not into bank 1's unnamed rodata.
-static WORDS: [u8; 23] = *b"SEQ+TURNFINEPUSH/SEQ Hz";
+static WORDS: [u8; 36] = *b"SEQ+TURNFINEPUSH/SEQ HzMIX+TURNWHOLE";
 
 /// `WORDS[at..at + len]`; checked at compile time (`WORDS` is UTF-8).
 const fn word(at: usize, len: usize) -> &'static str {
@@ -199,6 +203,21 @@ const fn word(at: usize, len: usize) -> &'static str {
 
 /// SEQ held, a turn steps fine; unspaced, so learn's words fit beside.
 const FINE_TURN: Gesture<'static> = Gesture(word(0, 8), word(8, 4));
+
+/// ALGO's FDBK (ADR 0299): MIX + a turn steps the TX81Z's whole numbers,
+/// SEQ + a turn its tenths one a detent.
+pub static FDBK_TURNS: [Gesture<'static>; 2] = [Gesture(word(23, 8), word(31, 5)), FINE_TURN];
+
+/// Whether `v` is an ALGO operator's FDBK.
+fn is_fdbk(v: &View) -> bool {
+    matches!(
+        v.addr(),
+        Some(crate::addr::ParamAddr {
+            block: crate::addr::BlockRef::AlgoOp(_),
+            param: crate::dsp::algo::params::AlgoOpParams::FEEDBACK,
+        })
+    )
+}
 
 /// A value cell with no words of its own.
 pub static FINE: [Gesture<'static>; 1] = [FINE_TURN];
