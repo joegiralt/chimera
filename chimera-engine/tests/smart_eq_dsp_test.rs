@@ -838,6 +838,49 @@ fn the_bands_sum_against_the_cuts_asked_on_a_fine_grid() {
             f.short
         );
     }
+    // Between the knots: every pair of bands, each from 0 to 21 dB by
+    // 0.5 (the cuts move through every depth on their way).
+    let mut pairs = Fit::default();
+    let steps: Vec<f32> = (0..=42).map(|i| 0.5 * i as f32).collect();
+    for x in Band::ALL {
+        for y in Band::ALL {
+            if x.index() >= y.index() {
+                continue;
+            }
+            for &cx in &steps {
+                for &cy in &steps {
+                    let mut cuts = [0.0f32; 4];
+                    (cuts[x.index()], cuts[y.index()]) = (cx, cy);
+                    let d = dips(&cuts.map(CutDb::new));
+                    for (at, &hz) in grid.iter().enumerate() {
+                        let g = db(&d, at);
+                        pairs.deeper = pairs.deeper.max(-g - cx.max(cy) as f64);
+                        if g > pairs.over {
+                            (pairs.over, pairs.over_hz) = (g, hz);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("pairs {pairs:?}");
+    assert!(pairs.deeper < PAIRS_DEEPER, "{:.3} dB deeper", pairs.deeper);
+    assert!(
+        pairs.over < PAIRS_BOOST,
+        "{:.3} dB over at {} Hz",
+        pairs.over,
+        pairs.over_hz
+    );
+    // The lift is not only between LOW MID and HIGH MID: under LOW too.
+    let mut cuts = [0.0f32; 4];
+    cuts[Band::LowMid.index()] = 21.0;
+    let d = dips(&cuts.map(CutDb::new));
+    let under = (0..160)
+        .filter(|&at| grid[at] < 60.0)
+        .map(|at| db(&d, at))
+        .fold(0.0, f64::max);
+    println!("under 60 Hz, LOW MID at 21 dB: {under:.3} dB");
+    assert!(under < PAIRS_BOOST);
     // No cut is no dip, exactly.
     assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
 }
@@ -852,6 +895,11 @@ const DEEPER: [f64; 3] = [0.1, 0.1, 0.1];
 const BOOST: [f64; 3] = [0.3, 0.5, 0.6];
 const READOUT: [f64; 3] = [0.01, 0.01, 0.01];
 const SHORT: [f64; 3] = [0.05, 0.2, 2.4];
+/// Any two bands at any depths to 21 dB by 0.5: measured 0.10 dB deeper
+/// than the deeper asked, 0.56 dB over unity (at 1.76 kHz; 0.39 under
+/// 60 Hz with LOW MID at 21 dB).
+const PAIRS_DEEPER: f64 = 0.15;
+const PAIRS_BOOST: f64 = 0.6;
 
 #[test]
 fn amount_s_curve_passes_its_knots_and_only_ever_deepens() {
@@ -1205,8 +1253,7 @@ fn only_a_kick_is_an_onset() {
         0.4 * (-u / 0.08).exp() * (0.5 * tone + noise(t))
     };
     let (plain, plain_on) = kit_over_bass(|t| 0.8 * kick_at(t % 0.5), 6.0);
-    let (with, with_on) =
-        kit_over_bass(move |t| 0.8 * kick_at(t % 0.5) + snare(t), 6.0);
+    let (with, with_on) = kit_over_bass(move |t| 0.8 * kick_at(t % 0.5) + snare(t), 6.0);
     // Settled, from the second kick: twelve kicks, eleven onsets. (From
     // silence the first kick's key has no peak to be near yet.)
     let settled = |on: &[usize]| on.iter().filter(|&&k| k > ms(250.0)).count();
@@ -1216,7 +1263,10 @@ fn only_a_kick_is_an_onset() {
         let kick = ms(500.0 * bar as f32);
         for at in ms(130.0)..ms(480.0) {
             let (a, b) = (plain[kick + at], with[kick + at]);
-            assert!((a - b).abs() < 1.0, "bar {bar}, block {at}: {a} dB plain, {b} with");
+            assert!(
+                (a - b).abs() < 1.0,
+                "bar {bar}, block {at}: {a} dB plain, {b} with"
+            );
         }
     }
     // One tom is one onset, one ghost kick is one.
@@ -1241,7 +1291,10 @@ fn only_a_kick_is_an_onset() {
             0.8 * kick_at(t) + 0.6 * swell * (2.0 * PI * sub * u).sin()
         };
         let (_, on) = kit_over_bass(trem, 5.0);
-        assert!(settled(&on) <= 1, "a {sub} Hz sub, tremolo {rate} Hz: {on:?}");
+        assert!(
+            settled(&on) <= 1,
+            "a {sub} Hz sub, tremolo {rate} Hz: {on:?}"
+        );
     }
 }
 
@@ -1256,7 +1309,12 @@ fn a_return_moved_to_front_still_runs_cut_until_its_cuts_let_go() {
     let mut k = 0;
     let mut run = |st: &mut SmartState, role: Role, blocks: usize| {
         for _ in 0..blocks {
-            washed(st, k * BLOCK_SIZE, (&lead, Role::Front, false), (Some(&wash), role));
+            washed(
+                st,
+                k * BLOCK_SIZE,
+                (&lead, Role::Front, false),
+                (Some(&wash), role),
+            );
             k += 1;
         }
     };

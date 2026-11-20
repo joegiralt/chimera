@@ -107,9 +107,17 @@ bench-algo.
      of gap moves the swing by 1 dB. Slower kicks each dip and let go.
      Held, not a release scaled to the gap: a release that slow would
      smear a sparse kick's dip into a duck.
-   - An onset is the key hitting after quiet, or rising 2 dB between the
-     rule's turns while still high (a kick over the last one's body), no
-     sooner than 20 ms after the last.
+   - An onset is the key within 3 dB of its recent peak and risen 3 dB
+     over its floor (the key followed down at once and up no faster than
+     150 dB a second), no sooner than 45 ms after the last: a kick after
+     quiet or over the last one's body. Not an onset: a snare's LOW on
+     the same Part, a tom's or a ghost kick's ripple, a held sub's
+     tremolo (to 8 Hz). A kit holding a tone under about 35 Hz ripples
+     past the floor; its onsets only steady a dip already held down.
+   - **A kick under about −51 dBFS in LOW is no onset and no dip**: a hit
+     is scaled by how active its peak is (silence −66 dBFS, whole 24 dB
+     over), and an onset needs half a hit. A quiet kit does not dip the
+     bass.
    - LOW plays the deeper of its slow cut and the dip. Whole-mix pumping
      is not this (#13).
 5. **AMOUNT is a curve (owner).** How deep BACK yields under FRONT (one
@@ -138,9 +146,13 @@ bench-algo.
    cuts (the kick's 15 and 27 dB in LOW among them), at 64 · 95 · 127:
    - the sum is at most 0.05 · 0.01 · 0.003 dB deeper than the deepest
      cut asked;
-   - **it rises over unity between two bands**, where a cut's neighbour
-     is lifted to hold its own centre: 0.27 · 0.46 · 0.56 dB at most,
-     near 500 to 650 Hz (0.2 dB for one 6 dB cut). Holding the lift down
+   - **it rises over unity beside a cut**, where the cut's neighbour is
+     lifted to hold its own centre: 0.27 · 0.46 · 0.56 dB at most, near
+     500 to 650 Hz and 1.77 kHz between two bands and under LOW
+     (0.20 · 0.32 · 0.41 dB at 59.5 Hz); 0.2 dB for one 6 dB cut.
+   - **between the knots** (the cuts pass through every depth): any two
+     bands from 0 to 21 dB each give a sum up to 0.14 dB deeper than the
+     deeper asked and the same 0.56 dB of lift at most. Holding the lift down
      costs more than it saves (no lift at all: 0.6 · 1.6 · 7.3 dB too
      deep), so it stays;
    - **deep, the bands' phase holds a centre up**: a band cut alone is
@@ -161,9 +173,12 @@ bench-algo.
    - Its bands run on the return itself, after the reverb plays and
      before it joins pair 1 (`FxBus::process_washed`), so the tail
      already ringing is carved and dipped. Left and right take the same
-     dips through the pairs that cut; it is heard as their sum at
-     equal power ((L + R)/√2: a reverb's sides are decorrelated, so it
-     reads as one side does, as a Part's bus would), decimated; at unity it is read, never written; a reverb at rest
+     dips through the pairs that cut; it is heard as (L + R)/√2,
+     decimated: a decorrelated return reads as one of its sides does,
+     about 3 dB under a centred Part of the same loudness in the mix; and
+     the Parts are read before LEVEL, the return after the reverb's MIX.
+     So the return's level against a Part's is not like for like: a
+     return must be a little louder than a Part to be cut as one would; at unity it is read, never written; a reverb at rest
      (`Reverb::play` silent) is not run.
    - **Where the sends are tapped (verified, `mix_sided`):** a Part's
      three sends take its bus after its EQ and SMART EQ's cuts

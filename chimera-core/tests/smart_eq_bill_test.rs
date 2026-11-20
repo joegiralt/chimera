@@ -140,7 +140,12 @@ fn a_cut_part_moved_to_front_keeps_the_cut_bill_until_its_cuts_let_go() {
     rig.note_on(1, 36);
     let most = |rig: &InstRig| {
         let slots = rig.inst.allocator().slots();
-        slots.iter().filter(|s| !s.is_free()).map(|s| s.cost()).max().unwrap()
+        slots
+            .iter()
+            .filter(|s| !s.is_free())
+            .map(|s| s.cost())
+            .max()
+            .unwrap()
     };
     rig.render(3_000);
     assert_eq!(most(&rig).0, plain.0 + CUT.0);
@@ -151,6 +156,9 @@ fn a_cut_part_moved_to_front_keeps_the_cut_bill_until_its_cuts_let_go() {
         blocks += 50;
         assert!(blocks < 30_000, "the cut lets go");
     }
-    assert!(blocks > 750, "billed as cut while it lets go: {blocks} blocks");
+    assert!(
+        blocks > 750,
+        "billed as cut while it lets go: {blocks} blocks"
+    );
     assert_eq!(most(&rig).0, plain.0 + LISTEN.0);
 }

@@ -286,8 +286,10 @@ const RESPONSE: [[(f32, f32); BANDS]; BANDS] = [
 /// asked at each band's centre, as far as their in-phase parts go: the
 /// inverse of `RESPONSE`'s real parts. Raw, four 6 dB dips reach −8.8 dB
 /// at 428 Hz; with this the sum is at most 0.05 dB deeper than the
-/// deepest cut asked, and up to 0.27 dB (AMOUNT 64) to 0.56 dB (127)
-/// over unity between two bands, where a cut's neighbour is lifted
+/// deepest cut asked at AMOUNT's knots (0.14 dB at depths between, two
+/// bands anywhere to 21 dB), and up to 0.27 dB (AMOUNT 64) to 0.56 dB
+/// (127) over unity beside a cut, where its neighbour is lifted: between
+/// two bands (500 to 650 Hz, 1.77 kHz) and under LOW (0.4 dB below 60 Hz)
 /// (ADR 0296 § 6, `the_bands_sum_against_the_cuts_asked_on_a_fine_grid`).
 /// Deep, the neighbours' quarter-turn parts hold a band's centre up: two
 /// adjacent bands asked 21 dB reach 10 to 18 dB. What the bands really do at each centre is
@@ -1144,9 +1146,9 @@ pub fn run_wash(st: &mut SmartState, wet: &mut Stereo, reverb: Returned, sample_
     let (from, to) = w.cuts.ramp();
     let mut heard = Energy::NONE;
     if reverb == Returned::Sounding {
-        // Left and right at equal power: a reverb's sides are decorrelated,
-        // so their sum at 1/√2 reads as one side does, and as a Part's
-        // bus would (a return with both sides alike reads 3 dB over).
+        // (L + R)/√2: a reverb's sides are decorrelated, so this reads as
+        // one side does, about 3 dB under a centred Part as loud in the
+        // mix (ADR 0296 § 8: not like for like with a Part's bus).
         let mut sum = [0.0f32; BLOCK_SIZE];
         for ((s, l), r) in sum.iter_mut().zip(&wet.l).zip(&wet.r) {
             *s = core::f32::consts::FRAC_1_SQRT_2 * (l + r);
