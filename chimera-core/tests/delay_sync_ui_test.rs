@@ -96,8 +96,21 @@ fn sync_is_cell_e_on_char_and_grain() {
 fn mix_turn_on_time_flips_sync_and_is_hinted() {
     let _alone = alone();
     let mut ui = on_delay();
-    let flip: hint::Hint = &[Gesture("MIX + TURN", "FREE / SYNC")];
-    assert_eq!(ui.focus_hint_for_test(), flip);
+    // The flip, and beside it learn's words where a CC may drive the
+    // cell, else FREE's fine turn: neither gesture lost its hint.
+    let learn = Gesture("MIX + SEQ", "LEARN");
+    let mapped = cfg!(feature = "midi-map");
+    let to_sync = Gesture("MIX+TURN", "SYNC");
+    let to_free = Gesture("MIX+TURN", "FREE");
+    let free: Vec<Gesture> = match mapped {
+        true => vec![to_sync, learn],
+        false => vec![to_sync, Gesture("SEQ+TURN", "FINE")],
+    };
+    let synced: Vec<Gesture> = match mapped {
+        true => vec![to_free, learn],
+        false => vec![to_free],
+    };
+    assert_eq!(ui.focus_hint_for_test(), &free[..]);
     let before = delay(&ui);
     assert_eq!(before.sync(), DelaySync::Free);
 
@@ -111,7 +124,7 @@ fn mix_turn_on_time_flips_sync_and_is_hinted() {
         Some(at(DelayParams::NOTE))
     );
     assert_eq!(view::view(&reg::DELAY, TIME_SLOT, &ctx).label(), "TIME");
-    assert_eq!(ui.focus_hint_for_test(), flip);
+    assert_eq!(ui.focus_hint_for_test(), &synced[..]);
     mix_turn(&mut ui, TIME, 3);
     assert_eq!(delay(&ui).sync(), DelaySync::Sync, "SYNC is the end");
     assert_eq!(
@@ -122,6 +135,7 @@ fn mix_turn_on_time_flips_sync_and_is_hinted() {
 
     mix_turn(&mut ui, TIME, -1);
     assert_eq!(delay(&ui), before, "back in FREE, as it was");
+    assert_eq!(ui.focus_hint_for_test(), &free[..]);
     mix_turn(&mut ui, TIME, -1);
     assert_eq!(delay(&ui), before);
     // No other cell of the page takes it: FDBK's MIX + turn snaps.
@@ -233,11 +247,17 @@ fn a_folded_note_reads_as_it_plays_and_redraws() {
 #[test]
 fn the_words_fit() {
     let _alone = alone();
-    use chimera_core::ui::delay_sync::{DOUBLED, FLIP, HALVED, SYNC_WORDS};
+    use chimera_core::ui::delay_sync::{
+        DOUBLED, FREE_FINE, FREE_LEARN, HALVED, SYNC_LEARN, SYNC_PLAIN, SYNC_WORDS,
+    };
     let line = screen::W as i32 - 2 * theme::MARGIN_X;
-    for size in [TextSize::Normal, TextSize::Large] {
-        let w = hint::width_at(&FLIP, size);
-        assert!(w <= line, "the hint is {w} px of {line} at {size:?}");
+    // Each hint fits the band's line at NORMAL; at LARGE the band draws a
+    // line that doesn't fit in NORMAL's faces (`hint::focus`), checked
+    // drawn below.
+    let hints: [hint::Hint; 4] = [&FREE_LEARN, &FREE_FINE, &SYNC_LEARN, &SYNC_PLAIN];
+    for h in hints {
+        let w = hint::width_at(h, TextSize::Normal);
+        assert!(w <= line, "{h:?} is {w} px of {line}");
     }
     for words in [HALVED, DOUBLED, SYNC_WORDS] {
         let w = draw::text_width(&theme::FONT_LABEL, words, theme::LABEL_TRACKING);

@@ -343,6 +343,47 @@ fn a_tempo_sweep_flips_the_fold_once_each_way() {
     assert_eq!(d.fold(), FoldState(0));
 }
 
+/// The same note at the same tempo plays the same however the knob got
+/// there. At 81 BPM 1/4T is 493.8 ms and fits; 1/4 and 1/8D are halved.
+/// Turned down to from 1/4, up to from 1/8, through 1/8D, or from rest,
+/// 1/4T plays whole; and 1/4, halved, plays halved from either side.
+#[test]
+fn a_note_plays_the_same_however_it_was_reached() {
+    let (q, qt, ed, e) = (
+        note(4, DivKind::Straight),
+        note(4, DivKind::Triplet),
+        note(8, DivKind::Dotted),
+        note(8, DivKind::Straight),
+    );
+    let lands = |turns: &[DelayNote]| {
+        let mut d = Box::new(TapeDelay::new());
+        let mut buf = [0.0; BLOCK_SIZE];
+        for &n in turns {
+            for _ in 0..40 {
+                d.play(&mut buf, &on(clean(), n), Tempo(81.0), FS);
+            }
+        }
+        (d.head().0, d.fold())
+    };
+    let whole = (fitted(qt, 81.0).0 as f32, FoldState(0));
+    assert!((whole.0 - 493.83 * 48.0).abs() < 1.0);
+    for turns in [
+        &[qt][..],
+        &[q, qt],
+        &[q, ed, qt],
+        &[e, qt],
+        &[ed, qt],
+        &[qt, q, qt],
+    ] {
+        assert_eq!(lands(turns), whole, "{turns:?}");
+    }
+    let halved = lands(&[q]);
+    assert_eq!(halved.1, FoldState(1));
+    for turns in [&[qt, q][..], &[e, q], &[q, ed, q]] {
+        assert_eq!(lands(turns), halved, "{turns:?}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GRAIN
 // ---------------------------------------------------------------------------

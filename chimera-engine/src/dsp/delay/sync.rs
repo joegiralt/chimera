@@ -103,6 +103,23 @@ pub struct Slide {
     lands: f32,
 }
 
+impl Slide {
+    /// No glide: what `tape::span` takes where the head stays.
+    pub(super) const STILL: Slide = Slide {
+        from: 0.0,
+        to: 0.0,
+        lands: 0.0,
+    };
+
+    /// The head's speed on the block's first sample's side, and half its
+    /// change a sample: sample `n` (from 1) reads `(from + bend · n) · n`
+    /// off where the block began.
+    #[inline(always)]
+    pub(super) fn curve(&self) -> (f32, f32) {
+        (self.from, (self.to - self.from) / (2 * BLOCK_SIZE) as f32)
+    }
+}
+
 /// How fast the head closes on its time: a block covers this share of
 /// what is left, so it slows in as a transport does.
 const GLIDE_SHARE: f32 = 0.25;
@@ -111,16 +128,22 @@ const GLIDE_SHARE: f32 = 0.25;
 const GLIDE_NEAR: f32 = 0.05;
 
 /// The block's transport constants with TIME as `p` and `tempo` give it
-/// (FREE: the knob's ms, as ever), and why it moved. Keeps the fold.
+/// (FREE: the knob's ms, as ever), and why it moved. Keeps the fold
+/// while the note stays: a note turned to is fitted from rest, so the
+/// same note at the same tempo plays the same however it was reached,
+/// and the hysteresis spans tempo moves alone.
 #[inline(never)]
 pub fn tap(d: &mut TapeDelay, p: &DelayParams, tempo: Tempo, fs: u32) -> (Tap, Cause) {
     let mut tap = Tap::new(p, fs);
     let aim = Aim::of(p);
     let was = (d.aim, d.fold);
+    if aim != d.aim {
+        d.fold = FoldState(0);
+    }
     match aim.sync {
         DelaySync::Free => d.fold = FoldState(0),
         DelaySync::Sync => {
-            let ms = fit(NOTES[aim.note.index()].ms(tempo), &mut d.fold);
+            let ms = fit(aim.note.division().ms(tempo), &mut d.fold);
             tap.base = clampf(ms * fs as f32 / 1000.0, 1.0, (MAX_DELAY_SAMPLES - 2) as f32);
         }
     }
@@ -144,7 +167,9 @@ pub fn aim(d: &mut TapeDelay, p: &DelayParams, tempo: Tempo, fs: u32) -> (Tap, O
     if !d.primed {
         (d.time, d.primed) = (tap.base(), true);
     }
-    if d.fade != 0 || tap.base() == d.time {
+    // At rest on its time: nothing to do. A head on its time but still
+    // moving goes on to stop.
+    if d.fade != 0 || (tap.base() == d.time && d.speed == 0.0) {
         return (tap, None);
     }
     let far = tap.base() - d.time;
@@ -201,14 +226,80 @@ pub(super) fn glide(
     s: Slide,
     insert: bool,
 ) {
-    let bend = (s.to - s.from) / (2 * BLOCK_SIZE) as f32;
-    span::<false, true, true>(d, buf, tap, e, (s.from, bend), insert);
+    span::<false, true, true>(d, buf, tap, e, s, insert);
     d.time = s.lands;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
+    use std::boxed::Box;
+
+    /// A delay with a second of noise through it, feedback and MECHANICS
+    /// running, SYNC on 1/8D at 120 BPM.
+    fn warm() -> (Box<TapeDelay>, DelayParams) {
+        let p = DelayParams {
+            feedback: 0.7,
+            wow_flutter: 0.4,
+            ..DelayParams::DEFAULT
+        }
+        .with(DelayParams::SYNC, DelaySync::Sync.value());
+        let mut d = Box::new(TapeDelay::new());
+        let mut rng = 0x1234_5678u32;
+        for _ in 0..750 {
+            let mut buf = [0.0; BLOCK_SIZE];
+            for s in &mut buf {
+                *s = crate::dsp::xorshift_noise(&mut rng) * 0.5;
+            }
+            d.play(&mut buf, &p, Tempo(120.0), 48_000);
+        }
+        (d, p)
+    }
+
+    /// A gliding block whose head doesn't move is the plain block, bit
+    /// for bit: the line, the return and every state.
+    #[test]
+    fn a_still_glide_is_the_plain_block() {
+        let (mut a, p) = warm();
+        let (mut b, _) = warm();
+        let tap = Tap::new(&p, 48_000);
+        let input: [f32; BLOCK_SIZE] = core::array::from_fn(|i| (i as f32 * 0.37).sin() * 0.4);
+        let (mut x, mut y) = (input, input);
+        let e = a.eased(&p, 48_000);
+        span::<false, true, false>(&mut a, &mut x, &tap, e, Slide::STILL, false);
+        let e = b.eased(&p, 48_000);
+        let still = Slide {
+            lands: b.time,
+            ..Slide::STILL
+        };
+        glide(&mut b, &mut y, &tap, e, still, false);
+        assert_eq!(x.map(f32::to_bits), y.map(f32::to_bits));
+        assert!(a.buffer == b.buffer);
+        assert_eq!(a.time.to_bits(), b.time.to_bits());
+        assert_eq!(a.lp_state.to_bits(), b.lp_state.to_bits());
+        assert_eq!(
+            (a.write_pos, a.zeros, a.transport),
+            (b.write_pos, b.zeros, b.transport)
+        );
+    }
+
+    /// A head on its time with a glide's speed left over doesn't rest
+    /// there: it takes one block to stop, back on its time, and then rests.
+    #[test]
+    fn a_stale_speed_is_stopped() {
+        let (mut d, p) = warm();
+        assert_eq!((d.time, d.speed), (18_000.0, 0.0));
+        d.speed = 0.01;
+        let (tap, slide) = aim(&mut d, &p, Tempo(120.0), 48_000);
+        let s = slide.expect("a block to stop in");
+        assert_eq!((s.from, s.lands), (0.01, 18_000.0));
+        assert_eq!(d.speed, 0.0);
+        let e = d.eased(&p, 48_000);
+        glide(&mut d, &mut [0.0; BLOCK_SIZE], &tap, e, s, false);
+        assert_eq!(aim(&mut d, &p, Tempo(120.0), 48_000).1, None);
+        assert_eq!((d.time, d.speed, d.fade), (18_000.0, 0.0, 0));
+    }
 
     fn note(den: u8, kind: crate::dsp::rev::sync::DivKind) -> DelayNote {
         let i = NOTES

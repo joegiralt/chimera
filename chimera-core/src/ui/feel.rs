@@ -163,8 +163,9 @@ pub enum Pushes {
 /// plain or mapped value cell hints them, and the SEQ fine turn in the
 /// push's own gesture.
 pub fn hint(v: &View, w: Words, band: Band, push: Pushes) -> Hint {
-    // The delay's TIME: MIX + turn flips SYNC (ADR 0302), its own words.
-    if let Some(h) = crate::ui::delay_sync::hint(v) {
+    // The delay's TIME: MIX + turn flips SYNC (ADR 0302), beside learn's
+    // words or the fine turn.
+    if let Some(h) = crate::ui::delay_sync::hint(v, w) {
         return h;
     }
     let generic = matches!(w, Words::Plain | Words::Learn);
@@ -202,7 +203,7 @@ const fn word(at: usize, len: usize) -> &'static str {
 }
 
 /// SEQ held, a turn steps fine; unspaced, so learn's words fit beside.
-const FINE_TURN: Gesture<'static> = Gesture(word(0, 8), word(8, 4));
+pub(crate) const FINE_TURN: Gesture<'static> = Gesture(word(0, 8), word(8, 4));
 
 /// ALGO's FDBK (ADR 0299): MIX + a turn steps the TX81Z's whole numbers,
 /// SEQ + a turn its tenths one a detent.

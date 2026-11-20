@@ -3,6 +3,7 @@
 
 #[cfg(any(feature = "bank2", not(target_os = "none")))]
 use super::DelayType;
+use super::sync::Slide;
 use super::{
     DelayParams, Eased, FLUTTER_SAMPLES, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay, WOW_SAMPLES,
     read, to_line,
@@ -56,16 +57,13 @@ pub fn run(
         return true;
     }
     match (d.fade > 0, e.moving()) {
-        (false, false) => span::<false, false, false>(d, buf, &tap, e, STILL, insert),
-        (false, true) => span::<false, true, false>(d, buf, &tap, e, STILL, insert),
-        (true, false) => span::<true, false, false>(d, buf, &tap, e, STILL, insert),
-        (true, true) => span::<true, true, false>(d, buf, &tap, e, STILL, insert),
+        (false, false) => span::<false, false, false>(d, buf, &tap, e, Slide::STILL, insert),
+        (false, true) => span::<false, true, false>(d, buf, &tap, e, Slide::STILL, insert),
+        (true, false) => span::<true, false, false>(d, buf, &tap, e, Slide::STILL, insert),
+        (true, true) => span::<true, true, false>(d, buf, &tap, e, Slide::STILL, insert),
     }
     false
 }
-
-/// No glide: `span`'s `slide` where the head stays.
-const STILL: (f32, f32) = (0.0, 0.0);
 
 /// Whether a steady, unfaded block of `span` would leave everything but the
 /// transport and the write head as it is (#793): the send all +0, the line
@@ -108,15 +106,14 @@ fn idle(
 /// The block: `FADE` while a TIME crossfade runs, `RAMP` while any
 /// eased setting moves (each ramps from its `.0` to its `.1`; one
 /// that isn't moving ramps by 0, so plays its value), `GLIDE` while the
-/// head moves at `slide.0` samples a sample, changing by `2 · slide.1` a
-/// sample (`sync::glide`'s alone).
+/// head moves along `slide` (`sync::glide`'s alone).
 #[inline(always)]
 pub(super) fn span<const FADE: bool, const RAMP: bool, const GLIDE: bool>(
     d: &mut TapeDelay,
     buf: &mut [f32; BLOCK_SIZE],
     tap: &Tap,
     e: Eased,
-    slide: (f32, f32),
+    slide: Slide,
     insert: bool,
 ) {
     let ramp = |v: (f32, f32)| (v.0, step_of(v, BLOCK_SIZE));
@@ -143,6 +140,7 @@ pub(super) fn span<const FADE: bool, const RAMP: bool, const GLIDE: bool>(
     // make the compiler reload and store it every sample.
     let (mut transport, mut write_pos, mut lp_state) = (d.transport, d.write_pos, d.lp_state);
     let (time, next) = (d.time, d.next);
+    let curve = slide.curve();
     // From the old head to the new, linearly: the new head's weight.
     let dt = 1.0 / f32::from(TIME_FADE);
     let mut t = 1.0 - f32::from(d.fade) * dt;
@@ -161,7 +159,7 @@ pub(super) fn span<const FADE: bool, const RAMP: bool, const GLIDE: bool>(
         let time = if GLIDE {
             // The head's speed ramps across the block: no kink.
             let n = (i + 1) as f32;
-            time + (slide.0 + slide.1 * n) * n
+            time + (curve.0 + curve.1 * n) * n
         } else {
             time
         };

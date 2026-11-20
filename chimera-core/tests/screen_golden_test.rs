@@ -343,7 +343,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // SYNC (ADR 0302): TIME reads its note; CHAR and GRAIN above hold
     // SYNC in cell E.
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_sync", 0x7289f811a489c546),
+    ("mixer_fx_delay_sync", 0xf9941b61166b8fde),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
@@ -391,7 +391,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_grain_needs_update", 0x4d0db4ababe3a198),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_sync", 0xf6084017ec3e2498),
+    ("mixer_fx_delay_sync", 0x6953a742e52a5f70),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xd56bc8774f6193e4),
     #[cfg(feature = "master-tape")]
