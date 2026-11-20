@@ -12,6 +12,26 @@ pub enum SmartScope {
     All,
 }
 
+/// MST › LVL's cells, A to F (`block_registry::MASTER_LEVEL`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum LevelCell {
+    Vol,
+    Pan,
+    Spare,
+    SmartEq,
+    Amount,
+    /// The reverb return's SMART EQ role.
+    WashRole,
+}
+
+impl LevelCell {
+    /// Its slot among the page's six.
+    pub const fn slot(self) -> usize {
+        self as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VizType {
     None,

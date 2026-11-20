@@ -389,7 +389,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
       .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);\n";
     // A Part's MAX VOICES and RESERVE (ADR 0281, `UiDoor::voices`, its
     // one entry): `ui::part_voices`, beside the voice groups; and SMART
-    // EQ's band (ADR 0296, `UiDoor::smart_eq`): `ui::smart_eq`.
+    // EQ's band (ADR 0296, asked through `UiDoor::meters`): `ui::smart_eq`.
     // `ToastTimer::shows`' instance (`Option<Toast>::is_some_and` with
     // its closure): only kit_groups and part_voices call it.
     // `Shares::refusal` is only ever called from part_voices: placed with

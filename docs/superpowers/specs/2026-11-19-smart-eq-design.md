@@ -122,7 +122,7 @@ sample more a cut Part: open question 1.
   120 BPM hits every 0.5 s: the slow cuts sit near their average.
 - Every dip is lerped across its block, sample by sample: at polite
   depths under 0.001 dB a sample for the slow cuts, 0.05 for the kick's.
-- Dense kicks (onsets under 150 ms apart) hold one steady dip; sparse
+- Dense kicks (onsets to 100 ms apart, fading out by 220 ms) hold one steady dip; sparse
   ones each dip and let go.
 
 ### 6. Where it lives
@@ -202,8 +202,11 @@ Clean room: no code read or copied from any implementation.
   kick, gone by 240 ms, none on the snares, no click above 2 kHz.
 - 16ths at 170 BPM hold one dip (under 0.5 dB peak to peak); quarter
   notes at 120 BPM each let go.
-- Every combination of cuts to 21 dB on the real filters: never deeper
-  than the deepest asked, and the readout is what the filters do.
+- Every combination of the knots' cuts on the real filters, on a fine
+  grid: the measured bounds of ADR 0296 § 6, and the readout is what the
+  filters do.
+- Kick gaps from 60 to 400 ms: no cliff; 32nds at 120 BPM one dip.
+- A Part moved to FRONT is billed as cut until its cuts let go.
 - AMOUNT's curve passes its knots and only deepens.
 - A listened Part's side is never run; a cut Part's side takes the cut.
 - The reverb's return yields by its role, takes the kick's dip, makes

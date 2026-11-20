@@ -651,16 +651,22 @@ fn a_part_hears_the_same_listened_to_or_cut() {
 /// block's own filters run them: its gain, real and imaginary.
 fn measured(d: &[f32; 4], hz: f32) -> (f64, f64) {
     use chimera_engine::part_eq::dsp::smart::probe;
-    let n = FS as usize / 4;
+    // Settle, then project over a whole number of the tone's periods (at
+    // least a tenth of a second): a part period biases the projection,
+    // most at the low end.
+    let period = FS as f64 / hz as f64;
+    let span = ((0.1 * FS as f64 / period).ceil().max(4.0) * period).round() as usize;
+    let settle = FS as usize / 8;
+    let n = (settle + span).div_ceil(BLOCK_SIZE) * BLOCK_SIZE;
     let w = |i: usize| 2.0 * std::f64::consts::PI * hz as f64 * i as f64 / FS as f64;
     let mut x: Vec<f32> = (0..n).map(|i| w(i).sin() as f32).collect();
     probe(d, &mut x, FS);
     let (mut re, mut im) = (0.0f64, 0.0f64);
-    for (i, v) in x.iter().enumerate().skip(n / 2) {
+    for (i, v) in x.iter().enumerate().skip(n - span) {
         re += *v as f64 * w(i).sin();
         im += *v as f64 * w(i).cos();
     }
-    let half = (n - n / 2) as f64 / 2.0;
+    let half = span as f64 / 2.0;
     (re / half, im / half)
 }
 
@@ -712,18 +718,33 @@ fn the_real_bands_cut_what_the_page_reads() {
             "all four at 6 dB: {at:.2} dB at {hz} Hz"
         );
     }
-    assert!(measured_db([0.0; 4], 428.0).abs() < 1e-6);
+    // Unity, to the projection's own error.
+    assert!(measured_db([0.0; 4], 428.0).abs() < 1e-3);
+}
+
+/// How the bands' sum sits against what was asked, over a set of cuts.
+#[derive(Debug, Default)]
+struct Fit {
+    /// The most the sum is deeper than the deepest cut asked, dB.
+    deeper: f64,
+    /// The most it is over unity anywhere, dB, and where.
+    over: f64,
+    over_hz: f32,
+    /// The most a readout (`heard`) is off the filters at its centre, dB.
+    readout: f64,
+    /// The most a band cut alone falls short of its asked depth, dB.
+    short: f64,
 }
 
 #[test]
-fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
+fn the_bands_sum_against_the_cuts_asked_on_a_fine_grid() {
     use chimera_engine::part_eq::dsp::smart::{dips, heard};
-    // Each band's response as it runs, 30 Hz to 16 kHz and at the four
-    // centres: the bands' sum is linear in their dips, so every
-    // combination of 0, 3, 6, 12 and 21 dB on the four bands follows.
-    // Raw, four 6 dB dips reach −8.8 dB at 428 Hz.
-    let mut grid: Vec<f32> = (0..48)
-        .map(|i| 30.0 * (16_000.0f32 / 30.0).powf(i as f32 / 47.0))
+    // Each band's response as it runs, at 160 points from 20 Hz to 20 kHz
+    // and at the four centres: the sum is linear in the dips, so every
+    // combination of cuts follows. The cuts are AMOUNT's knots' (one and
+    // two ranks), the kick's dip in LOW among them.
+    let mut grid: Vec<f32> = (0..160)
+        .map(|i| 20.0 * 1000f32.powf(i as f32 / 159.0))
         .collect();
     grid.extend(Band::ALL.map(|b| b.centre().get()));
     let bands: Vec<[(f64, f64); 4]> = grid
@@ -745,37 +766,67 @@ fn the_bands_sum_never_cuts_deeper_than_the_deepest_asked() {
         }
         10.0 * (re * re + im * im).log10()
     };
-    let steps = [0.0f32, 3.0, 6.0, 12.0, 21.0];
-    let (mut deeper, mut over, mut off_centre) = (0.0f64, 0.0f64, 0.0f64);
-    for n in 0..steps.len().pow(4) {
-        let cuts: [f32; 4] =
-            core::array::from_fn(|b| steps[n / steps.len().pow(b as u32) % steps.len()]);
-        let d = dips(&cuts.map(CutDb::new));
-        let most = cuts.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
-        for at in 0..grid.len() {
-            deeper = deeper.max(-db(&d, at) - most);
-            over = over.max(db(&d, at));
+    let fit = |low: &[f32], low_mid: &[f32], clear: &[f32]| {
+        let mut f = Fit::default();
+        for &a in low {
+            for &b in low_mid {
+                for &c in clear {
+                    for &e in clear {
+                        let cuts = [a, b, c, e];
+                        let d = dips(&cuts.map(CutDb::new));
+                        let most = cuts.iter().fold(0.0f32, |m, &c| m.max(c)) as f64;
+                        for at in 0..grid.len() {
+                            let g = db(&d, at);
+                            f.deeper = f.deeper.max(-g - most);
+                            if g > f.over {
+                                (f.over, f.over_hz) = (g, grid[at]);
+                            }
+                        }
+                        let read = heard(&d);
+                        for band in Band::ALL {
+                            let g = db(&d, 160 + band.index());
+                            let r = read[band.index()].get() as f64;
+                            f.readout = f.readout.max((g.min(0.0) + r).abs());
+                            let alone = cuts.iter().filter(|c| **c > 0.0).count() == 1;
+                            if alone && cuts[band.index()] > 0.0 {
+                                f.short = f.short.max(g + cuts[band.index()] as f64);
+                            }
+                        }
+                    }
+                }
+            }
         }
-        for b in Band::ALL {
-            // What the page reads against what the filters do there.
-            let at = db(&d, 48 + b.index());
-            let read = heard(&d)[b.index()].get() as f64;
-            off_centre = off_centre.max((at.min(0.0) + read).abs());
-        }
+        f
+    };
+    let polite = fit(&[0.0, 4.0, 6.0], &[0.0, 4.0, 6.0], &[0.0, 4.0, 6.0]);
+    let deep = fit(&[0.0, 8.0, 10.0, 12.0, 15.0], &[0.0, 8.0, 12.0], &[0.0, 4.0, 6.0]);
+    let over = fit(&[0.0, 14.0, 18.0, 21.0, 27.0], &[0.0, 14.0, 21.0], &[0.0, 6.0, 9.0]);
+    println!("polite {polite:?}\ndeep {deep:?}\nover {over:?}");
+    // The measured bounds (ADR 0296 § 6), each with a little room.
+    for (name, f, deeper, boost, readout, short) in [
+        ("polite", &polite, DEEPER[0], BOOST[0], READOUT[0], SHORT[0]),
+        ("deep", &deep, DEEPER[1], BOOST[1], READOUT[1], SHORT[1]),
+        ("over", &over, DEEPER[2], BOOST[2], READOUT[2], SHORT[2]),
+    ] {
+        assert!(f.deeper < deeper, "{name}: {:.3} dB deeper than asked", f.deeper);
+        assert!(f.over < boost, "{name}: {:.3} dB over unity at {} Hz", f.over, f.over_hz);
+        assert!(f.readout < readout, "{name}: readout {:.3} dB off the filters", f.readout);
+        assert!(f.short < short, "{name}: a band alone {:.3} dB short", f.short);
     }
-    println!("deeper {deeper:.3} over {over:.3} off the readout {off_centre:.3}");
-    assert!(
-        deeper < 0.2,
-        "{deeper:.3} dB deeper than the deepest cut asked"
-    );
-    assert!(over < 0.9, "{over:.3} dB over unity");
-    assert!(
-        off_centre < 0.25,
-        "{off_centre:.3} dB off a band's readout at its centre"
-    );
     // No cut is no dip, exactly.
     assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
 }
+
+/// Polite, DEEP, OVER: the fine grid's bounds. Measured: the sum 0.05,
+/// 0.01, 0.003 dB deeper than asked; 0.27, 0.46, 0.56 dB over unity
+/// between two bands (500 to 650 Hz), where a cut's neighbour is lifted
+/// to hold its own centre; a readout within 0.001 dB of the filters; a
+/// band cut alone 0.01, 0.14, 2.3 dB short (LOW asked 27 dB reaches 24.7:
+/// its neighbours' quarter-turn parts hold it up).
+const DEEPER: [f64; 3] = [0.1, 0.1, 0.1];
+const BOOST: [f64; 3] = [0.3, 0.5, 0.6];
+const READOUT: [f64; 3] = [0.01, 0.01, 0.01];
+const SHORT: [f64; 3] = [0.05, 0.2, 2.4];
 
 #[test]
 fn amount_s_curve_passes_its_knots_and_only_ever_deepens() {

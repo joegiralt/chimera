@@ -59,8 +59,10 @@ bench-algo.
    - **A Part only listened to** (FRONT, or nothing to yield to: its dips
      at unity at both ends of the block) is read, never written, through
      the same bands decimated: LOW and LOW MID at a quarter of the rate,
-     HIGH MID and HIGH at half (a boxcar; what folds down lands under the
-     skirts `own` allows for). A change of rate starts the filters empty.
+     HIGH MID and HIGH at half (a boxcar, no other filter before it:
+     16 to 23 kHz folds onto 1 to 8 kHz only 8 to 12 dB down, so a Part
+     that is mostly air reads some of it in HIGH MID and HIGH; a filter
+     ahead would cost every listened Part). A change of rate starts the filters empty.
    - **Only the bus is listened to.** A DRUM pad's side (`Sides`, there
      only while a panned pad sounds) takes the pairs of bands that cut,
      and no others, with the bus's dips; a listened Part's side is not
@@ -86,15 +88,26 @@ bench-algo.
    - The key is the DRUM Part's own LOW low-pass, so a snare barely keys
      it: its power rises at once and falls with τ 20 ms; a hit is the key
      within 6 dB of its recent peak (τ 0.5 s).
+   - **A sustained low tone on a DRUM Part ducks.** A kit's LOW that
+     stays up (a held 50 Hz sub, an 808 two seconds long) is a hit for as
+     long as it holds within those 6 dB: a lower Part's LOW stays dipped
+     under it (measured 9.6 falling to 7.5 dB over 2 s at AMOUNT 95).
+     The key cannot tell a long kick from a held note. Known; whether it
+     should let go is the owner's call.
    - The dip follows with τ 3 ms in and τ 100 ms out; the rule runs on the
      blocks between the slow rule's (2.7 ms).
-   - **Dense kicks hold one dip.** Kicks whose onsets come closer than
-     150 ms hold the dip between them, for 1.5 of their gap past each
-     onset: 16ths at 170 BPM (88 ms) are one steady dip (0.5 dB peak to
-     peak at most; 1.4 dB of 11 Hz flutter without). Slower kicks each
-     dip and let go: quarter notes at 120 BPM are back under 5 % of the
-     dip before the next. Held, not a release scaled to the gap: a
-     release that slow would smear a sparse kick's dip into a duck.
+   - **Dense kicks hold one dip.** Between kicks the dip is held, for
+     1.5 of their gap past each onset: whole for onsets to 100 ms apart,
+     fading to none at 220 ms, so no gap is a cliff (a hard edge at
+     150 ms was 5.6 dB of flutter one millisecond past it). 16ths at
+     170 BPM (88 ms) and 32nds at 120 BPM (62.5 ms) are one steady dip
+     (under 0.5 dB peak to peak at AMOUNT 95); from 60 to 400 ms no 10 ms
+     of gap moves the swing by 1 dB. Slower kicks each dip and let go.
+     Held, not a release scaled to the gap: a release that slow would
+     smear a sparse kick's dip into a duck.
+   - An onset is the key hitting after quiet, or rising 2 dB between the
+     rule's turns while still high (a kick over the last one's body), no
+     sooner than 20 ms after the last.
    - LOW plays the deeper of its slow cut and the dip. Whole-mix pumping
      is not this (#13).
 5. **AMOUNT is a curve (owner).** How deep BACK yields under FRONT (one
@@ -118,15 +131,23 @@ bench-algo.
    is 0.14 to 0.18 in phase at a centre, 0.34 a quarter turn off), so
    four 6 dB dips summed raw reach −8.8 dB at 428 Hz. Each band's dip is
    unmixed (`UNMIX`, the inverse of the bands' in-phase parts at the
-   centres, measured from the filters as they run): the sum is never more
-   than 0.15 dB deeper than the deepest cut asked, over every combination
-   to 21 dB, and within half a dB of each band's cut to about 6 dB.
-   - **Deeper, the bands' phase holds a centre up**: two adjacent bands
-     asked 21 dB reach 10 to 18 dB, and a band beside a deep cut can rise
-     0.7 dB. Parallel band-passes cannot do more.
-   - **The pages read what is heard**: the view carries each centre's
+   centres, measured from the filters as they run). Measured on 160
+   points from 20 Hz to 20 kHz, over every combination of AMOUNT's knots'
+   cuts (the kick's 15 and 27 dB in LOW among them), at 64 · 95 · 127:
+   - the sum is at most 0.05 · 0.01 · 0.003 dB deeper than the deepest
+     cut asked;
+   - **it rises over unity between two bands**, where a cut's neighbour
+     is lifted to hold its own centre: 0.27 · 0.46 · 0.56 dB at most,
+     near 500 to 650 Hz (0.2 dB for one 6 dB cut). Holding the lift down
+     costs more than it saves (no lift at all: 0.6 · 1.6 · 7.3 dB too
+     deep), so it stays;
+   - **deep, the bands' phase holds a centre up**: a band cut alone is
+     0.01 · 0.14 · 2.3 dB short (LOW asked 27 dB reaches 24.7), and two
+     adjacent bands asked 21 dB reach 10 to 18 dB. Parallel band-passes
+     cannot do more;
+   - **the pages read what is heard**: the view carries each centre's
      real cut (`heard`, the sum's size from the measured responses),
-     within 0.01 dB of the filters, never the cut asked. No readout
+     within 0.001 dB of the filters, never the cut asked. No readout
      wraps: a byte a band at 1/8 dB reaches 31.9 dB.
 7. **Time.** Each slow cut follows its target at block rate, τ 0.5 s
    deeper and τ 2 s shallower; under 0.01 dB it lands on 0. Each band's
@@ -137,8 +158,9 @@ bench-algo.
    - Its bands run on the return itself, after the reverb plays and
      before it joins pair 1 (`FxBus::process_washed`), so the tail
      already ringing is carved and dipped. Left and right take the same
-     dips through the pairs that cut; it is heard as their sum,
-     decimated; at unity it is read, never written; a reverb at rest
+     dips through the pairs that cut; it is heard as their sum at
+     equal power ((L + R)/√2: a reverb's sides are decorrelated, so it
+     reads as one side does, as a Part's bus would), decimated; at unity it is read, never written; a reverb at rest
      (`Reverb::play` silent) is not run.
    - **Where the sends are tapped (verified, `mix_sided`):** a Part's
      three sends take its bus after its EQ and SMART EQ's cuts
@@ -265,6 +287,11 @@ an instruction), cycles a sample:
   ADR 0273's 95 % on both. Unbilled, SMART EQ would have put six Parts
   at 93 to 95 % on rev V and past the net on rev Y. If a bill is under
   its bands' real cost, the net sheds a voice and `load_sheds` counts it.
+- A member moved to FRONT keeps its bands at the full rate until its
+  cuts let go (seconds) and is billed as cut until then (`StillCut`).
+- **A bill that grows can shed a sounding voice** when the pool is full:
+  turning SMART EQ on, a role leaving FRONT, or TILT leaving flat each
+  add to a Part's first voice.
 - What the bills cost in voices: 84 a cut Part is about a tenth of a
   7-voice Sound's voice; a full pool on four Parts with the return cut
   gives up 372 cycles a sample of 7,500, up to one voice while SMART EQ

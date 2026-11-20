@@ -630,8 +630,6 @@ impl Renderer {
         Some((r, Some(lit)))
     }
 
-    /// Level and pan of every Part; the edited one from its animated LEVEL
-    /// and PAN slots so it lerps like the cells.
     /// The Parts' overview with each one's live meter and key mark beside
     /// it (ADR 0293).
     fn mixer_levels<D>(&self, display: &mut D, f: &Frame)
@@ -662,12 +660,14 @@ impl Renderer {
             ),
             SmartScope::All => {
                 let span = (Role::ALL.len() - 1) as f32;
-                let wash = Role::from_f32(self.anim[WASH_ROLE_SLOT].current() * span + 0.5);
+                let wash = Role::from_f32(self.anim[crate::ui::block_def::LevelCell::WashRole.slot()].current() * span + 0.5);
                 Shown::now(Shows::All(f.active_part), roles, wash)
             }
         }
     }
 
+    /// Level and pan of every Part; the edited one from its animated LEVEL
+    /// and PAN slots so it lerps like the cells.
     fn strips(&self, f: &Frame) -> [viz::Strip; crate::hw::MAX_PARTS] {
         let slot = |id| {
             let addr = crate::addr::ParamAddr::new(crate::addr::BlockRef::Part, id);
@@ -1582,9 +1582,6 @@ fn param_text(f: &Frame, i: usize, view: &View, v: f32) -> FmtBuf {
 fn held_on(f: &Frame, view: &View) -> Option<crate::ui::held::Held> {
     cell_text::held_on(f.held, view)
 }
-
-/// MST › LVL's cell for the reverb return's SMART EQ role.
-pub const WASH_ROLE_SLOT: usize = 5;
 
 /// Fingerprint of the Mixer overview (quantized levels and pans, selection).
 fn strips_key(strips: &[viz::Strip], selected: usize) -> u32 {

@@ -120,15 +120,45 @@ pub fn plan_in(s: &Shown, out: &mut Plan) {
     }
 }
 
+/// Whether a column is the edited Part's.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lit {
+    Edited,
+    Other,
+}
+
+impl Lit {
+    #[inline(always)]
+    fn of(p: PartId, sel: PartId) -> Lit {
+        if p == sel { Lit::Edited } else { Lit::Other }
+    }
+
+    #[inline(always)]
+    fn fill(self) -> Rgb565 {
+        match self {
+            Lit::Edited => theme::ACCENT,
+            Lit::Other => theme::BAR_REST,
+        }
+    }
+
+    #[inline(always)]
+    fn ink(self) -> Rgb565 {
+        match self {
+            Lit::Edited => theme::INK,
+            Lit::Other => theme::MID,
+        }
+    }
+}
+
 /// PRT › EQ: beside each Part's LEVEL bar and meter (`viz::parts_overview`,
 /// `part_meter`), its four live cuts as thin bars; the edited Part's lit,
 /// its deepest cut in dB by its number.
 #[inline(always)]
 fn part(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
     for p in PartId::ALL {
-        let lit = p == sel;
+        let lit = Lit::of(p, sel);
         let x0 = viz::strip_x(p.index()) + PART_BARS_X;
-        let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
+        let fill = lit.fill();
         let cuts = s.cuts[p.index()];
         for b in Band::ALL {
             let bx = x0 + (PART_BAR_W + PART_BAR_GAP) * b.index() as i32;
@@ -137,7 +167,7 @@ fn part(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
             pen.rect(bx, viz::STRIP_TOP, PART_BAR_W, h, fill);
         }
         let (_, deepest) = cuts.deepest();
-        if lit && deepest.get() >= 0.05 {
+        if lit == Lit::Edited && deepest.get() >= 0.05 {
             // Tenths under 10 dB (`-2.1`), whole dB from there (`-27`):
             // what fits between this Part's number and the next.
             let tenths = (deepest.get() * 10.0 + 0.5) as u32;
@@ -160,10 +190,20 @@ const ALL_DX: i32 = 32;
 
 #[inline(always)]
 fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
+    /// A member's column: a Part's, or the reverb's return after them.
+    #[derive(Clone, Copy)]
+    enum Column {
+        Part(PartId),
+        Return,
+    }
     #[inline(always)]
-    fn column(pen: &mut Pen<'_>, i: usize, lit: bool, cuts: CutView, role: &'static str) -> i32 {
+    fn column(pen: &mut Pen<'_>, c: Column, lit: Lit, cuts: CutView, role: &'static str) -> i32 {
+        let i = match c {
+            Column::Part(p) => p.index(),
+            Column::Return => PartId::ALL.len(),
+        };
         let cx = ALL_X0 + ALL_DX * i as i32;
-        let fill = if lit { theme::ACCENT } else { theme::BAR_REST };
+        let fill = lit.fill();
         let x0 = cx - BANDS_W / 2;
         for b in Band::ALL {
             let bx = x0 + (ALL_BAR_W + ALL_BAR_GAP) * b.index() as i32;
@@ -171,28 +211,27 @@ fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
             pen.rect(bx, viz::STRIP_TOP, ALL_BAR_W, viz::STRIP_H, theme::FAINT);
             pen.rect(bx, viz::STRIP_TOP, ALL_BAR_W, depth(c, viz::STRIP_H), fill);
         }
-        let ink = if lit { theme::INK } else { theme::MID };
-        pen.text(cx, viz::STRIP_PAN_Y - 3, Font::Label, ink, |w| {
+        pen.text(cx, viz::STRIP_PAN_Y - 3, Font::Label, lit.ink(), |w| {
             w.str(role);
         });
         cx
     }
     for p in PartId::ALL {
-        let lit = p == sel;
+        let lit = Lit::of(p, sel);
         let role = s.roles[p.index()].letter();
-        let cx = column(pen, p.index(), lit, s.cuts[p.index()], role);
-        let (font, ink) = if lit {
-            (Font::LabelBold, theme::INK)
-        } else {
-            (Font::Label, theme::MID)
+        let cx = column(pen, Column::Part(p), lit, s.cuts[p.index()], role);
+        let font = match lit {
+            Lit::Edited => Font::LabelBold,
+            Lit::Other => Font::Label,
         };
+        let ink = lit.ink();
         let n = p.index() as u32 + 1;
         pen.text(cx, viz::STRIP_NUM_Y, font, ink, |w| {
             w.digits(n);
         });
     }
     // The reverb's return, a member with a role of its own.
-    let cx = column(pen, PartId::ALL.len(), false, s.wash.0, s.wash.1.letter());
+    let cx = column(pen, Column::Return, Lit::Other, s.wash.0, s.wash.1.letter());
     pen.text(cx, viz::STRIP_NUM_Y, Font::Label, theme::MID, |w| {
         w.str("REV");
     });

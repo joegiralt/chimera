@@ -249,46 +249,47 @@ const DB_PER_LOG2_POWER: f32 = 3.010_3;
 /// 0.14 to 0.18 in phase at a centre and 0.34 a quarter turn off.
 const RESPONSE: [[(f32, f32); BANDS]; BANDS] = [
     [
-        (0.999_31, 0.015_12),
-        (0.135_75, 0.341_93),
-        (0.008_91, 0.092_04),
-        (0.000_53, 0.021_82),
+        (0.999_91, 0.013_08),
+        (0.135_08, 0.345_10),
+        (0.008_72, 0.092_95),
+        (0.000_49, 0.022_04),
     ],
     [
-        (0.147_55, -0.341_59),
-        (0.992_97, 0.055_20),
-        (0.137_29, 0.342_62),
-        (0.008_01, 0.087_44),
+        (0.149_50, -0.343_72),
+        (0.998_63, 0.052_33),
+        (0.137_01, 0.343_86),
+        (0.007_78, 0.087_84),
     ],
     [
-        (0.018_64, -0.092_41),
-        (0.183_80, -0.337_19),
-        (0.994_93, 0.000_19),
-        (0.122_73, 0.326_95),
+        (0.018_76, -0.092_93),
+        (0.184_80, -0.339_13),
+        (1.000_00, -0.000_00),
+        (0.123_29, 0.328_77),
     ],
     [
-        (0.010_35, -0.021_93),
-        (0.048_85, -0.087_21),
-        (0.122_56, -0.327_06),
-        (0.994_49, 0.000_13),
+        (0.010_41, -0.022_04),
+        (0.049_13, -0.087_66),
+        (0.123_29, -0.328_77),
+        (1.000_00, 0.000_00),
     ],
 ];
 
 /// What each band's dip must be for the four bands' sum to be the gain
 /// asked at each band's centre, as far as their in-phase parts go: the
 /// inverse of `RESPONSE`'s real parts. Raw, four 6 dB dips reach −8.8 dB
-/// at 428 Hz; with this the sum is never deeper than the deepest cut
-/// asked (0.15 dB at most, over every combination to 21 dB) and within
-/// half a dB of each band's cut to about 6 dB. Deeper, the neighbours'
-/// quarter-turn parts hold a band's centre up: two adjacent bands asked
-/// 21 dB reach 10 to 18 dB. What the bands really do at each centre is
+/// at 428 Hz; with this the sum is at most 0.05 dB deeper than the
+/// deepest cut asked, and up to 0.27 dB (AMOUNT 64) to 0.56 dB (127)
+/// over unity between two bands, where a cut's neighbour is lifted
+/// (ADR 0296 § 6, `the_bands_sum_against_the_cuts_asked_on_a_fine_grid`).
+/// Deep, the neighbours' quarter-turn parts hold a band's centre up: two
+/// adjacent bands asked 21 dB reach 10 to 18 dB. What the bands really do at each centre is
 /// `heard`, and the pages read that. Rows: the band dipped; columns: the
 /// gain asked, LOW to HIGH.
 pub const UNMIX: [[f32; BANDS]; BANDS] = [
-    [1.021_40, -0.141_54, 0.010_47, -0.000_70],
-    [-0.153_08, 1.054_43, -0.145_30, 0.009_52],
-    [0.009_67, -0.188_80, 1.046_79, -0.127_67],
-    [-0.004_30, -0.027_05, -0.121_98, 1.020_81],
+    [1.020_83, -0.139_97, 0.010_36, -0.000_69],
+    [-0.154_14, 1.048_30, -0.143_47, 0.009_61],
+    [0.009_86, -0.187_78, 1.041_29, -0.126_92],
+    [-0.004_27, -0.026_89, -0.121_44, 1.015_18],
 ];
 
 /// One block of the Parts' buses (after LO CUT and TILT), as the door hands
@@ -837,7 +838,11 @@ fn slow_rule(st: &mut SmartState, b: Band, roles: &Roles<'_>, caps: Caps) {
     let at = PerPart::of((Level::SILENT, 0.0f32), |p| {
         let h = &st.part(p).heard;
         let keyed = b == Band::Low && roles.kind(p) == PartKind::Drum;
-        let there = if keyed { 0.0 } else { active(h[b.index()]) * own(h, b) };
+        let there = if keyed {
+            0.0
+        } else {
+            active(h[b.index()]) * own(h, b)
+        };
         (h[b.index()], there)
     });
     let want = |heard: &[Level; BANDS], role: Role| {
