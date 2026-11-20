@@ -562,6 +562,11 @@ impl PartSmart {
         cuts: Cuts::Rest,
     };
 
+    /// Its bands run at the full rate: cutting, or not yet let go.
+    pub(crate) fn runs_full(&self) -> bool {
+        self.hears == Hears::Full || self.cuts == Cuts::Move
+    }
+
     /// The cuts the bands play: `cut`, LOW the deeper of its slow cut and
     /// the kick's fast dip.
     #[inline(always)]

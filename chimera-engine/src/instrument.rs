@@ -41,7 +41,7 @@ use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
 use crate::part::{Held, LiveSnap, PartParams};
-use crate::part_eq::bill::SmartLoad;
+use crate::part_eq::bill::SmartBill;
 use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, PartId, Project, SourceId};
 use crate::scope::ScopeWriter;
@@ -1009,7 +1009,7 @@ impl Instrument {
     /// What a sounding Part costs once, on its first voice: its knobs
     /// (ADR 0112) and its EQ with SMART EQ's bands (ADR 0296).
     #[inline(never)]
-    fn part_cost(part: &PartAudio, smart: SmartLoad) -> Cost {
+    fn part_cost(part: &PartAudio, smart: SmartBill, q: PartId) -> Cost {
         use crate::part_eq::smart::PartKind;
         Knobs::COST
             + crate::part_eq::bill::first_voice(
@@ -1017,12 +1017,14 @@ impl Instrument {
                 part.mix.role,
                 PartKind::of(part.params.engine()),
                 smart,
+                q,
             )
     }
 
-    /// Whether SMART EQ's bands run, so are billed (`SmartLoad`).
-    fn smart_load(&mut self, shared: &AudioShared) -> SmartLoad {
-        SmartLoad::now(shared.fx.comp.smart, self.eq.get())
+    /// Whether SMART EQ's bands run, and whose still run cut: what is
+    /// billed (`SmartBill`).
+    fn smart_load(&mut self, shared: &AudioShared) -> SmartBill {
+        SmartBill::now(shared.fx.comp.smart, self.eq.get())
     }
 
     /// Spent outside the pool each block, so a new voice must fit beside
@@ -1420,7 +1422,7 @@ impl Instrument {
                     // A Part's first voice brings its knobs (ADR 0112).
                     let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
                     let knobs = if first {
-                        Self::part_cost(part, smart_load)
+                        Self::part_cost(part, smart_load, q)
                     } else {
                         Cost::ZERO
                     };
@@ -2088,7 +2090,7 @@ impl Instrument {
             let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.sample_rate)));
             let cost = own
                 + if first {
-                    Self::part_cost(part, smart_load)
+                    Self::part_cost(part, smart_load, q)
                 } else {
                     Cost::ZERO
                 };
@@ -2266,7 +2268,7 @@ impl Instrument {
                     + self.streaming[v].looped
                     + high;
                 let k = if first {
-                    Self::part_cost(part, smart_load)
+                    Self::part_cost(part, smart_load, q)
                 } else {
                     Cost::ZERO
                 };

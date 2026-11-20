@@ -9,11 +9,12 @@ use chimera_core::budget::CONTROL_RESERVE;
 use chimera_core::dsp::fx_bus::FxBus;
 use chimera_core::hw::{Cost, SampleBudget};
 use chimera_core::part_eq::bill::{
-    CUT, LISTEN, SIDE, SmartLoad, TILT, WASH_CUT, WASH_LISTEN, first_voice, wash,
+    CUT, LISTEN, SIDE, SmartBill, SmartLoad, TILT, WASH_CUT, WASH_LISTEN, first_voice, wash,
 };
 use chimera_core::part_eq::smart::{Amount, PartKind, Role, SmartEq, Switch};
 use chimera_core::part_eq::{LoCut, PartEq, Tilt};
 
+const P1: chimera_core::project::PartId = chimera_core::project::PartId::ALL[0];
 const ON: SmartEq = SmartEq::new(Switch::On, Amount::DEFAULT);
 const TILTED: PartEq = PartEq::new(Tilt::at(10), LoCut::Off);
 
@@ -21,27 +22,27 @@ const TILTED: PartEq = PartEq::new(Tilt::at(10), LoCut::Off);
 fn flat_and_at_rest_a_part_s_eq_bills_nothing() {
     for role in Role::ALL {
         for kind in [PartKind::Tonal, PartKind::Drum] {
-            let rests = SmartLoad::Rests;
-            assert_eq!(first_voice(PartEq::FLAT, role, kind, rests), Cost::ZERO);
+            let rests = SmartBill::RESTS;
+            assert_eq!(first_voice(PartEq::FLAT, role, kind, rests, P1), Cost::ZERO);
         }
     }
 }
 
 #[test]
 fn each_part_is_billed_what_its_bands_run() {
-    let (t, runs) = (PartKind::Tonal, SmartLoad::Runs);
-    assert_eq!(first_voice(TILTED, Role::Mid, t, SmartLoad::Rests), TILT);
-    assert_eq!(first_voice(PartEq::FLAT, Role::Front, t, runs), LISTEN);
-    assert_eq!(first_voice(PartEq::FLAT, Role::Mid, t, runs), CUT);
-    assert_eq!(first_voice(PartEq::FLAT, Role::Back, t, runs), CUT);
+    let (t, runs) = (PartKind::Tonal, SmartBill::RUNS);
+    assert_eq!(first_voice(TILTED, Role::Mid, t, SmartBill::RESTS, P1), TILT);
+    assert_eq!(first_voice(PartEq::FLAT, Role::Front, t, runs, P1), LISTEN);
+    assert_eq!(first_voice(PartEq::FLAT, Role::Mid, t, runs, P1), CUT);
+    assert_eq!(first_voice(PartEq::FLAT, Role::Back, t, runs, P1), CUT);
     // A DRUM Part's side runs the same filters again; FRONT's is never cut.
     let d = PartKind::Drum;
     assert_eq!(
-        first_voice(TILTED, Role::Front, d, runs),
+        first_voice(TILTED, Role::Front, d, runs, P1),
         TILT + TILT + LISTEN
     );
     assert_eq!(
-        first_voice(TILTED, Role::Back, d, runs),
+        first_voice(TILTED, Role::Back, d, runs, P1),
         TILT + TILT + CUT + SIDE
     );
     // SMART EQ runs while it is on with an AMOUNT, and while it lets go.
@@ -54,7 +55,7 @@ fn each_part_is_billed_what_its_bands_run() {
     // The reverb's return: billed beside the bus while the reverb is on.
     use chimera_core::dsp::reverb::ReverbParams;
     let mut rev = ReverbParams::DEFAULT;
-    assert_eq!(wash(&rev, SmartLoad::Rests), Cost::ZERO);
+    assert_eq!(wash(&rev, SmartBill::RESTS), Cost::ZERO);
     assert_eq!(wash(&rev, runs), WASH_CUT);
     rev.role = Role::Front;
     assert_eq!(wash(&rev, runs), WASH_LISTEN);

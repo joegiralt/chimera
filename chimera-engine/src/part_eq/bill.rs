@@ -8,7 +8,8 @@
 
 use super::smart::{PartKind, Role, SmartEq, SmartState};
 use super::{PartEq, PartEqs};
-use crate::hw::Cost;
+use crate::hw::{Cost, MAX_PARTS};
+use crate::project::PartId;
 
 /// LO CUT and TILT on a Part's bus (ADR 0284: 23 instructions a sample
 /// and the block's coefficients).
@@ -56,12 +57,75 @@ impl SmartLoad {
     }
 }
 
-/// What a Part's EQ adds to its first voice's bill: nothing flat with
+/// The members whose bands still run at the full rate whatever their
+/// role says: a Part (or the reverb's return) moved to FRONT keeps its
+/// cuts until they let go, up to some seconds, and is billed as cut
+/// until then. A bit a Part, and the return's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StillCut(u8);
+
+impl StillCut {
+    pub const NONE: StillCut = StillCut(0);
+    const WASH: u8 = 1 << MAX_PARTS;
+    const _FITS: () = assert!(MAX_PARTS < 8);
+
+    pub fn of(st: &SmartState) -> StillCut {
+        let mut bits = 0u8;
+        for p in PartId::ALL {
+            if st.part(p).runs_full() {
+                bits |= 1 << p.index();
+            }
+        }
+        if st.wash.cuts.runs_full() {
+            bits |= Self::WASH;
+        }
+        StillCut(bits)
+    }
+
+    pub const fn part(self, p: PartId) -> bool {
+        self.0 & (1 << p.index()) != 0
+    }
+
+    pub const fn wash(self) -> bool {
+        self.0 & Self::WASH != 0
+    }
+}
+
+/// What SMART EQ's bill is made from this block: whether it runs, and
+/// who still runs cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SmartBill {
+    pub load: SmartLoad,
+    pub still: StillCut,
+}
+
+impl SmartBill {
+    /// At rest: zero bytes, ITCM's boot state.
+    pub const RESTS: SmartBill = SmartBill {
+        load: SmartLoad::Rests,
+        still: StillCut::NONE,
+    };
+
+    pub fn now(smart: SmartEq, eqs: &PartEqs) -> SmartBill {
+        SmartBill {
+            load: SmartLoad::now(smart, eqs),
+            still: StillCut::of(&eqs.smart),
+        }
+    }
+
+    /// Running, nobody held over from another role: for the tests.
+    pub const RUNS: SmartBill = SmartBill {
+        load: SmartLoad::Runs,
+        still: StillCut::NONE,
+    };
+}
+
+/// What Part `p`'s EQ adds to its first voice's bill: nothing flat with
 /// SMART EQ at rest, so every bill is then as before. A DRUM Part pays
 /// for its side too. A Part in MID or BACK is billed as cut whether or
 /// not anything outranks it: its bands run at the full rate the moment
-/// something does.
-pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartLoad) -> Cost {
+/// something does. So is a FRONT Part whose cuts have not yet let go.
+pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartBill, p: PartId) -> Cost {
     let sides = |c: Cost| match kind {
         PartKind::Drum => c,
         PartKind::Tonal => Cost::ZERO,
@@ -71,10 +135,12 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartLoad) -> 
     } else {
         TILT + sides(TILT)
     };
-    let smart = match (smart, role) {
-        (SmartLoad::Rests, _) => Cost::ZERO,
-        (SmartLoad::Runs, Role::Front) => LISTEN,
-        (SmartLoad::Runs, Role::Mid | Role::Back) => CUT + sides(SIDE),
+    let smart = match (smart.load, role, smart.still.part(p)) {
+        (SmartLoad::Rests, _, _) => Cost::ZERO,
+        (SmartLoad::Runs, Role::Front, false) => LISTEN,
+        (SmartLoad::Runs, Role::Front, true) | (SmartLoad::Runs, Role::Mid | Role::Back, _) => {
+            CUT + sides(SIDE)
+        }
     };
     tilt + smart
 }
@@ -82,10 +148,11 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartLoad) -> 
 /// What SMART EQ on the reverb's return reserves from the budget beside
 /// the bus (ADR 0296), with the reverb TYPE's own extra: nothing with
 /// SMART EQ at rest or the reverb off.
-pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartLoad) -> Cost {
-    match (smart, reverb.is_on(), reverb.role) {
-        (SmartLoad::Rests, _, _) | (_, false, _) => Cost::ZERO,
-        (SmartLoad::Runs, true, Role::Front) => WASH_LISTEN,
-        (SmartLoad::Runs, true, Role::Mid | Role::Back) => WASH_CUT,
+pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartBill) -> Cost {
+    match (smart.load, reverb.is_on(), reverb.role, smart.still.wash()) {
+        (SmartLoad::Rests, _, _, _) | (_, false, _, _) => Cost::ZERO,
+        (SmartLoad::Runs, true, Role::Front, false) => WASH_LISTEN,
+        (SmartLoad::Runs, true, Role::Front, true)
+        | (SmartLoad::Runs, true, Role::Mid | Role::Back, _) => WASH_CUT,
     }
 }

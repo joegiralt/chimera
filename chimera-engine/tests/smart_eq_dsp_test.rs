@@ -1018,3 +1018,40 @@ fn no_gap_between_kicks_is_a_cliff() {
     let fast = swing(62.5, 95);
     assert!(fast < 0.5, "{fast} dB peak to peak under 32nds at 120 BPM");
 }
+
+#[test]
+fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
+    use chimera_engine::part_eq::PartEq;
+    use chimera_engine::part_eq::bill::{CUT, LISTEN, SmartBill, SmartLoad, StillCut, first_voice};
+    // The pad, MID under a FRONT bass, is cut; then it is made FRONT too.
+    // Its bands run on at the full rate until the cut is back: billed so.
+    let gens = clash();
+    let mut st = PartEqs::REST.smart;
+    for k in 0..seconds(4.0) {
+        block(&mut st, k * BLOCK_SIZE, &gens, &roles(&[0], &[]), on(127));
+    }
+    let bill = |st: &SmartState| {
+        let b = SmartBill {
+            load: SmartLoad::Runs,
+            still: StillCut::of(st),
+        };
+        first_voice(PartEq::FLAT, Role::Front, PartKind::Tonal, b, PAD)
+    };
+    let both_front = roles(&[0, 1], &[]);
+    let mut k = seconds(4.0);
+    block(&mut st, k * BLOCK_SIZE, &gens, &both_front, on(127));
+    assert!(st.cut(PAD, Band::Low).get() > 5.0);
+    assert_eq!(bill(&st), CUT, "still cut: billed as cut");
+    let mut blocks = 0;
+    while bill(&st) == CUT {
+        k += 1;
+        blocks += 1;
+        block(&mut st, k * BLOCK_SIZE, &gens, &both_front, on(127));
+        assert!(blocks < seconds(30.0), "its cuts let go within 30 s");
+    }
+    assert!(blocks > seconds(5.0), "billed as cut for the seconds it takes");
+    assert_eq!(st.cut(PAD, Band::Low), CutDb::ZERO);
+    assert_eq!(bill(&st), LISTEN);
+    // The bass, FRONT all along, was never held over.
+    assert!(!StillCut::of(&st).part(BASS));
+}
