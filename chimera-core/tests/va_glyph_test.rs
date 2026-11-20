@@ -514,10 +514,14 @@ fn every_mode_word_fits_beside_the_scope() {
 
 // --- SHAPE's picture (#980) ---
 
-/// FNV-1a over the focus band's scope box.
+/// FNV-1a over the scope's own box: clear of the hint line under it,
+/// whose words follow the build's features.
 fn band_hash(fb: &Fb) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for px in band(fb, theme::WAVE_W) {
+    let box_px = (theme::WAVE_Y..theme::WAVE_Y + theme::WAVE_H)
+        .flat_map(|y| (theme::WAVE_X..theme::WAVE_X + theme::WAVE_W).map(move |x| (x, y)))
+        .map(|(x, y)| fb.px[y as usize * W + x as usize]);
+    for px in box_px {
         for b in px.to_le_bytes() {
             h ^= b as u64;
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
@@ -534,21 +538,21 @@ const SHAPES: [(&str, i8); 3] = [("000", 0), ("064", 64), ("127", 127)];
 /// SHAPE touched on OSC 1's page: the scope at each WAVE and SHAPE 0, ½
 /// and 1, and at each WAVE between two at SHAPE ½, locked.
 const SHAPE_GOLDENS: &[(&str, u64)] = &[
-    ("sine_000", 0x61b400610983d9a1),
-    ("sine_064", 0xefe8dbc92caa9851),
-    ("sine_127", 0x9c4e3d53da6941ad),
-    ("tri_000", 0xd9e51ca51dd14213),
-    ("tri_064", 0xafa134f49fc0b099),
-    ("tri_127", 0xc74ca846e5cd041f),
-    ("saw_000", 0x196a183d350b41d4),
-    ("saw_064", 0x09edba4792030524),
-    ("saw_127", 0xcda8eab6c302cf37),
-    ("pulse_000", 0x6e02c1d915fa850c),
-    ("pulse_064", 0xd121d21b4f583562),
-    ("pulse_127", 0x8e37671115c43a21),
-    ("sine_tri_064", 0xb86b8bdba4d049a1),
-    ("tri_saw_064", 0xcabce82851009856),
-    ("saw_pulse_064", 0x5c2bc5409d3b8345),
+    ("sine_000", 0x8cf18810ec3842d9),
+    ("sine_064", 0x1428c67fa9926f89),
+    ("sine_127", 0x4a21fccffc27b005),
+    ("tri_000", 0x65701d6b45a1eb9b),
+    ("tri_064", 0xd3cf3780a752d091),
+    ("tri_127", 0xce8ff0102c991d37),
+    ("saw_000", 0xb1f0d12ac0d35f7c),
+    ("saw_064", 0xb54a65f5c09f3c0c),
+    ("saw_127", 0x4ec6a504dc754def),
+    ("pulse_000", 0xf4944560618be214),
+    ("pulse_064", 0x803b9edc78c80cba),
+    ("pulse_127", 0x5a0d843e2c26bd59),
+    ("sine_tri_064", 0x3c8a24d89b44b2d9),
+    ("tri_saw_064", 0x90ba6335de13e29e),
+    ("saw_pulse_064", 0x4f700a1771eac29d),
 ];
 
 /// VA at WAVE 1 `wave` ticks, on OSC 1's page with SHAPE at `shape`
