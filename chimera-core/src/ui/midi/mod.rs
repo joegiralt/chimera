@@ -263,6 +263,8 @@ pub struct MidiUi {
     echo: echo::EchoPlan,
     /// The hand's turns waiting to go out as NRPNs (ADR 0258).
     param_out: super::param_out::ParamOut,
+    /// The parameter dumps asked for (ADR 0301).
+    dump: super::param_dump::ParamDump,
     /// Each Part's controller layer (ADR 0226).
     pub(in crate::ui) ctl: layer::Layers,
     /// Learn's first SysEx message, its length 0 for none (#846).
@@ -309,6 +311,7 @@ impl MidiSlot {
             core::ptr::addr_of_mut!((*m).seen).write(NO_SEEN);
             echo::silent_at(core::ptr::addr_of_mut!((*m).echo));
             core::ptr::addr_of_mut!((*m).param_out).write(super::param_out::ParamOut::REST);
+            core::ptr::addr_of_mut!((*m).dump).write(super::param_dump::ParamDump::REST);
             layer::rest_at(core::ptr::addr_of_mut!((*m).ctl));
             // All zero is no message kept (#846).
             core::ptr::write_bytes(core::ptr::addr_of_mut!((*m).sx_first), 0, 1);
@@ -547,6 +550,13 @@ impl UiState {
             if let HeardEv::Ctrl(port, CtrlEvent::SysEx) = e {
                 let mut b = [0; SX_LEN];
                 while let Some(n) = SYSEX_IN[port as usize].pop(&mut b) {
+                    // A dump request (ADR 0301) asks only to read: taken
+                    // busy or not, never a binding's, answered by `out`.
+                    if let Some(who) = chimera_midi::sysex::dump_request(&b[..n]) {
+                        let (ui, project) = (self.cc.ui(), &self.project);
+                        ui.dump.ask(port, who, project, at);
+                        continue;
+                    }
                     if !busy && !self.learn_sysex(&b[..n]) {
                         self.cc_sysex(&b[..n], now);
                     }

@@ -43,6 +43,15 @@ impl Controls for MockControls {
     }
 }
 
+/// Another Part's button, then MINUS back to its home: the button keeps
+/// the page (#957).
+fn home(ui: &mut UiState, part: ButtonId) {
+    press(ui, part);
+    for _ in 0..8 {
+        press(ui, ButtonId::Minus);
+    }
+}
+
 fn press(ui: &mut UiState, id: ButtonId) {
     ui.handle_input(&MockControls::new().button(id, ButtonState::Pressed));
 }
@@ -248,11 +257,11 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
     to_fx(&mut ui);
     prime_slot(&mut ui, EncoderId::C); // Part 1: TONE
     press(&mut ui, ButtonId::B2);
-    press(&mut ui, ButtonId::B1); // via Part 2: Part 1's home
+    home(&mut ui, ButtonId::B1); // via Part 2: Part 1's home
     set_first_amount(&mut ui, 10); // E1 → CUTOFF
     assert_eq!(routes(&ui, 0), [(CUTOFF, 10), (drive, 0)]);
 
-    press(&mut ui, ButtonId::B2); // Part 2: nothing primed
+    home(&mut ui, ButtonId::B2); // Part 2: nothing primed
     assert_eq!(ui.active_part, PartId::ALL[1]);
     assert_eq!(ui.matrix_state.num_dests, 0, "only the fixed columns");
     to_fx(&mut ui);
@@ -272,7 +281,7 @@ fn switching_part_rebuilds_the_matrix_for_that_part() {
         .addr;
     assert_ne!(p2, drive);
     press(&mut ui, ButtonId::B1);
-    press(&mut ui, ButtonId::B2); // via Part 1: Part 2's home
+    home(&mut ui, ButtonId::B2); // via Part 1: Part 2's home
     set_first_amount(&mut ui, 20);
     assert_eq!(
         routes(&ui, 1),
@@ -336,7 +345,7 @@ fn priming_after_a_stale_cursor_does_not_inherit_a_phantom_amount() {
     // Switch to Part 2, which has only the fixed four, then prime INPUT.
     // Before the fix the cursor is still 6 here, past Part 2's last column;
     // the switch clamps it to FX's column 3.
-    press(&mut ui, ButtonId::B2);
+    home(&mut ui, ButtonId::B2);
     to_fx(&mut ui);
     prime_slot(&mut ui, EncoderId::A);
     assert_eq!(ui.matrix_state.num_dests, 1);

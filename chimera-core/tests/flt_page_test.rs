@@ -98,6 +98,22 @@ fn every_flt_knob_changes_a_held_note() {
     }
 }
 
+/// Part 1 left and entered again, on its home: B2 and B1 keep the page
+/// (#957), MINUS walks back to the first node.
+fn part_1_home(ui: &mut UiState) {
+    feed(ui, Input::press(ButtonId::B2));
+    feed(ui, Input::press(ButtonId::B1));
+    for _ in 0..8 {
+        feed(ui, Input::press(ButtonId::Minus));
+    }
+    let p = PartId::ALL[0];
+    let engine = ui.project().part(p).sound.engine();
+    assert_eq!(
+        ui.location(),
+        chimera_core::ui::nav::Location::part_home(p, engine)
+    );
+}
+
 /// Fills Part 1's registry (every column but the fixed ones) and reloads it
 /// (re-entering Part 1); `clear` also deletes its FREQ routes.
 fn full_registry(ui: &mut UiState, clear: bool) {
@@ -120,8 +136,7 @@ fn full_registry(ui: &mut UiState, clear: bool) {
         }
     }
     sound.mod_state = ms;
-    feed(ui, Input::press(ButtonId::B2));
-    feed(ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
+    part_1_home(ui);
     for _ in 0..flt_node(EngineType::Algo) {
         feed(ui, Input::press(ButtonId::Plus));
     }
@@ -166,8 +181,7 @@ fn a_full_registry_keeps_the_route_knob_on() {
 /// Plus four times from Part 1's home: the MOD node, whose home is the
 /// matrix.
 fn to_matrix(ui: &mut UiState) {
-    feed(ui, Input::press(ButtonId::B2));
-    feed(ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
+    part_1_home(ui);
     for _ in 0..4 {
         feed(ui, Input::press(ButtonId::Plus));
     }
@@ -215,8 +229,7 @@ fn mix_minus_deletes_and_the_knob_recreates() {
         1 << 1 | 1 << 7
     );
     assert_eq!(ui.matrix_state.col_of(CUTOFF), Some(0), "the column stays");
-    feed(&mut ui, Input::press(ButtonId::B2));
-    feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
+    part_1_home(&mut ui);
     for _ in 0..flt_node(EngineType::Algo) {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
@@ -231,8 +244,7 @@ fn mix_minus_deletes_and_the_knob_recreates() {
 
 /// Back to FLT (Part 1's home, then PLUS), or on to FLT › MOD with `sub`.
 fn back_to_flt(ui: &mut UiState, sub: bool) {
-    feed(ui, Input::press(ButtonId::B2));
-    feed(ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
+    part_1_home(ui);
     for _ in 0..flt_node(EngineType::Algo) {
         feed(ui, Input::press(ButtonId::Plus));
     }
