@@ -533,6 +533,39 @@ fn get_bw_and_vowel_read_right_in_every_ui_state() {
     }
 }
 
+/// #1039: a stored value that is no number reads `nan`, `inf` or `-inf`
+/// in `val`'s stored word, never a number in its place; `since` the same.
+#[test]
+fn get_says_a_stored_value_that_is_no_number() {
+    let mut f = Fake::new();
+    let a = cutoff();
+    let ed = EdAddr::sound(a).unwrap();
+    for (v, word) in [
+        (f32::NAN, "nan"),
+        (f32::INFINITY, "inf"),
+        (f32::NEG_INFINITY, "-inf"),
+    ] {
+        // No knob, CC or `set` stores one (`set` rests it at the least):
+        // only a write past them.
+        f.ui.project_mut().edit_part(P1).sound.params.filter.cutoff = v;
+        let got = ask(&mut f, &format!("ed get {ed}\n"));
+        let words: Vec<_> = got.lines().next().unwrap().split(' ').collect();
+        assert_eq!(
+            (words[0], words[1], words[3]),
+            ("val", ed.to_string().as_str(), word),
+            "{got}"
+        );
+        assert_eq!(got.lines().nth(1), Some("OK"), "{got}");
+        let (lines, _) = since(&mut f, 0);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with(&format!("val {ed} ")) && l.split(' ').nth(3) == Some(word)),
+            "since: {word}"
+        );
+    }
+}
+
 #[test]
 fn get_unknown_addr_is_refused() {
     let mut f = Fake::new();
@@ -615,6 +648,48 @@ fn set_then_get_round_trips() {
         }
     }
     assert!(n > 150, "{n}");
+}
+
+/// `val`'s stored word, as printed.
+fn stored_word(f: &mut Fake, a: ParamAddr) -> String {
+    let got = ask(f, &format!("ed get {}\n", EdAddr::sound(a).unwrap()));
+    got.split(' ').nth(3).unwrap().to_string()
+}
+
+/// #1038: `ed get`'s stored word, sent back through `ed set`, stores the
+/// same bits, on every ALGO knob's grid.
+#[test]
+fn get_then_set_is_bit_exact() {
+    let mut f = Fake::new();
+    let listed = addrs(&all_pages(&mut f));
+    let mut n = 0;
+    for b in algo_blocks() {
+        for spec in b.specs() {
+            let a = ParamAddr::new(b, spec.id);
+            let ed = EdAddr::sound(a).unwrap().to_string();
+            if !listed.contains(&ed) || is_choice(a) || !spec.stored || spec.patching {
+                continue;
+            }
+            for k in 0..=1280 {
+                let at = spec.denormalize(k as f32 / 1280.0);
+                ask(&mut f, &format!("ed set {ed} {}\n", word(at)));
+                apply(&mut f);
+                let (was, text) = (stored_of(&mut f, a), stored_word(&mut f, a));
+                ask(&mut f, &format!("ed set {ed} {}\n", word(spec.min)));
+                apply(&mut f);
+                assert_eq!(ask(&mut f, &format!("ed set {ed} {text}\n")), "OK queued\n");
+                apply(&mut f);
+                let now = stored_of(&mut f, a);
+                assert_eq!(
+                    now.to_bits(),
+                    was.to_bits(),
+                    "{ed}: {text} came back {now:e}"
+                );
+                n += 1;
+            }
+        }
+    }
+    assert!(n > 60_000, "{n}");
 }
 
 #[test]

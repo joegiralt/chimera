@@ -79,16 +79,18 @@ fn b_n_toggles_sound_and_mixer_and_returns_to_the_page_left() {
 }
 
 #[test]
-fn another_parts_button_lands_on_its_home() {
+fn another_parts_button_keeps_the_page_or_lands_on_its_home() {
     let mut ui = UiState::new();
     press(&mut ui, ButtonId::B2);
     assert_eq!(at(&ui), (On::Sound(1), ALGO_ALG.id));
-    press(&mut ui, ButtonId::Plus);
+    for _ in 0..2 {
+        press(&mut ui, ButtonId::Plus); // → FLT
+    }
     press(&mut ui, ButtonId::B1);
     assert_eq!(
         at(&ui),
-        (On::Sound(0), ALGO_ALG.id),
-        "Part 2's pages → Part 1's"
+        (On::Sound(0), FILTER.id),
+        "Part 2's pages → Part 1's, the page kept (#957)"
     );
     assert_eq!(ui.active_part, PartId::ALL[0]);
     mix(&mut ui, ButtonId::B2);

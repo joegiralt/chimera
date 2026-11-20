@@ -95,8 +95,8 @@ fn engine(w: &[u8]) -> Option<EngineType> {
         .find(|e| e.disk_ident().as_bytes().eq_ignore_ascii_case(w))
 }
 
-/// A decimal (`chimera_theory`'s, not core's float parse: that is 17 KB),
-/// or a choice's name of at most `WORD_MAX`. `inf` and `nan` are refused,
+/// A decimal (`exact::read`'s, correctly rounded, #1038; not core's float
+/// parse: that is 17 KB), or a choice's name of at most `WORD_MAX`. `inf` and `nan` are refused,
 /// never names: `Num` is always finite.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.mod.value"))]
 fn value(w: &[u8]) -> Option<EdValue> {
@@ -104,7 +104,7 @@ fn value(w: &[u8]) -> Option<EdValue> {
         let n = chimera_theory::tuning::uint(n)?;
         return u8::try_from(n).ok().map(|n| EdValue::Index(OptIndex(n)));
     }
-    if let Some(n) = chimera_theory::tuning::decimal(w) {
+    if let Some(n) = exact::read(w) {
         return Some(EdValue::Num(n, Word::new(w)));
     }
     let bare = match w {
