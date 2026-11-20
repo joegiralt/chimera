@@ -102,7 +102,7 @@ fn the_cells_key_carries_vels_dimming() {
 fn amp_rows() {
     use chimera_core::ui::block_registry::SENDS;
     let got: Vec<_> = (0..6).map(|i| AMP.params[i].label()).collect();
-    assert_eq!(got, ["VEL", "LPG", "DECAY", "STRIKE", "--", "--"]);
+    assert_eq!(got, ["VEL", "LPG", "DECAY", "STRIKE", "BASE", "--"]);
     let got: Vec<_> = (0..6).map(|i| SENDS.params[i].label()).collect();
     assert_eq!(got, ["CHORUS", "DELAY", "REVERB", "--", "--", "--"]);
 }

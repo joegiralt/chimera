@@ -41,6 +41,7 @@ use crate::modulation::{
 };
 use crate::params::{EngineType, EnvParams, FilterParams, OutParams, ParamSnapshot, Steal};
 use crate::project::SourceId;
+use crate::stereo::VoicePan;
 use crate::taps::{
     TAP_CAPTURE_COST, TAP_FOLD_COST, TAP_SHAPE_COST, TAP_VCA_COST, TapLane, TapOp, TapRoutes,
     TapRows, tap_vca,
@@ -103,6 +104,8 @@ pub struct Voice {
     lpg: Lpg,
     /// OUT LEVEL × the engine's gain, ramped across each block.
     volume: Ramp,
+    /// OUT PAN and BASE as the last block played them (`LastPlayed`).
+    last: Option<LastPlayed>,
     envs: [Envelope; 3],
     lfos: [Lfo; 3],
     /// The ENV destinations' sums from the last block's matrix (spec § Signal flow 1).
@@ -158,6 +161,51 @@ enum AfterFade {
     Restart,
     /// A note-on that came mid-fade: `last_note`.
     Note,
+}
+
+/// AMP's BASE as a voice plays it (ADR 0292), 0..1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct VcaBase(f32);
+
+/// What a sounding note's last block played, for this block to ramp from
+/// (ADR 0292, 0294): kept apart from `played`, which a retrigger's copy of
+/// the stored Sound overwrites (routes off, knobs at their targets). `None`
+/// before a fresh note's first block: it starts on its own values.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LastPlayed {
+    /// OUT PAN, its routes on.
+    pan: VoicePan,
+    /// AMP's BASE, as glided.
+    base: VcaBase,
+}
+
+/// AMP's BASE across a block (ADR 0292): the value the voice played last
+/// block, and this block's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BaseRamp {
+    from: f32,
+    to: f32,
+}
+
+impl BaseRamp {
+    /// 0 at both ends: the zeroed buffer as it is, no fill.
+    fn is_zero(self) -> bool {
+        self.from == 0.0 && self.to == 0.0
+    }
+}
+
+/// The VCA's gain buffer at a block's start: AMP's BASE (ADR 0292) from
+/// the last block's to this one's, ramped. A steady BASE steps by +0, so
+/// each sample is BASE + 0: 0 is the +0-filled buffer it replaced, bit for
+/// bit. Out of line and sized: one rolled loop, not 64 stores in the
+/// voice's render.
+#[inline(never)]
+#[optimize(size)]
+fn vca_start(gain: &mut [f32; BLOCK_SIZE], base: BaseRamp) {
+    let step = step_of((base.from, base.to), BLOCK_SIZE);
+    for (i, g) in gain.iter_mut().enumerate() {
+        *g = at(base.from, step, i);
+    }
 }
 
 /// The routes into VCA a voice plays, kept from the last block before a
@@ -532,6 +580,7 @@ impl Voice {
                 dc: DcBlocker::new(DC_HZ, (*p).sample_rate),
                 lpg: Lpg::NEW,
                 volume: Ramp::default(),
+                last: None,
                 envs: [Envelope::new(); 3],
                 lfos: [Lfo::new(); 3],
                 env_mods: [EnvMods::NONE; 3],
@@ -795,6 +844,7 @@ impl Voice {
             self.dc.reset();
             self.gate = AmpGate::OPEN;
             self.volume.hold();
+            self.last = None;
             self.slot.hold();
             // An idle voice's ENV slots and last source values start as a
             // fresh voice's. Idle is silent: a release its VCA routes still
@@ -1005,13 +1055,26 @@ impl Voice {
     #[inline(always)]
     fn vca_holds(&self) -> bool {
         let key = self.held;
-        ModSource::ALL
-            .iter()
-            .filter(|s| self.vca.has(s.index()))
-            .any(|s| match s.env_slot() {
-                Some(e) => self.envs[e.index()].holds(key),
-                None => key,
-            })
+        self.base_holds()
+            || ModSource::ALL
+                .iter()
+                .filter(|s| self.vca.has(s.index()))
+                .any(|s| match s.env_slot() {
+                    Some(e) => self.envs[e.index()].holds(key),
+                    None => key,
+                })
+    }
+
+    /// AMP's BASE above 0 holds the voice as the engine would with no
+    /// route (ADR 0292): ALGO, MODAL and DRUM until their own tails end,
+    /// TAPE and VA (which never end) while the key is down.
+    #[inline(always)]
+    fn base_holds(&self) -> bool {
+        self.played.out.vca > 0.0
+            && match self.slot {
+                EngineSlot::Tape(_) | EngineSlot::Va(_) => self.held,
+                EngineSlot::Algo(_) | EngineSlot::Modal(_) | EngineSlot::Drum(_) => true,
+            }
     }
 
     /// One block of its own bend (semitones), pressure and timbre (0..1)
@@ -1047,7 +1110,8 @@ impl Voice {
     /// LFOs play the Part's `clock` (ADR 0135); without one (a voice on its
     /// own) they run their own phase.
     /// A DRUM hit off centre (its pad's PAN) leaves its mid in `output`
-    /// and adds its side to `side` (`MidSide::split`).
+    /// and adds its side to `side` (`MidSide::split`); so does a note of
+    /// any other engine off centre by OUT PAN (ADR 0294, `out_pan`).
     #[allow(clippy::too_many_arguments)]
     pub fn render_knobs(
         &mut self,
@@ -1059,11 +1123,52 @@ impl Voice {
         ctx: &mut EngineCtx<'_>,
         side: &mut Option<[f32; BLOCK_SIZE]>,
     ) {
-        // Read before the block: a hit ending in it pans to its end.
+        // Read before the block: a note ending in it is placed to its end,
+        // a pad's hit by its pad, any other note by OUT PAN.
         let pan = self.drum_pan();
+        let placed = self.out_pans();
         self.render_mono(output, params, mod_state, knobs, clock, ctx);
+        let to = self.played.out.pan;
+        // From the last block's place; a fresh note's from its own.
+        let from = self.last.map_or(to, |l| l.pan);
+        self.last = Some(LastPlayed {
+            pan: to,
+            base: VcaBase(self.played.out.vca),
+        });
         if let Some(ms) = pan {
             ms.split(output, side);
+        } else if placed {
+            self.out_pan(output, side, from, to);
+        }
+    }
+
+    /// OUT PAN places this voice's notes (ADR 0294): every engine's but
+    /// DRUM's, whose hits its pads place; a voice sounding.
+    #[inline(always)]
+    fn out_pans(&self) -> bool {
+        match self.slot {
+            EngineSlot::Algo(_)
+            | EngineSlot::Modal(_)
+            | EngineSlot::Tape(_)
+            | EngineSlot::Va(_) => self.active,
+            EngineSlot::Drum(_) => false,
+        }
+    }
+
+    /// OUT PAN (ADR 0294): the note placed from `from` (the last block's
+    /// place) to `to` (this block's), its side into `side`, in bank 2
+    /// behind `StereoDoor`. Centred both ends, no call: the bus as it was,
+    /// bit for bit.
+    #[inline(always)]
+    fn out_pan(
+        &self,
+        output: &mut [f32; BLOCK_SIZE],
+        side: &mut Option<[f32; BLOCK_SIZE]>,
+        from: VoicePan,
+        to: VoicePan,
+    ) {
+        if from.off_centre() || to.off_centre() {
+            crate::stereo::door::through(|d| d.pan().run(output, side, from, to));
         }
     }
 
@@ -1105,6 +1210,9 @@ impl Voice {
             if self.fade == 0 { params } else { &self.played },
             mod_state,
         );
+        // AMP's BASE as the last block played it (ADR 0292, `last`): this
+        // block's ramps from it; a fresh note's starts on its own.
+        let base_from = self.last.map(|l| l.base);
         // A fading voice keeps the settings it last played; else the stored
         // ones, with the Part's knobs on their way in their place. The
         // routes' offsets go on after the modulators.
@@ -1125,9 +1233,18 @@ impl Voice {
             self.vca = VcaRoutes::of(mod_state);
         }
         let vca = self.vca;
-        // The VCA's gain (spec § 4): 64 samples on the audio stack, zeroed
-        // only with a route into VCA.
+        // The VCA's gain (spec § 4): 64 samples on the audio stack, only
+        // with a route into VCA, from AMP's BASE (ADR 0292; 0, a stored
+        // Sound's, is today's zeroed start).
+        let to = self.played.out.vca;
+        let base = BaseRamp {
+            from: base_from.map_or(to, |b| b.0),
+            to,
+        };
         let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
+        if let Some(g) = gain.as_mut().filter(|_| !base.is_zero()) {
+            vca_start(g, base);
+        }
         // The last block's sources; on a retrigger, the new note's VEL and NOTE.
         let mut v = self.mod_values;
         let retrigger = core::mem::take(&mut self.retrigger);

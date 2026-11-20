@@ -141,8 +141,9 @@ impl Bits {
 /// The values PART keeps: one for each param of every block the followed
 /// engine's schema has (`reachable`), in `block_at` order, a block the
 /// Sound lacks included (so a slot never moves). DRUM's twelve pads take
-/// the most; a test says it holds every engine's.
-pub const SLOTS: usize = 711;
+/// the most; a test says it holds every engine's. 712 with OUT's WIDTH
+/// (ADR 0294).
+pub const SLOTS: usize = 712;
 /// The values MIXER keeps: each Part's mix and sends, then the buses.
 pub const MIXER_SLOTS: usize = mixer_slots();
 /// `Described`'s words: the most slots a schema has.

@@ -118,7 +118,7 @@ fn the_mixer_walks_its_shared_pages_then_each_parts() {
                 .to_string()
         })
         .collect();
-    let shared = ["CHR", "DLY", "CHAR", "GRAIN", "REV", "MORE", "MOR2"];
+    let shared = ["CHR", "DLY", "CHAR", "GRAIN", "REV", "MORE", "DUCK", "MOR2"];
     assert_eq!(&labels[..shared.len()], &shared);
     let per_part = ["PRT", "VOI", "EQ", "SND"];
     let rounds = &labels[labels.len() - per_part.len() * PartId::ALL.len()..];

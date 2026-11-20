@@ -15,6 +15,7 @@ use lit::lit;
 mod addr;
 mod describe;
 mod edits;
+mod exact;
 mod lit;
 #[cfg(feature = "midi-map")]
 mod map;

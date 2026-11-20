@@ -527,10 +527,11 @@ ampOut =
             word >> Addr.at Out
     in
     module_ Chip.Amp "AMP · OUT"
-        |> withNote "LOW-PASS GATE · SENDS"
+        |> withNote "LOW-PASS GATE · STEREO · SENDS"
         |> withScreen (strip Snd)
         |> withGroups
-            [ group "GATE" [ heroFader (a "LPG"), fader (a "DECAY"), fader (a "STRIKE"), fader (a "VEL") ]
+            [ group "GATE" [ heroFader (a "LPG"), fader (a "DECAY"), fader (a "STRIKE"), fader (a "VEL"), fader (a "VCA") ]
+            , group "STEREO" [ knob (a "PAN"), fader (a "WIDTH") ]
             , group "OUT" [ heroFader (a "LEVEL"), fader (a "SEND1"), fader (a "SEND2"), fader (a "SEND3") ]
             ]
 

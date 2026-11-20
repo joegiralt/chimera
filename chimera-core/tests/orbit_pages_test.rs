@@ -557,7 +557,13 @@ fn header_dot_pulses() {
         assert_eq!(third.at(x, y), theme::BG, "{name}: an outline");
         assert_eq!(third.at(x + r, y), theme::ACCENT, "{name}: an outline");
         let (still, k4) = step(&mut ui, "between beats");
-        assert!(still.px == third.px, "{name}: still between beats");
+        // The header's rows: below them MIXER › PRT's meters (ADR 0293)
+        // read the shared Part peaks, which other tests' audio raises.
+        let head_px = |fb: &Fb| fb.px[..screen::W * theme::HEADER_BOTTOM as usize].to_vec();
+        assert!(
+            head_px(&still) == head_px(&third),
+            "{name}: still between beats"
+        );
         // The band redraws as the dot fades, and not between beats.
         assert!(k1 != k2 && k2 != k3, "{name}: each fade step redraws");
         assert_eq!(k3, k4, "{name}: the band rests between beats");

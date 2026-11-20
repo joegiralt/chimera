@@ -881,7 +881,9 @@ fn since_zero_answers_everything() {
         );
         want += 1;
     }
-    assert_eq!(want, 218, "the schema's addresses");
+    // ADR 0292: AMP's BASE, OUT.VCA, on its page; ADR 0294: AMP ›
+    // STEREO's PAN and WIDTH.
+    assert_eq!(want, 221, "the schema's addresses");
     assert_eq!(vals(&lines).len(), want);
     assert_eq!(lines.len(), 1 + 14 + want);
 }

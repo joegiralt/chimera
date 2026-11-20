@@ -386,6 +386,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | LPG | 18:7 (2311) | 14-bit | 0 to 16383, lowest to highest |
 | DECAY | 18:8 (2312) | 14-bit | 0 to 16383, lowest to highest |
 | STRIKE | 18:9 (2313) | 14-bit | 0 to 16383, lowest to highest |
+| WIDTH | 18:10 (2314) | 14-bit | 0 to 16383, lowest to highest |
 
 ### VOICE
 
@@ -457,6 +458,8 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | SMEAR | 22:11 (2827) | 14-bit | 0 to 16383, lowest to highest |
 | RATE | 22:12 (2828) | 14-bit | 0 to 16383, lowest to highest |
 | DENSITY | 22:14 (2830) | 14-bit | 0 to 16383, lowest to highest |
+| DUCK | 22:15 (2831) | 14-bit | 0 to 16383, lowest to highest |
+| RELEASE | 22:16 (2832) | 14-bit | 0 to 16383, lowest to highest |
 
 ### REEL
 

@@ -1,4 +1,4 @@
-page 0 ALG of 36
+page 0 ALG of 37
 panel ALG -
 param ALGO.ALG_A "ALG A" choice lin 0 31 1 0 m
 opt ALGO.ALG_A 0 "T1"
@@ -71,7 +71,7 @@ param ALGO.TRNSP "TRNSP" cont lin -24 24 1 0 m
 param OUT.LEVEL "VOL" cont lin 0 1 0.0078125 0.3515625 md
 param ALGO.VOWEL "VOWEL" cont lin 0 100 1 50 md
 OK
-page 1 PIT of 36
+page 1 PIT of 37
 panel PIT -
 param PITCH.PITCH "PITCH" cont lin -24 24 1 0 md
 param PITCH.FINE "FINE" cont lin -100 100 1 0 md
@@ -83,7 +83,7 @@ param PITCH.SNAP "SNAP" choice lin 0 1 1 0 m
 opt PITCH.SNAP 0 "CHROMA"
 opt PITCH.SNAP 1 "MUSICAL"
 OK
-page 2 OSC of 36
+page 2 OSC of 37
 panel OSC -
 param OP_A.WAVE "OP1" choice lin 0 17 1 0 m
 opt OP_A.WAVE 0 "W1"
@@ -200,7 +200,7 @@ opt OP_F.WAVE 15 "SSAW"
 opt OP_F.WAVE 16 "FRMT"
 opt OP_F.WAVE 17 "NOISE"
 OK
-page 3 FRM of 36
+page 3 FRM of 37
 panel FRM -
 param OP_A.FRMT "OP1" cont lin 0 168 1 72 md
 param OP_B.FRMT "OP2" cont lin 0 168 1 72 md
@@ -209,7 +209,7 @@ param OP_D.FRMT "OP4" cont lin 0 168 1 72 md
 param OP_E.FRMT "OP5" cont lin 0 168 1 72 md
 param OP_F.FRMT "OP6" cont lin 0 168 1 72 md
 OK
-page 4 CRS of 36
+page 4 CRS of 37
 panel CRS -
 param OP_A.CRSE "OP1" choice lin 0 63 1 4 m
 opt OP_A.CRSE 0 "0.50"
@@ -602,7 +602,7 @@ opt OP_F.CRSE 61 "23.55"
 opt OP_F.CRSE 62 "24.22"
 opt OP_F.CRSE 63 "25.95"
 OK
-page 5 FIN of 36
+page 5 FIN of 37
 panel FIN -
 param OP_A.FINE "OP1" cont lin 0 15 1 0 m
 param OP_B.FINE "OP2" cont lin 0 15 1 0 m
@@ -611,7 +611,7 @@ param OP_D.FINE "OP4" cont lin 0 15 1 0 m
 param OP_E.FINE "OP5" cont lin 0 15 1 0 m
 param OP_F.FINE "OP6" cont lin 0 15 1 0 m
 OK
-page 6 DET of 36
+page 6 DET of 37
 panel DET -
 param OP_A.DETUN "OP1" cont lin -3 3 1 0 m
 param OP_B.DETUN "OP2" cont lin -3 3 1 0 m
@@ -620,7 +620,7 @@ param OP_D.DETUN "OP4" cont lin -3 3 1 0 m
 param OP_E.DETUN "OP5" cont lin -3 3 1 0 m
 param OP_F.DETUN "OP6" cont lin -3 3 1 0 m
 OK
-page 7 LVL of 36
+page 7 LVL of 37
 panel LVL -
 param OP_A.LEVEL "OP1" cont lin 0 99 1 0 md
 param OP_B.LEVEL "OP2" cont lin 0 99 1 0 md
@@ -629,7 +629,7 @@ param OP_D.LEVEL "OP4" cont lin 0 99 1 0 md
 param OP_E.LEVEL "OP5" cont lin 0 99 1 0 md
 param OP_F.LEVEL "OP6" cont lin 0 99 1 0 md
 OK
-page 8 VEL of 36
+page 8 VEL of 37
 panel VEL -
 param OP_A.VEL "OP1" cont lin 0 7 1 0 m
 param OP_B.VEL "OP2" cont lin 0 7 1 0 m
@@ -638,7 +638,7 @@ param OP_D.VEL "OP4" cont lin 0 7 1 0 m
 param OP_E.VEL "OP5" cont lin 0 7 1 0 m
 param OP_F.VEL "OP6" cont lin 0 7 1 0 m
 OK
-page 9 AR of 36
+page 9 AR of 37
 panel AR -
 param OP_A.AR "OP1" cont lin 0 31 1 31 m
 param OP_B.AR "OP2" cont lin 0 31 1 31 m
@@ -647,7 +647,7 @@ param OP_D.AR "OP4" cont lin 0 31 1 31 m
 param OP_E.AR "OP5" cont lin 0 31 1 31 m
 param OP_F.AR "OP6" cont lin 0 31 1 31 m
 OK
-page 10 D1R of 36
+page 10 D1R of 37
 panel D1R -
 param OP_A.D1R "OP1" cont lin 0 31 1 0 m
 param OP_B.D1R "OP2" cont lin 0 31 1 0 m
@@ -656,7 +656,7 @@ param OP_D.D1R "OP4" cont lin 0 31 1 0 m
 param OP_E.D1R "OP5" cont lin 0 31 1 0 m
 param OP_F.D1R "OP6" cont lin 0 31 1 0 m
 OK
-page 11 D1L of 36
+page 11 D1L of 37
 panel D1L -
 param OP_A.D1L "OP1" cont lin 0 15 1 15 m
 param OP_B.D1L "OP2" cont lin 0 15 1 15 m
@@ -665,7 +665,7 @@ param OP_D.D1L "OP4" cont lin 0 15 1 15 m
 param OP_E.D1L "OP5" cont lin 0 15 1 15 m
 param OP_F.D1L "OP6" cont lin 0 15 1 15 m
 OK
-page 12 D2R of 36
+page 12 D2R of 37
 panel D2R -
 param OP_A.D2R "OP1" cont lin 0 31 1 0 m
 param OP_B.D2R "OP2" cont lin 0 31 1 0 m
@@ -674,7 +674,7 @@ param OP_D.D2R "OP4" cont lin 0 31 1 0 m
 param OP_E.D2R "OP5" cont lin 0 31 1 0 m
 param OP_F.D2R "OP6" cont lin 0 31 1 0 m
 OK
-page 13 RR of 36
+page 13 RR of 37
 panel RR -
 param OP_A.RR "OP1" cont lin 1 15 1 5 m
 param OP_B.RR "OP2" cont lin 1 15 1 5 m
@@ -683,7 +683,7 @@ param OP_D.RR "OP4" cont lin 1 15 1 5 m
 param OP_E.RR "OP5" cont lin 1 15 1 5 m
 param OP_F.RR "OP6" cont lin 1 15 1 5 m
 OK
-page 14 RS of 36
+page 14 RS of 37
 panel RS -
 param OP_A.RS "OP1" cont lin 0 3 1 0 m
 param OP_B.RS "OP2" cont lin 0 3 1 0 m
@@ -692,7 +692,7 @@ param OP_D.RS "OP4" cont lin 0 3 1 0 m
 param OP_E.RS "OP5" cont lin 0 3 1 0 m
 param OP_F.RS "OP6" cont lin 0 3 1 0 m
 OK
-page 15 FBK of 36
+page 15 FBK of 37
 panel FBK -
 param OP_A.FDBK "OP1" cont lin 0 7 1 0 m
 param OP_B.FDBK "OP2" cont lin 0 7 1 0 m
@@ -701,7 +701,7 @@ param OP_D.FDBK "OP4" cont lin 0 7 1 0 m
 param OP_E.FDBK "OP5" cont lin 0 7 1 0 m
 param OP_F.FDBK "OP6" cont lin 0 7 1 0 m
 OK
-page 16 OP1 of 36
+page 16 OP1 of 37
 panel OP1 TABLE
 param OP_A.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_A.WAVE 0 "W1"
@@ -852,7 +852,7 @@ opt OP_A.VSLOT 3 "F3"
 opt OP_A.VSLOT 4 "OFF"
 param OP_A.LEVEL "LEVEL" cont lin 0 99 1 0 md
 OK
-page 17 OP2 of 36
+page 17 OP2 of 37
 panel OP2 TABLE
 param OP_B.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_B.WAVE 0 "W1"
@@ -1003,7 +1003,7 @@ opt OP_B.VSLOT 3 "F3"
 opt OP_B.VSLOT 4 "OFF"
 param OP_B.LEVEL "LEVEL" cont lin 0 99 1 0 md
 OK
-page 18 OP3 of 36
+page 18 OP3 of 37
 panel OP3 TABLE
 param OP_C.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_C.WAVE 0 "W1"
@@ -1154,7 +1154,7 @@ opt OP_C.VSLOT 3 "F3"
 opt OP_C.VSLOT 4 "OFF"
 param OP_C.LEVEL "LEVEL" cont lin 0 99 1 0 md
 OK
-page 19 OP4 of 36
+page 19 OP4 of 37
 panel OP4 TABLE
 param OP_D.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_D.WAVE 0 "W1"
@@ -1305,7 +1305,7 @@ opt OP_D.VSLOT 3 "F3"
 opt OP_D.VSLOT 4 "OFF"
 param OP_D.LEVEL "LEVEL" cont lin 0 99 1 0 md
 OK
-page 20 OP5 of 36
+page 20 OP5 of 37
 panel OP5 TABLE
 param OP_E.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_E.WAVE 0 "W1"
@@ -1456,7 +1456,7 @@ opt OP_E.VSLOT 3 "F3"
 opt OP_E.VSLOT 4 "OFF"
 param OP_E.LEVEL "LEVEL" cont lin 0 99 1 0 md
 OK
-page 21 OP6 of 36
+page 21 OP6 of 37
 panel OP6 TABLE
 param OP_F.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_F.WAVE 0 "W1"
@@ -1607,7 +1607,7 @@ opt OP_F.VSLOT 3 "F3"
 opt OP_F.VSLOT 4 "OFF"
 param OP_F.LEVEL "LEVEL" cont lin 0 99 1 0 md
 OK
-page 22 FLT of 36
+page 22 FLT of 37
 panel FLT -
 param FILTER.KIND "TYPE" choice lin 0 4 1 0 m
 opt FILTER.KIND 0 "CLEAN"
@@ -1663,7 +1663,7 @@ param FILTER.RESO "RES" cont lin 0 1 0.0078125 0 md
 param FILTER.MORPH "MODE" cont lin 0 1 0.0078125 0 md
 param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 md
 OK
-page 23 FMD of 36
+page 23 FMD of 37
 panel FILTER CLEAN
 route "ENV AMT" ENV1:FILTER.CUTOFF route
 route "KEYBOARD" NOTE:FILTER.CUTOFF route
@@ -1698,7 +1698,7 @@ param FILTER.MODE "OUTPUT" choice lin 0 1 1 0 m
 opt FILTER.MODE 0 "MODE"
 opt FILTER.MODE 1 "BP"
 OK
-page 24 FX of 36
+page 24 FX of 37
 panel FX -
 param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
@@ -1724,7 +1724,7 @@ param VOICEFX.P1 "FOLD" cont lin 0 1 0.0078125 0 md
 param VOICEFX.P2 "SYMMETRY" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.P3 "LEVEL" cont lin 0 1 0.0078125 0.5 md
 OK
-page 25 JACK of 36
+page 25 JACK of 37
 panel FILTER CLEAN
 param FILTER.FM3IN "FREQ SRC" choice lin 0 7 1 0 -
 opt FILTER.FM3IN 0 "LFO1"
@@ -1831,22 +1831,28 @@ opt FILTER.QMIN 7 "NOTE"
 opt FILTER.QMIN 8 "OP5"
 opt FILTER.QMIN 9 "OP6"
 OK
-page 26 AMP of 36
+page 26 AMP of 37
 panel AMP -
 param OUT.VEL "VEL" cont lin 0 1 0.0078125 1 m
 param OUT.LPG "LPG" cont lin 0 1 0.0078125 0 md
 param OUT.DECAY "DECAY" cont lin 0 1 0.0078125 0 md
 param OUT.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 md
+param OUT.VCA "BASE" cont lin 0 1 0.0078125 0 md
 OK
-page 27 SND of 36
+page 27 STER of 37
+panel STER -
+param OUT.PAN "PAN" cont lin -1 1 0.015625 0 md
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
+OK
+page 28 SND of 37
 panel SND -
 param OUT.SEND1 "CHORUS" cont lin 0 1 0.0078125 0 m
 param OUT.SEND2 "DELAY" cont lin 0 1 0.0078125 0 m
 param OUT.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
 OK
-page 28 MTX of 36
+page 29 MTX of 37
 OK
-page 29 E1 of 36
+page 30 E1 of 37
 panel ENV1 A-FAST
 param ENV1.ATK "ATTACK" cont lin 0 1 0.0078125 0.189 m
 param ENV1.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
@@ -1935,7 +1941,7 @@ param ENV1.TYPE "TYPE" choice lin 0 1 1 0 m
 opt ENV1.TYPE 0 "A"
 opt ENV1.TYPE 1 "B"
 OK
-page 30 E2 of 36
+page 31 E2 of 37
 panel ENV2 A-FAST
 param ENV2.ATK "ATTACK" cont lin 0 1 0.0078125 0.189 m
 param ENV2.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
@@ -2024,7 +2030,7 @@ param ENV2.TYPE "TYPE" choice lin 0 1 1 0 m
 opt ENV2.TYPE 0 "A"
 opt ENV2.TYPE 1 "B"
 OK
-page 31 E3 of 36
+page 32 E3 of 37
 panel ENV3 A-FAST
 param ENV3.ATK "ATTACK" cont lin 0 1 0.0078125 0.189 m
 param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
@@ -2113,7 +2119,7 @@ param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 OK
-page 32 SPD of 36
+page 33 SPD of 37
 panel SPD -
 param ENV1.SPEED "E1 SPEED" choice lin 0 2 1 1 m
 opt ENV1.SPEED 0 "FAST"
@@ -2140,7 +2146,7 @@ opt ENV3.HOLD 0 "OFF"
 opt ENV3.HOLD 1 "AHDSR"
 opt ENV3.HOLD 2 "GATE EXT"
 OK
-page 33 L1 of 36
+page 34 L1 of 37
 panel LFO1 CLASSIC
 param LFO1.RATE "RATE" cont lin 0.01 20 0.15 1 m
 param LFO1.SHAPE "SHAPE" choice lin 0 4 1 0 m
@@ -2180,7 +2186,7 @@ param LFO1.TYPE "TYPE" choice lin 0 1 1 0 m
 opt LFO1.TYPE 0 "CLASSIC"
 opt LFO1.TYPE 1 "FUNC"
 OK
-page 34 L2 of 36
+page 35 L2 of 37
 panel LFO2 CLASSIC
 param LFO2.RATE "RATE" cont lin 0.01 20 0.15 1 m
 param LFO2.SHAPE "SHAPE" choice lin 0 4 1 0 m
@@ -2220,7 +2226,7 @@ param LFO2.TYPE "TYPE" choice lin 0 1 1 0 m
 opt LFO2.TYPE 0 "CLASSIC"
 opt LFO2.TYPE 1 "FUNC"
 OK
-page 35 L3 of 36
+page 36 L3 of 37
 panel LFO3 CLASSIC
 param LFO3.RATE "RATE" cont lin 0.01 20 0.15 1 m
 param LFO3.SHAPE "SHAPE" choice lin 0 4 1 0 m

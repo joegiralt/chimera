@@ -103,6 +103,8 @@ pub struct Frame<'a> {
     pub master_gr_db: f32,
     /// The active Part's LEVEL LED fill (`ClipHold`); 0 is dark.
     pub clip: f32,
+    /// MIXER › PRT's meters and key marks (ADR 0293).
+    pub meters: &'a crate::ui::part_meter::PartMeters,
     /// The tempo the reverb follows and its synced time's fold.
     pub rev_clock: (
         crate::dsp::rev::sync::Tempo,
@@ -479,7 +481,12 @@ impl Renderer {
             VizType::AudioStats => audio_page::draw_viz(display, f.audio),
             VizType::Pool => crate::ui::pool_page::draw_viz(display, f.pool),
             VizType::MixerLevels => {
-                viz::parts_overview(display, &self.strips(f), f.active_part.index())
+                viz::parts_overview(display, &self.strips(f), f.active_part.index());
+                // Each Part's live meter and key mark beside it (ADR 0293).
+                let on = &mut crate::ui::tape_strip::On(display);
+                crate::bank2::ui_door(|u| {
+                    u.meters(crate::ui::part_meter::Ask::Paint(on, f.meters))
+                });
             }
             VizType::EffectsFlow(FxFlow::Sends) => {
                 let sends = [
@@ -694,7 +701,7 @@ impl Renderer {
                 VizType::Pool => ([0; 6], crate::ui::pool_page::viz_key(f.pool)),
                 VizType::MixerLevels => (
                     region::quantize_values(&self.anim),
-                    strips_key(&self.strips(f), f.active_part.index()),
+                    strips_key(&self.strips(f), f.active_part.index()) ^ f.meters.key(),
                 ),
                 VizType::EffectsFlow(_) => (region::quantize_values(&self.anim), f.focus as u32),
                 VizType::AlgoDiagram => {
@@ -847,7 +854,7 @@ impl Renderer {
                 f.matrix,
                 amount_of(self.anim[MATRIX_AMOUNT_SLOT].target()),
                 inert(f),
-                f.hint(f.matrix.hint()),
+                f.hint(view::matrix_hint(f.matrix)),
             );
         }
         if f.def.viz == VizType::AudioStats {

@@ -1190,10 +1190,16 @@ where
 }
 
 /// Bit `c`: grid column `c` is a param `view::dimmed` rules inapplicable
-/// (MORPH while ALG A = ALG B), so its routes do nothing.
+/// (MORPH while ALG A = ALG B), so its routes do nothing. Never VCA: AMP's
+/// BASE is dimmed only until a route into it exists (ADR 0292).
 pub fn inert_dests(state: &MatrixState, sound: &crate::preset::Sound) -> u32 {
     (0..state.num_cols()).fold(0, |m, c| match state.col_dest(c) {
-        Some(d) if crate::ui::view::dimmed(d.addr, sound) => m | 1 << c,
+        Some(d)
+            if state.col(c) != Col::Fixed(FixedCol::Vca)
+                && crate::ui::view::dimmed(d.addr, sound) =>
+        {
+            m | 1 << c
+        }
         _ => m,
     })
 }

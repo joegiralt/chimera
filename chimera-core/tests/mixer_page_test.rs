@@ -469,7 +469,8 @@ fn the_reverb_page_is_type_size_time_damp_smear_mix() {
         .find(|b| b.def.id == reg::EFX.id)
         .unwrap();
     let subs: Vec<(u16, &str)> = rev.sub_pages.iter().map(|d| (d.id, d.short)).collect();
-    assert_eq!(subs, [(96, "MORE"), (97, "MOR2")]);
+    // REV › DUCK (ADR 0295) before MORE 2, HALL's alone and last.
+    assert_eq!(subs, [(96, "MORE"), (119, "DUCK"), (97, "MOR2")]);
 }
 
 /// On the unit: REV's B ticks QUAD's SIZE a table step, A turns to GATE

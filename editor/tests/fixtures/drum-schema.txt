@@ -831,6 +831,7 @@ panel PAD1_GATE -
 param PAD1_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD1_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD1_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 19 PAD1_PENV of 165
 panel PAD1_PENV -
@@ -1330,6 +1331,7 @@ panel PAD2_GATE -
 param PAD2_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD2_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD2_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 32 PAD2_PENV of 165
 panel PAD2_PENV -
@@ -1829,6 +1831,7 @@ panel PAD3_GATE -
 param PAD3_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD3_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD3_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 45 PAD3_PENV of 165
 panel PAD3_PENV -
@@ -2328,6 +2331,7 @@ panel PAD4_GATE -
 param PAD4_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD4_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD4_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 58 PAD4_PENV of 165
 panel PAD4_PENV -
@@ -2827,6 +2831,7 @@ panel PAD5_GATE -
 param PAD5_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD5_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD5_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 71 PAD5_PENV of 165
 panel PAD5_PENV -
@@ -3326,6 +3331,7 @@ panel PAD6_GATE -
 param PAD6_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD6_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD6_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 84 PAD6_PENV of 165
 panel PAD6_PENV -
@@ -3825,6 +3831,7 @@ panel PAD7_GATE -
 param PAD7_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD7_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD7_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 97 PAD7_PENV of 165
 panel PAD7_PENV -
@@ -4324,6 +4331,7 @@ panel PAD8_GATE -
 param PAD8_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD8_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD8_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 110 PAD8_PENV of 165
 panel PAD8_PENV -
@@ -4823,6 +4831,7 @@ panel PAD9_GATE -
 param PAD9_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD9_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD9_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 123 PAD9_PENV of 165
 panel PAD9_PENV -
@@ -5322,6 +5331,7 @@ panel PAD10_GATE -
 param PAD10_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD10_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD10_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 136 PAD10_PENV of 165
 panel PAD10_PENV -
@@ -5821,6 +5831,7 @@ panel PAD11_GATE -
 param PAD11_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD11_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD11_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 149 PAD11_PENV of 165
 panel PAD11_PENV -
@@ -6320,6 +6331,7 @@ panel PAD12_GATE -
 param PAD12_AMP.LPG "LPG" cont lin 0 1 0.0078125 0 -
 param PAD12_AMP.GATE_DECAY "DECAY" cont lin 0 1 0.0078125 0 -
 param PAD12_AMP.STRIKE "STRIKE" cont lin 0 1 0.0078125 0 -
+param OUT.WIDTH "WIDTH" cont lin 0 2 0.015625 1 m
 OK
 page 162 PAD12_PENV of 165
 panel PAD12_PENV -

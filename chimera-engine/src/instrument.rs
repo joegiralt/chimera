@@ -848,6 +848,8 @@ pub struct Instrument {
     streaming: [Streaming; MAX_VOICES],
     /// Each Part's EQ state (ADR 0284): ITCM's on the unit, 0 B here.
     eq: crate::part_eq::EqHome,
+    /// Each Part's WIDTH as its side last played it (ADR 0294).
+    widths: crate::stereo::PartWidths,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -863,7 +865,7 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -948,6 +950,7 @@ impl Instrument {
             addr_of_mut!((*p).tuned).write(crate::tuning::VoiceTunes::NEW);
             addr_of_mut!((*p).streaming).write([Streaming::IDLE; MAX_VOICES]);
             addr_of_mut!((*p).eq).write(crate::part_eq::EqHome::new());
+            addr_of_mut!((*p).widths).write(crate::stereo::PartWidths::REST);
             slot.assume_init_mut()
         }
     }
@@ -2684,6 +2687,18 @@ impl Instrument {
 
         // 1b. Each Part's EQ, before its level, pan and sends (ADR 0284).
         self.part_eq(shared, &written, &mut sides);
+        // 1b'. Each Part's WIDTH on its side (ADR 0294), before the meters.
+        self.part_widths(shared, &mut sides);
+        // 1c. Each Part's peak for MIXER › PRT's meters (ADR 0293), bank
+        // 2's, only while they're up.
+        if crate::part_peaks::watched() {
+            let b = crate::part_peaks::kern::PeaksBlock {
+                buses: &self.buses,
+                sides: &sides,
+                written: &written,
+            };
+            crate::part_peaks::door::through(|d| d.peaks().run(b));
+        }
         // 2-4.
         let scope_block = mix_sided(
             (&self.buses, &sides),
@@ -2736,6 +2751,20 @@ impl Instrument {
         };
         if crate::part_eq::door::through(|d| d.eq().run(eqs, b)).is_none() {
             *eqs = crate::part_eq::PartEqs::REST;
+        }
+    }
+
+    /// Each Part's side times its WIDTH, eased, in bank 2 behind the
+    /// stereo's door (ADR 0294): bank 1's stub, the door call alone (the
+    /// stage's own check returns at once with every WIDTH at rest, every
+    /// side bit for bit). A closed door leaves the sides as panned and the
+    /// WIDTHs at rest.
+    #[inline(never)]
+    fn part_widths(&mut self, shared: &AudioShared, sides: &mut Sides) {
+        let parts = &shared.parts;
+        let (w, sr) = (&mut self.widths, self.sample_rate);
+        if crate::stereo::door::through(|d| d.widths().run(w, sides, parts, sr)).is_none() {
+            self.widths = crate::stereo::PartWidths::REST;
         }
     }
 

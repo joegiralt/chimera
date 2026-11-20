@@ -134,6 +134,13 @@ Protocol 3 (ADR 0285) reaches the followed Part's engine pages only. `in_schema`
 - **Bank 2:** +8,384 on ORBIT, +4,000 on default and the gate (the common frame: the sections, the families' parse and words; ORBIT's own code is `cfg!`'d out there), all in S4; ORBIT's S0–S3 at 8,192 B free, unchanged.
 - **ITCM:** 44,808 → 45,408 B (+600) on every set with `ed`: ORBIT's copy (80 values, the slots, the song line's hash, the degrees, the set, 160 steps, 5 pools, the mask's three words). The design's 344 B kept no step copy; a step's diff needs one.
 
+### The simulator's e2e, and the merge of 0.4 (a1dd3a9c: ADRs 0294, 0297)
+- **`ed`'s pass flushes ORBIT** (`UiState::flush_orbit` at the end of `EdState::apply`): the pass runs after the hand's input and its flush, so an ORBIT set left `live` touched for the frame's publish (its debug assert fired in the e2e). The tests now hold that a set is in the runner's log after the pass alone.
+- **The e2e** (`just editor-sim`, `just editor-e2e`) passes on slice 5 plus that fix: every schema described, 454 sets read back on ALGO, MIXER, SETTINGS and ORBIT, then every engine (MODAL 152, VA 160, TAPE 160, DRUM 1226), routes, the project listing, a step and a scene queue. RING3.HITS is allowed to read back clamped by STEPS, as the box clamps it; a load's diff may carry ROUTES' and SETTINGS' lines. It has no MAP pass yet.
+- **0.4's new params and pages:** OUT's PAN and WIDTH (AMP › STEREO) are in every engine's schema and PART (`SLOTS` 712), REVERB's DUCK and DUCK_RELEASE (REV › DUCK) in MIXER (34 pages) and its section. Fixtures re-blessed.
+- **Stored values** print through ADR 0297's `exact::stored` in every `val` line, every section's; its whole part through `lit::uint`.
+- **Bank 1:** against the lines summed as ours + (0.4 − base), measured: ORBIT +192, default +320, the gate +392, ORBIT with the writer +248, the bench sets +40 to +312. Protocol 4 on ORBIT against 0.4 a1dd3a9c (900,300): **−400**. **Bank 2:** +416 (default, gate), +448 (ORBIT) over the sum. ORBIT's S0–S3 free is 7,776 B (8,192 before the merge: 0.4's reverb DUCK and stills land there; no ed code does). **ITCM:** 45,512 B. `flush_orbit` `#[inline(always)]` was measured and dropped: −8 on ORBIT, +48 on default.
+
 ## Supersedes in part
 - [0285](0285-editor-protocol-3-every-engine-pads-addressed.md): `PROTOCOL` 3 → 4; "the slots are laid out per engine" → per engine plus the common sections; `SLOTS` 711 → 952; `param`'s grammar gains flags; `ERR ed since too large` only for a single section past the bound.
 - [0276](0276-browser-editor-protocol-ed-over-the-console-pulled.md): `route "<label>" next-slice` → a route cell; "every `ed since` answer that isn't a diff starts with `\n`" → every answer holding a whole section.

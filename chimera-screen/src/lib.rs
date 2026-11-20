@@ -453,6 +453,9 @@ impl Mirror {
             return None;
         }
         self.ui.focus_for_test(slot);
+        // A still: the display's own motion at rest, so the picture is
+        // this Sound's on this page, whatever was drawn before (#1035).
+        self.ui.still_for_test();
         Some(())
     }
 

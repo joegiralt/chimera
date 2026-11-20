@@ -73,9 +73,9 @@ out =
             Addr.field >> Addr.at Out
     in
     module_ Chip.Out "OUT"
-        |> Shared.withNote "SENDS · WHOLE KIT"
+        |> Shared.withNote "SENDS · WIDTH · WHOLE KIT"
         |> Shared.withScreen (strip Snd)
-        |> Shared.withGroups [ group "" [ fader (a "SEND1"), fader (a "SEND2"), fader (a "SEND3") ] ]
+        |> Shared.withGroups [ group "" [ fader (a "SEND1"), fader (a "SEND2"), fader (a "SEND3") ], group "" [ fader (a "WIDTH") ] ]
 
 
 {-| The kit's filter modulation, and the STABILITY its pads' filters share.
