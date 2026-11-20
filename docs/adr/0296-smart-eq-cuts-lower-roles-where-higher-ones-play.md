@@ -146,7 +146,8 @@ bench-algo.
    - **deep, the bands' phase holds a centre up**: a band cut alone is
      0.01 · 0.14 · 2.3 dB short (LOW asked 27 dB reaches 24.7), and two
      adjacent bands asked 21 dB reach 10 to 18 dB. Parallel band-passes
-     cannot do more;
+     cannot do more, and they stay (owner's decision, 2026-11-20): OVER
+     asks up to 21 dB and gives what the bands give cleanly;
    - **the pages read what is heard**: the view carries each centre's
      real cut (`heard`, the sum's size from the measured responses),
      within 0.001 dB of the filters, never the cut asked. No readout
@@ -362,12 +363,13 @@ against off:
 - **A separate 8-band filterbank, or a small FFT.** Eight more filters a
   Part for answers folded into four decisions; 64 points cannot resolve
   LOW, 1,024 need 24 KB of frames and a frame's delay.
-- **Cascaded bells (a graphic EQ's, with its interaction solve).** They
+- **Cascaded bells (a graphic EQ's, with its interaction solve): not
+  doing (owner, 2026-11-20).** They
   reach any depth cleanly, where parallel band-passes stop near 12 dB
   (Decision 6). About 20 cycles a sample more a cut Part (their
   coefficients move with the gain and must be lerped), and the bands
-  could no longer be heard through. The path if OVER must truly reach
-  21 dB: for the owner, after the OVER render.
+  could no longer be heard through. The parallel bands stay; the pages
+  show the real cut.
 - **Half-rate cut bands.** Their images are 40 dB under the source near
   20 kHz: not for an instrument sold on its sound.
 - **A broadband gain on a pad's side.** Does not null against a band's

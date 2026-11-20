@@ -111,9 +111,10 @@ The bands overlap, so their dips are unmixed to sum to the cut asked, and
 the pages read what the bands really cut at each centre. Parallel
 band-passes stop near 12 dB: deeper, a neighbour's quarter-turn part holds
 a centre up (two adjacent bands asked 21 dB reach 10 to 18). The pages
-say so. If OVER must truly reach 21 dB, the path is cascaded bells with a
+say so. That stays (owner's decision, 2026-11-20): OVER asks up to 21 dB
+and gives what the bands give cleanly. Not doing: cascaded bells with a
 graphic EQ's interaction solve (Välimäki and Liski), about 20 cycles a
-sample more a cut Part: open question 1.
+sample more a cut Part.
 
 ### 5. Time
 
@@ -233,9 +234,9 @@ what clouds a mix; a delay's repeats are usually wanted forward.
 
 ## Open questions for the owner
 
-1. OVER and DEEP ask more than parallel bands give cleanly (§ 4): the
-   pages read the real cut. Keep, or build cascaded bells for a true
-   21 dB?
+1. Settled (owner, 2026-11-20): OVER and DEEP ask more than parallel
+   bands give cleanly (§ 4); the bands stay, no cascaded bells, the pages
+   read the real cut.
 2. ROLE on PRT › EQ (cell C) rather than PRT itself, which is full; SMART
    EQ, AMOUNT and REV ROLE on MST › LVL rather than a page of their own.
 3. Listening in the four cut bands rather than about 8 (§ 1).
