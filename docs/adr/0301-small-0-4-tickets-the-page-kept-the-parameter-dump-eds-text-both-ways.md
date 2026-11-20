@@ -60,7 +60,11 @@ The chips' font is the largest in which every note name from C0 up fits the chip
 - Tempo sync for the delay (#959) is not in this batch: it needs its own decisions (note values against the line's 500 ms, the delay door's signature, what a GRAIN repeat is).
 
 ## Measurements
-TBD-MEASURE
+Release builds, `CHIMERA_STAMP_CLEAN=1`, a1dd3a9c against this branch, all thirteen budgeted sets built in both trees; each line raised by its set's own delta.
+
+- **Bank 1:** +296 to +320 B on the shipping sets (default 886,408 → 886,728; orbit 900,300 → 900,604, 16,900 B free; bank2-gate +304; orbit,usb-config-writer +296) and +192 to +208 B on the nine bench sets. It is #957's: `Location::next` +140 B and `ChainDef2::locate` +112 B now out of line, `refocus` −70 B, `ParamOut::clear` +24 B out of line, the rest rodata and outlining churn. `nav` steps keys before any door opens, so it stays bank 1's. Nothing of the dump is in bank 1: a first cut gave it a `CtrlEvent` of its own, which cost 216 B there in `CtrlEvent::pack`, and was dropped for the SysEx body path.
+- **Bank 2:** S4 +1,440 B on default, orbit and bank2-gate (`exact::read`, `exact::huge`, `ui::param_dump`); S0-S3 +416 (default), +448 (orbit), +384 (bank2-gate): the request's parse and the out pass's call in `ui::midi`, `chimera_midi::sysex`'s two functions, NOTES' `chip_font`. ORBIT's S0-S3 goes from 7,776 to 7,328 B free (under the per-region 8 KB warning, as before; the total keeps 491,328 B). The bench sets: S4 +576 to +608, S0-S3 +32 to +64.
+- **Sound:** no DSP file changed; the audio goldens are untouched.
 
 ## Sources
 - #957, #961, #980, #984, #1033, #1038, #1039; Elektronauts PreenFM3 thread, posts 241 and 251.
