@@ -193,3 +193,83 @@ fn the_spelled_out_labels_fit_the_band() {
     let bar = gauge(FocusGlyph::LevelBar, 0.0, ValFmt::Uni, |_| Gauge::None);
     assert!(slot.left + w("FEEDBACK") <= components::focus_label_slot(&bar).right);
 }
+
+// #988: RATE SCALE's words, and DECAY 1 LEVEL's under a held decay.
+
+use chimera_core::addr::ParamAddr;
+use chimera_core::ui::block_registry::ALGO_RATE_SCALE;
+use chimera_core::ui::notes;
+use chimera_core::ui::view::{SlotCtx, view};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::RgbColor;
+
+fn op_addr(op: Op, id: ParamId) -> ParamAddr {
+    ParamAddr::new(BlockRef::AlgoOp(op), id)
+}
+
+/// #988: RATE SCALE says what it does, on every operator, in the hint's
+/// place; its cells carry the operators' names, not the tab's RS.
+#[test]
+fn rate_scale_says_what_it_does() {
+    let s = Sound::init(EngineType::Algo);
+    for op in Op::ALL {
+        assert_eq!(
+            notes::cell(op_addr(op, AlgoOpParams::RATE_SCALE), &s),
+            Some("HIGH NOTES, FASTER ENVELOPES")
+        );
+    }
+    let w = draw::text_width(&theme::FONT_LABEL, notes::RATE_SCALE, theme::LABEL_TRACKING);
+    assert!(w <= theme::CONTENT_W, "{w}");
+    let ctx = SlotCtx::read(&s.params, Op::A);
+    let labels: Vec<_> = (0..6)
+        .map(|k| view(&ALGO_RATE_SCALE, k, &ctx).label())
+        .collect();
+    assert_eq!(labels, ["OP1", "OP2", "OP3", "OP4", "OP5", "OP6"]);
+    assert_eq!(
+        (ALGO_RATE_SCALE.name, ALGO_RATE_SCALE.short),
+        ("Rate Scale", "RS")
+    );
+}
+
+/// The words reach the screen: the band draws them where the hint was.
+#[test]
+fn rate_scales_words_are_drawn_in_the_band() {
+    let mut ui = ui();
+    to_osc_sub(&mut ui, &ALGO_RATE_SCALE);
+    feed(&mut ui, Input::turn(EncoderId::A, 1));
+    settle(&mut ui);
+    let shot = render_ui(&ui);
+    let mut want = Fb::new();
+    draw::text_tracked(
+        &mut want,
+        &theme::FONT_LABEL,
+        notes::RATE_SCALE,
+        theme::MARGIN_X,
+        chimera_core::ui::hint::FOCUS_Y,
+        theme::MID,
+        chimera_core::ui::source_cell::tracking(notes::RATE_SCALE),
+    );
+    let lit: Vec<_> = (0..H as i32)
+        .flat_map(|y| (0..W as i32).map(move |x| (x, y)))
+        .filter(|&(x, y)| want.at(x, y) != Rgb565::BLACK)
+        .collect();
+    assert!(!lit.is_empty());
+    assert!(lit.iter().all(|&(x, y)| shot.at(x, y) == want.at(x, y)));
+}
+
+/// #987's likely cause: with DECAY 1 RATE 0 the envelope holds at full
+/// and DECAY 1 LEVEL does nothing, so its band says why.
+#[test]
+fn decay_1_level_says_when_it_is_never_reached() {
+    let d1l = op_addr(Op::B, AlgoOpParams::D1L);
+    let mut s = Sound::init(EngineType::Algo);
+    // INIT: D1R 0, D1L 15, where D2 runs at once.
+    assert_eq!(notes::cell(d1l, &s), None);
+    s.params.algo.ops[1].d1l = 9;
+    assert_eq!(notes::cell(d1l, &s), Some(notes::D1_HOLDS));
+    assert_eq!(notes::cell(op_addr(Op::A, AlgoOpParams::D1L), &s), None);
+    s.params.algo.ops[1].d1r = 1;
+    assert_eq!(notes::cell(d1l, &s), None);
+    let w = draw::text_width(&theme::FONT_LABEL, notes::D1_HOLDS, theme::LABEL_TRACKING);
+    assert!(w <= theme::CONTENT_W, "{w}");
+}

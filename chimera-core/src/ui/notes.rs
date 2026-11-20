@@ -3,7 +3,8 @@
 //! REV › DUCK's cells what they do (ADR 0295), AMP › STEREO's (ADR 0294). Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words
 //! through `UiDoor`'s `notes` entry, a cell's through `band_note`'s; bank
 //! 1 keeps the stub in `view`. ALGO's operator cells (ADR 0298): the
-//! envelope stages' names in the focus label.
+//! envelope stages' names in the focus label, RATE SCALE's words and
+//! DECAY 1 LEVEL's under a held decay.
 
 use crate::addr::{BlockRef, ParamAddr};
 use crate::block::ParamId;
@@ -63,12 +64,14 @@ enum W {
     Decay2Rate,
     ReleaseRate,
     Feedback,
+    RateScale,
+    D1Holds,
 }
 
 /// Each word with its text, in `W`'s order (checked below): one table, so
 /// a word and its text can't part. Read only at compile time: the bytes
 /// reach the build through `WORDS` alone.
-const TABLE: [(W, &str); 14] = [
+const TABLE: [(W, &str); 16] = [
     (W::Vca, "VCA:"),
     (W::Replaces, "ROUTES REPLACE CONTOUR"),
     (W::SumStarts, "SUM STARTS AT AMP BASE"),
@@ -83,6 +86,8 @@ const TABLE: [(W, &str); 14] = [
     (W::Decay2Rate, "DECAY 2 RATE"),
     (W::ReleaseRate, "RELEASE RATE"),
     (W::Feedback, "FEEDBACK"),
+    (W::RateScale, "HIGH NOTES, FASTER ENVELOPES"),
+    (W::D1Holds, "DECAY 1 RATE 0: NEVER REACHED"),
 ];
 
 // Row `i` is word `i`: `word` indexes the table by `W`.
@@ -198,6 +203,12 @@ pub fn op_label(param: ParamId, page: OpCells, label: &mut FmtBuf) {
     }
 }
 
+/// RATE SCALE (#988): what it does, as on the TX81Z.
+pub static RATE_SCALE: &str = word(W::RateScale);
+/// DECAY 1 LEVEL under a DECAY 1 RATE of 0 (#987): the envelope holds
+/// at full, so the level it would fall to is never reached.
+pub static D1_HOLDS: &str = word(W::D1Holds);
+
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
 /// engine's contour, or, with an ENV among them, they start at BASE.
@@ -228,6 +239,12 @@ pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
         (BlockRef::Reverb, ReverbParams::DUCK_RELEASE) => Some(DUCK_RELEASE),
         (BlockRef::Out, OutParams::PAN) => Some(STEREO_PAN),
         (BlockRef::Out, OutParams::WIDTH) => Some(STEREO_WIDTH),
+        (BlockRef::AlgoOp(_), AlgoOpParams::RATE_SCALE) => Some(RATE_SCALE),
+        // D1L 15 meets D1 at once and D2 runs (`OpEnv`).
+        (BlockRef::AlgoOp(op), AlgoOpParams::D1L) => {
+            let o = &s.params.algo.ops[op.index()];
+            (o.d1r == 0 && o.d1l < 15).then_some(D1_HOLDS)
+        }
         _ => None,
     }
 }
@@ -248,7 +265,9 @@ mod tests {
         assert_eq!(op_name(AlgoOpParams::D1L), Some("DECAY 1 LEVEL"));
         assert_eq!(op_name(AlgoOpParams::FEEDBACK), Some("FEEDBACK"));
         assert_eq!(op_name(AlgoOpParams::LEVEL), None);
-        assert_eq!(WORDS.len(), 181 + 68);
+        assert_eq!(RATE_SCALE, "HIGH NOTES, FASTER ENVELOPES");
+        assert_eq!(D1_HOLDS, "DECAY 1 RATE 0: NEVER REACHED");
+        assert_eq!(WORDS.len(), 181 + 68 + 57);
         assert_eq!(
             STEREO_WIDTH.as_ptr(),
             WORDS[151..].as_ptr(),
