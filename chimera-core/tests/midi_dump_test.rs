@@ -22,7 +22,7 @@ use chimera_hal::ButtonId;
 use chimera_hal::EncoderId;
 use chimera_hal::Ms;
 use chimera_midi::ctl::DataValue;
-use chimera_midi::sysex::{DumpWho, PartNo};
+use chimera_midi::sysex::{DumpAsk, DumpWho, PartNo};
 use chimera_midi::value::Channel;
 use screen::{Input as Key, feed};
 
@@ -104,7 +104,7 @@ impl Rig {
 }
 
 fn ask(who: DumpWho) -> CtrlEvent {
-    CtrlEvent::Dump(who)
+    CtrlEvent::Dump(DumpAsk::of(who))
 }
 
 fn part(n: u8) -> DumpWho {

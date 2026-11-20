@@ -540,9 +540,9 @@ impl UiState {
             }
             // A dump request asks only to read: taken busy or not, the
             // Part it names resolved now, answered by `out` (ADR 0301).
-            if let HeardEv::Ctrl(port, CtrlEvent::Dump(who)) = e {
+            if let HeardEv::Ctrl(port, CtrlEvent::Dump(ask)) = e {
                 let (ui, project) = (self.cc.ui(), &self.project);
-                ui.dump.ask(port, who, project, at);
+                ui.dump.ask(port, ask.who(), project, at);
                 continue;
             }
             // The notes already let go: say why, busy or not (#818).

@@ -78,6 +78,41 @@ impl DumpWho {
     }
 }
 
+/// A request's `who` byte, known to name someone: what the control ring
+/// carries, a byte to pack and a range check to unpack, so `DumpWho`'s
+/// arms stay with the code that answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DumpAsk(U7);
+
+impl DumpAsk {
+    pub const fn of(who: DumpWho) -> Self {
+        Self(who.wire())
+    }
+
+    /// `None` for the bytes kept free.
+    #[inline(always)]
+    pub const fn from_wire(b: U7) -> Option<Self> {
+        if b.get() < 0x20 || b.get() == 0x7F {
+            Some(Self(b))
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub const fn wire(self) -> U7 {
+        self.0
+    }
+
+    pub const fn who(self) -> DumpWho {
+        match DumpWho::from_wire(self.0) {
+            Some(w) => w,
+            // Unreachable: `from_wire` and `of` hold only named bytes.
+            None => DumpWho::Editing,
+        }
+    }
+}
+
 /// `F0 7D 43 48 01 <who> F7`.
 pub fn dump_request(s: SysEx<'_>) -> Option<DumpWho> {
     match *s.bytes() {

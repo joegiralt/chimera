@@ -233,7 +233,7 @@ mod mts {
 
 // --- The parameter dump (#984) ---
 
-use chimera_midi::sysex::{DumpWho, PartNo, dump_end, dump_request};
+use chimera_midi::sysex::{DumpAsk, DumpWho, PartNo, dump_end, dump_request};
 use chimera_midi::value::Channel;
 
 fn dump_ask(bytes: &[u8]) -> Option<DumpWho> {
@@ -265,6 +265,10 @@ fn a_dump_request_names_a_part_a_channel_or_the_edited_part() {
         if let Some(w) = ask(who) {
             assert_eq!(w.wire().get(), who);
             assert_eq!(DumpWho::from_wire(w.wire()), Some(w));
+            assert_eq!(DumpAsk::of(w).who(), w);
+            assert_eq!(DumpAsk::from_wire(w.wire()), Some(DumpAsk::of(w)));
+        } else {
+            assert_eq!(DumpAsk::from_wire(U7::new(who).unwrap()), None);
         }
     }
     assert_eq!(PartNo::new(16), None);
