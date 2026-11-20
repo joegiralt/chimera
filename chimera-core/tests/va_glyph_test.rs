@@ -56,6 +56,15 @@ fn the_specs_carry_the_va_glyphs() {
         glyph(VaParams::WAVE2),
         FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))
     );
+    // SHAPE draws the wave it makes (#980): its oscillator's scope.
+    assert_eq!(
+        glyph(VaParams::SHAPE1),
+        FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))
+    );
+    assert_eq!(
+        glyph(VaParams::SHAPE2),
+        FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))
+    );
     assert_eq!(glyph(VaParams::MODE), FocusGlyph::Va(VaGlyph::Mode));
     assert_eq!(glyph(VaParams::AMOUNT), FocusGlyph::Va(VaGlyph::Blend));
     let va = |id| ParamAddr::new(BlockRef::Va, id);
@@ -501,4 +510,135 @@ fn every_mode_word_fits_beside_the_scope() {
     }
     assert_eq!(components::layout("SOFT SYNC", &gauge), Layout::SmallBeside);
     assert_eq!(components::layout("PHASE", &gauge), Layout::SmallBeside);
+}
+
+// --- SHAPE's picture (#980) ---
+
+/// FNV-1a over the focus band's scope box.
+fn band_hash(fb: &Fb) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for px in band(fb, theme::WAVE_W) {
+        for b in px.to_le_bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// WAVE 1's ticks at each wave, and between each pair.
+const WAVES: [(&str, i8); 4] = [("sine", 0), ("tri", 42), ("saw", 85), ("pulse", 127)];
+const BETWEEN: [(&str, i8); 3] = [("sine_tri", 21), ("tri_saw", 64), ("saw_pulse", 106)];
+const SHAPES: [(&str, i8); 3] = [("000", 0), ("064", 64), ("127", 127)];
+
+/// SHAPE touched on OSC 1's page: the scope at each WAVE and SHAPE 0, ½
+/// and 1, and at each WAVE between two at SHAPE ½, locked.
+const SHAPE_GOLDENS: &[(&str, u64)] = &[
+    ("sine_000", 0x61b400610983d9a1),
+    ("sine_064", 0xefe8dbc92caa9851),
+    ("sine_127", 0x9c4e3d53da6941ad),
+    ("tri_000", 0xd9e51ca51dd14213),
+    ("tri_064", 0xafa134f49fc0b099),
+    ("tri_127", 0xc74ca846e5cd041f),
+    ("saw_000", 0x196a183d350b41d4),
+    ("saw_064", 0x09edba4792030524),
+    ("saw_127", 0xcda8eab6c302cf37),
+    ("pulse_000", 0x6e02c1d915fa850c),
+    ("pulse_064", 0xd121d21b4f583562),
+    ("pulse_127", 0x8e37671115c43a21),
+    ("sine_tri_064", 0xb86b8bdba4d049a1),
+    ("tri_saw_064", 0xcabce82851009856),
+    ("saw_pulse_064", 0x5c2bc5409d3b8345),
+];
+
+/// VA at WAVE 1 `wave` ticks, on OSC 1's page with SHAPE at `shape`
+/// ticks, touched.
+fn shaped(wave: i8, shape: i8) -> Box<UiState> {
+    let mut ui = Box::new(stack_ui());
+    load_init(&mut ui, EngineType::Va);
+    set(&mut ui, EncoderId::A, wave);
+    tap(&mut ui, chimera_hal::ButtonId::Edit);
+    assert_eq!(
+        ui.page_def().id,
+        chimera_core::ui::block_registry::VA_OSC1.id
+    );
+    set(&mut ui, EncoderId::C, shape);
+    ui
+}
+
+/// SHAPE's band is its oscillator's wave as SHAPE makes it, per WAVE: a
+/// picture of its own at every WAVE and SHAPE, the one WAVE's cell draws
+/// at the same two values, from the knob's value alone.
+#[test]
+fn shape_draws_the_wave_it_makes() {
+    let mut got = Vec::new();
+    let mut seen = Vec::new();
+    let cases = WAVES
+        .iter()
+        .flat_map(|&(w, wt)| SHAPES.map(|(s, st)| (format!("{w}_{s}"), wt, st)))
+        .chain(BETWEEN.iter().map(|&(w, wt)| (format!("{w}_064"), wt, 64)));
+    for (name, wave, shape) in cases {
+        let mut ui = shaped(wave, shape);
+        let fb = shoot(&ui, &format!("va_shape_{name}"));
+        let b = band(&fb, theme::WAVE_W);
+        // The scope, not the arc: the oscillator's own trace, drawn.
+        let v = va(&ui);
+        let t = va_wave_trace::<SCOPE_N>(morph(v.wave[0], v.shape[0]), SCOPE_HALF);
+        let ink = b.iter().filter(|&&px| px != b[0]).count();
+        assert!(ink >= SCOPE_N, "{name}: {ink} px of scope");
+        assert!(t.iter().any(|&y| y != t[0]), "{name}");
+        assert!(!seen.contains(&b), "{name}: a picture of its own");
+        seen.push(b.clone());
+        got.push((name.clone(), band_hash(&fb)));
+        // WAVE's cell on VA's page draws the same picture.
+        tap(&mut ui, chimera_hal::ButtonId::Seq);
+        assert_eq!(
+            ui.page_def().id,
+            chimera_core::ui::block_registry::VA_HOME.id
+        );
+        feed(&mut ui, Input::turn(EncoderId::A, 1));
+        feed(&mut ui, Input::turn(EncoderId::A, -1));
+        settle(&mut ui);
+        if !matches!(wave, 0 | 127) {
+            assert_eq!(va(&ui).wave[0], v.wave[0], "{name}");
+            assert!(band(&render_ui(&ui), theme::WAVE_W) == b, "{name}: WAVE's picture");
+        }
+    }
+    let got: Vec<(&str, u64)> = got.iter().map(|(n, h)| (n.as_str(), *h)).collect();
+    common::golden::check(SHAPE_GOLDENS, &got);
+}
+
+/// OSC 2's SHAPE draws OSC 2's wave, and a turn of it redraws the band.
+#[test]
+fn shape_2_draws_oscillator_2() {
+    let mut ui = Box::new(stack_ui());
+    load_init(&mut ui, EngineType::Va);
+    set(&mut ui, EncoderId::B, 127);
+    tap(&mut ui, chimera_hal::ButtonId::Edit);
+    tap(&mut ui, chimera_hal::ButtonId::Edit);
+    assert_eq!(
+        ui.page_def().id,
+        chimera_core::ui::block_registry::VA_OSC2.id
+    );
+    set(&mut ui, EncoderId::C, 0);
+    let wide = band(&render_ui(&ui), theme::WAVE_W);
+    set(&mut ui, EncoderId::C, 100);
+    let narrow = band(&render_ui(&ui), theme::WAVE_W);
+    assert!(wide != narrow, "the pulse narrows");
+    // WAVE 1 is the saw still: OSC 1's SHAPE at 0 draws another wave.
+    assert!(band(&render_ui(&shaped(85, 0)), theme::WAVE_W) != wide);
+}
+
+/// A route into SHAPE moves the sound, never the picture: the cell is
+/// the knob.
+#[test]
+fn shape_modulated_draws_the_knob() {
+    let ui = shaped(85, 64);
+    let g = |ui: &UiState| band(&render_ui(ui), theme::WAVE_W);
+    let before = g(&ui);
+    let mut ui = ui;
+    for _ in 0..8 {
+        ui.update(chimera_core::ui::animation::UiTick::for_test());
+    }
+    assert!(g(&ui) == before, "still: nothing animates it");
 }
