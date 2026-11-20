@@ -9,6 +9,9 @@
 //! gap to the neighbour on that side: half an ulp, a quarter below a
 //! binade's lower edge, where the neighbour below is half as far. Core's
 //! float `Display` is 20 KB of bank 1; this is `ed`'s, in its S4 group.
+//!
+//! And back (#1038): `read` is the correctly rounded parse `ed set`
+//! takes, so the unit reads its own text bit for bit.
 
 use core::fmt::{self, Write};
 
@@ -164,6 +167,108 @@ pub(super) fn stored(w: &mut dyn Write, v: f32) -> fmt::Result {
     Ok(())
 }
 
+/// A fraction's decimals kept: a float and the midpoint of two are whole
+/// multiples of 2^-150, so of 10^-150, and what a longer tail adds is
+/// only that it is over.
+const READ_DECIMALS: usize = 150;
+
+/// A decimal fraction under one, a digit a byte, doubled in place a bit
+/// at a time.
+struct Fraction {
+    digits: [u8; READ_DECIMALS],
+    len: usize,
+}
+
+impl Fraction {
+    /// Twice the fraction: its whole part (the next binary place) comes
+    /// out, the rest stays.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.exact.twice"))]
+    fn twice(&mut self) -> bool {
+        let mut carry = 0;
+        for d in self.digits[..self.len].iter_mut().rev() {
+            let n = *d * 2 + carry;
+            (*d, carry) = if n >= 10 { (n - 10, 1) } else { (n, 0) };
+        }
+        self.trim();
+        carry == 1
+    }
+
+    /// Zeros at its end are no part of it: zero is no digits.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.exact.trim"))]
+    fn trim(&mut self) {
+        while self.len > 0 && self.digits[self.len - 1] == 0 {
+            self.len -= 1;
+        }
+    }
+}
+
+/// `stored` in reverse (#1038): the `f32` nearest a plain decimal, ties
+/// to even, exactly; so what `ed get` printed, `ed set` stores bit for
+/// bit. `chimera_theory::tuning::decimal`'s grammar (`-12.5`, `440.`,
+/// `.5`, up to nine whole digits), whose float sum lands an ulp off.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.exact.read"))]
+pub(super) fn read(w: &[u8]) -> Option<f32> {
+    let (neg, w) = match w.split_first() {
+        Some((b'-', r)) => (true, r),
+        Some((b'+', r)) => (false, r),
+        _ => (false, w),
+    };
+    let (int, frac) = match w.iter().position(|&b| b == b'.') {
+        Some(i) => (&w[..i], &w[i + 1..]),
+        None => (w, &[][..]),
+    };
+    if (int.is_empty() && frac.is_empty()) || !frac.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let whole = if int.is_empty() {
+        0
+    } else {
+        chimera_theory::tuning::uint(int)?
+    };
+    let mut f = Fraction {
+        digits: [0; READ_DECIMALS],
+        len: frac.len().min(READ_DECIMALS),
+    };
+    for (d, &b) in f.digits.iter_mut().zip(frac) {
+        *d = b - b'0';
+    }
+    f.trim();
+    // Something under the last place read: the tail past it, and below,
+    // the bits and decimals no mantissa holds.
+    let mut over = frac.iter().skip(READ_DECIMALS).any(|&b| b != b'0');
+    // v = m · 2^e and what is over: 25 bits of it, a mantissa and the
+    // half place under it, or as far down as a denormal's half place.
+    let (mut m, mut e) = (whole, 0i32);
+    while m >> 25 != 0 {
+        over |= m & 1 != 0;
+        m >>= 1;
+        e += 1;
+    }
+    while m >> 24 == 0 && e > -150 {
+        m = m << 1 | u32::from(f.twice());
+        e -= 1;
+    }
+    over |= f.len != 0;
+    // To the nearest, a tie to even; the carry may make a 25th bit.
+    let (mut man, half) = (m >> 1, m & 1 != 0);
+    e += 1;
+    if half && (over || man & 1 != 0) {
+        man += 1;
+    }
+    if man >> 24 != 0 {
+        man >>= 1;
+        e += 1;
+    }
+    // Under 2^23 only at a denormal's exponent, where the bits are the
+    // mantissa; 2^23 there is the smallest normal, either way.
+    let bits = if man >> 23 == 0 {
+        man
+    } else {
+        ((e + 150) as u32) << 23 | man & 0x7F_FFFF
+    };
+    Some(f32::from_bits(bits | u32::from(neg) << 31))
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -242,6 +347,120 @@ mod tests {
         for man in 1..2000 {
             check(man);
         }
+    }
+
+    fn bits(t: &str) -> Option<u32> {
+        read(t.as_bytes()).map(f32::to_bits)
+    }
+
+    /// #1038: what `stored` printed, `read` takes back bit for bit, over
+    /// the sweep `stored` is held to.
+    #[test]
+    fn what_it_printed_it_reads() {
+        let check = |b: u32| {
+            let v = f32::from_bits(b);
+            if !v.is_finite() || v.abs() >= 1.0e9 {
+                return;
+            }
+            let t = text(v);
+            // `-0` prints `0`.
+            let want = if v == 0.0 { 0 } else { b };
+            assert_eq!(bits(&t), Some(want), "{v:e} ({b:#x}) printed {t}");
+        };
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        for _ in 0..400_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            check(x as u32);
+        }
+        for exp in 0..=0xFEu32 {
+            for man in [0, 1, 2, 0x40_0000, 0x7F_FFFE, 0x7F_FFFF] {
+                check(exp << 23 | man);
+                check(1 << 31 | exp << 23 | man);
+            }
+        }
+        for man in 1..2000 {
+            check(man);
+        }
+        // The knobs' grids, where the float parse missed 122 of 5,124.
+        for k in 0..=1280 {
+            for span in [1.0f32, 2.0, 127.0, 100.0] {
+                check((k as f32 / 1280.0 * span).to_bits());
+            }
+        }
+    }
+
+    /// Correctly rounded, as Rust's parse: any decimal of the grammar,
+    /// ties and long tails among them.
+    #[test]
+    fn it_rounds_as_a_correct_parse_does() {
+        let same = |t: &str| {
+            let want: f32 = t.parse().unwrap();
+            assert_eq!(bits(t), Some(want.to_bits()), "{t}");
+        };
+        for t in [
+            "0", "-0", "0.", ".5", "+.5", "440.", "-12.5", "1", "0.1", "0.3",
+            // 2^24 + 1 and + 3: ties, to even.
+            "16777217", "16777219", "16777217.0000000000000000000000001",
+            "16777216.9999999999999999999999999",
+            // Halfway between 1 and its neighbour above, and a hair each side.
+            "1.00000005960464477539062500000",
+            "1.00000005960464477539062500001",
+            "1.00000005960464477539062499999",
+            // The smallest denormal, half of it (a tie to zero) and just over.
+            "0.00000000000000000000000000000000000000000000140129846432481707092372958328991613128026194187651577175706828388979108268586060148663818836212158203125",
+            "0.000000000000000000000000000000000000000000000700649232162408535461864791644958065640130970938257885878534141944895541342930300743319094181060791015625",
+            "0.0000000000000000000000000000000000000000000007006492321624085354618647916449580656401309709382578858785341419448955413429303007433190941810607910156250000001",
+            // The largest denormal's edge with the smallest normal.
+            "0.000000000000000000000000000000000000011754943508222875",
+            "0.000000000000000000000000000000000000011754942807573643",
+            "999999999", "999999999.5", "999999967.99999", "000000001.50",
+        ] {
+            same(t);
+        }
+        let mut x = 0x1038_1038_1038_1038u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..200_000 {
+            let mut t = String::new();
+            if next() % 4 == 0 {
+                t.push('-');
+            }
+            for _ in 0..next() % 10 {
+                t.push(char::from(b'0' + (next() % 10) as u8));
+            }
+            t.push('.');
+            // Leading zeros reach the small binades; tails run past 150.
+            for _ in 0..next() % 44 {
+                t.push('0');
+            }
+            for _ in 0..1 + next() % [3, 9, 20, 170][(next() % 4) as usize] {
+                t.push(char::from(b'0' + (next() % 10) as u8));
+            }
+            same(&t);
+        }
+    }
+
+    /// `chimera_theory::tuning::decimal`'s grammar, no wider.
+    #[test]
+    fn it_reads_only_a_plain_decimal() {
+        for t in [
+            "", "-", "+", ".", "-.", "1e3", "1.5e-3", "inf", "nan", "0x10", "1,5", "1.2.3",
+            "--1", "1-", " 1", "1 ", "1234567890", "1.5f",
+        ] {
+            assert_eq!(bits(t), None, "{t:?}");
+            assert_eq!(
+                chimera_theory::tuning::decimal(t.as_bytes()).is_none(),
+                true,
+                "{t:?}"
+            );
+        }
+        assert_eq!(bits("-0"), Some((-0.0f32).to_bits()));
     }
 
     /// Never longer than Rust's own shortest text by more than a digit

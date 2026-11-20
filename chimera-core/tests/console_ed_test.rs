@@ -617,6 +617,44 @@ fn set_then_get_round_trips() {
     assert!(n > 150, "{n}");
 }
 
+/// `val`'s stored word, as printed.
+fn stored_word(f: &mut Fake, a: ParamAddr) -> String {
+    let got = ask(f, &format!("ed get {}\n", EdAddr::sound(a).unwrap()));
+    got.split(' ').nth(3).unwrap().to_string()
+}
+
+/// #1038: `ed get`'s stored word, sent back through `ed set`, stores the
+/// same bits, on every ALGO knob's grid.
+#[test]
+fn get_then_set_is_bit_exact() {
+    let mut f = Fake::new();
+    let listed = addrs(&all_pages(&mut f));
+    let mut n = 0;
+    for b in algo_blocks() {
+        for spec in b.specs() {
+            let a = ParamAddr::new(b, spec.id);
+            let ed = EdAddr::sound(a).unwrap().to_string();
+            if !listed.contains(&ed) || is_choice(a) || !spec.stored || spec.patching {
+                continue;
+            }
+            for k in 0..=1280 {
+                let at = spec.denormalize(k as f32 / 1280.0);
+                ask(&mut f, &format!("ed set {ed} {}\n", word(at)));
+                apply(&mut f);
+                let (was, text) = (stored_of(&mut f, a), stored_word(&mut f, a));
+                ask(&mut f, &format!("ed set {ed} {}\n", word(spec.min)));
+                apply(&mut f);
+                assert_eq!(ask(&mut f, &format!("ed set {ed} {text}\n")), "OK queued\n");
+                apply(&mut f);
+                let now = stored_of(&mut f, a);
+                assert_eq!(now.to_bits(), was.to_bits(), "{ed}: {text} came back {now:e}");
+                n += 1;
+            }
+        }
+    }
+    assert!(n > 60_000, "{n}");
+}
+
 #[test]
 fn set_glides_like_a_knob() {
     use chimera_core::dsp::knobs::KnobPublisher;
