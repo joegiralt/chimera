@@ -27,7 +27,8 @@ use crate::instrument::Sides;
 use crate::part_eq::Live;
 use crate::part_eq::smart::{
     Amount, BANDS, Band, BandTaps, Blocks, Bq, Caps, CutDb, CutView, Cuts, Dip, Hears, Kick, Level,
-    PartKind, PartSmart, Power, Rate, Returned, Role, SMART_VIEW, SmartEq, SmartState, Sv,
+    PartKind, PartSmart, Power, Rate, Returned, Role, SMART_VIEW, SmartEq, SmartState, StillCut,
+    Sv,
 };
 use crate::project::PartId;
 
@@ -1109,6 +1110,7 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
             SMART_VIEW.publish(id, CutView::of(&heard(&p.dip.map(Dip::get))));
         }
     }
+    st.still = StillCut::count(st);
     if !listens && !any {
         *st = SmartState::REST;
         for id in PartId::ALL {

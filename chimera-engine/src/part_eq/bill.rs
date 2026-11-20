@@ -6,9 +6,10 @@
 //! rounded up; ADR 0296 has the counts. Bank 1's: admission runs with the
 //! door open or closed (closed, the EQ plays flat and these over-bill).
 
+use super::smart::StillCut;
 use super::smart::{PartKind, Role, SmartEq, SmartState};
 use super::{PartEq, PartEqs};
-use crate::hw::{Cost, MAX_PARTS};
+use crate::hw::Cost;
 use crate::project::PartId;
 
 /// LO CUT and TILT on a Part's bus (ADR 0284: 23 instructions a sample
@@ -54,40 +55,6 @@ impl SmartLoad {
     /// As `of`, from the EQ's whole state.
     pub fn now(smart: SmartEq, eqs: &PartEqs) -> SmartLoad {
         SmartLoad::of(smart, &eqs.smart)
-    }
-}
-
-/// The members whose bands still run at the full rate whatever their
-/// role says: a Part (or the reverb's return) moved to FRONT keeps its
-/// cuts until they let go, up to some seconds, and is billed as cut
-/// until then. A bit a Part, and the return's.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StillCut(u8);
-
-impl StillCut {
-    pub const NONE: StillCut = StillCut(0);
-    const WASH: u8 = 1 << MAX_PARTS;
-    const _FITS: () = assert!(MAX_PARTS < 8);
-
-    pub fn of(st: &SmartState) -> StillCut {
-        let mut bits = 0u8;
-        for p in PartId::ALL {
-            if st.part(p).runs_full() {
-                bits |= 1 << p.index();
-            }
-        }
-        if st.wash.cuts.runs_full() {
-            bits |= Self::WASH;
-        }
-        StillCut(bits)
-    }
-
-    pub const fn part(self, p: PartId) -> bool {
-        self.0 & (1 << p.index()) != 0
-    }
-
-    pub const fn wash(self) -> bool {
-        self.0 & Self::WASH != 0
     }
 }
 

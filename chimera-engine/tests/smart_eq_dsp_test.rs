@@ -799,8 +799,16 @@ fn the_bands_sum_against_the_cuts_asked_on_a_fine_grid() {
         f
     };
     let polite = fit(&[0.0, 4.0, 6.0], &[0.0, 4.0, 6.0], &[0.0, 4.0, 6.0]);
-    let deep = fit(&[0.0, 8.0, 10.0, 12.0, 15.0], &[0.0, 8.0, 12.0], &[0.0, 4.0, 6.0]);
-    let over = fit(&[0.0, 14.0, 18.0, 21.0, 27.0], &[0.0, 14.0, 21.0], &[0.0, 6.0, 9.0]);
+    let deep = fit(
+        &[0.0, 8.0, 10.0, 12.0, 15.0],
+        &[0.0, 8.0, 12.0],
+        &[0.0, 4.0, 6.0],
+    );
+    let over = fit(
+        &[0.0, 14.0, 18.0, 21.0, 27.0],
+        &[0.0, 14.0, 21.0],
+        &[0.0, 6.0, 9.0],
+    );
     println!("polite {polite:?}\ndeep {deep:?}\nover {over:?}");
     // The measured bounds (ADR 0296 § 6), each with a little room.
     for (name, f, deeper, boost, readout, short) in [
@@ -808,10 +816,27 @@ fn the_bands_sum_against_the_cuts_asked_on_a_fine_grid() {
         ("deep", &deep, DEEPER[1], BOOST[1], READOUT[1], SHORT[1]),
         ("over", &over, DEEPER[2], BOOST[2], READOUT[2], SHORT[2]),
     ] {
-        assert!(f.deeper < deeper, "{name}: {:.3} dB deeper than asked", f.deeper);
-        assert!(f.over < boost, "{name}: {:.3} dB over unity at {} Hz", f.over, f.over_hz);
-        assert!(f.readout < readout, "{name}: readout {:.3} dB off the filters", f.readout);
-        assert!(f.short < short, "{name}: a band alone {:.3} dB short", f.short);
+        assert!(
+            f.deeper < deeper,
+            "{name}: {:.3} dB deeper than asked",
+            f.deeper
+        );
+        assert!(
+            f.over < boost,
+            "{name}: {:.3} dB over unity at {} Hz",
+            f.over,
+            f.over_hz
+        );
+        assert!(
+            f.readout < readout,
+            "{name}: readout {:.3} dB off the filters",
+            f.readout
+        );
+        assert!(
+            f.short < short,
+            "{name}: a band alone {:.3} dB short",
+            f.short
+        );
     }
     // No cut is no dip, exactly.
     assert_eq!(dips(&[CutDb::ZERO; 4]), [0.0; 4]);
@@ -1057,13 +1082,27 @@ fn no_gap_between_kicks_is_a_cliff() {
     // 400 ms no step of 10 ms moves the swing by 1 dB (a hard edge at
     // 150 ms was 5.6 dB one millisecond on).
     // At DEEP (AMOUNT 95, a 10 dB dip), where it matters most.
-    let swings: Vec<f32> = (0..=34).map(|i| swing(60.0 + 10.0 * i as f32, 95)).collect();
+    let swings: Vec<f32> = (0..=34)
+        .map(|i| swing(60.0 + 10.0 * i as f32, 95))
+        .collect();
     for (i, w) in swings.windows(2).enumerate() {
         let at = 60 + 10 * i;
-        assert!((w[1] - w[0]).abs() < 1.0, "{at} ms: {} to {} dB", w[0], w[1]);
+        assert!(
+            (w[1] - w[0]).abs() < 1.0,
+            "{at} ms: {} to {} dB",
+            w[0],
+            w[1]
+        );
     }
-    assert!(swings[0] < 0.5 && swings[4] < 0.5, "held to 100 ms: {swings:?}");
-    assert!(swings[34] > 3.0, "at 400 ms each kick dips and lets go: {}", swings[34]);
+    assert!(
+        swings[0] < 0.5 && swings[4] < 0.5,
+        "held to 100 ms: {swings:?}"
+    );
+    assert!(
+        swings[34] > 3.0,
+        "at 400 ms each kick dips and lets go: {}",
+        swings[34]
+    );
     // 32nds at 120 BPM, 62.5 ms apart: each kick lands on the last one's
     // body, the key never quiet between them; still one dip.
     let fast = swing(62.5, 95);
@@ -1073,7 +1112,8 @@ fn no_gap_between_kicks_is_a_cliff() {
 #[test]
 fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
     use chimera_engine::part_eq::PartEq;
-    use chimera_engine::part_eq::bill::{CUT, LISTEN, SmartBill, SmartLoad, StillCut, first_voice};
+    use chimera_engine::part_eq::bill::{CUT, LISTEN, SmartBill, SmartLoad, first_voice};
+    use chimera_engine::part_eq::smart::StillCut;
     // The pad, MID under a FRONT bass, is cut; then it is made FRONT too.
     // Its bands run on at the full rate until the cut is back: billed so.
     let gens = clash();
@@ -1100,7 +1140,10 @@ fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
         block(&mut st, k * BLOCK_SIZE, &gens, &both_front, on(127));
         assert!(blocks < seconds(30.0), "its cuts let go within 30 s");
     }
-    assert!(blocks > seconds(5.0), "billed as cut for the seconds it takes");
+    assert!(
+        blocks > seconds(5.0),
+        "billed as cut for the seconds it takes"
+    );
     assert_eq!(st.cut(PAD, Band::Low), CutDb::ZERO);
     assert_eq!(bill(&st), LISTEN);
     // The bass, FRONT all along, was never held over.

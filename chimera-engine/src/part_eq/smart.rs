@@ -684,6 +684,47 @@ impl Wash {
     };
 }
 
+/// The members whose bands still run at the full rate whatever their
+/// role says: a Part (or the reverb's return) moved to FRONT keeps its
+/// cuts until they let go, up to some seconds, and is billed as cut
+/// until then. A bit a Part, and the return's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StillCut(u8);
+
+impl StillCut {
+    pub const NONE: StillCut = StillCut(0);
+    const WASH: u8 = 1 << MAX_PARTS;
+    const _FITS: () = assert!(MAX_PARTS < 8);
+
+    /// As the last block left them (`dsp::smart::run`).
+    pub fn of(st: &SmartState) -> StillCut {
+        st.still
+    }
+
+    /// Bank 2's: counted once a block, so the bill reads a byte.
+    #[inline(always)]
+    pub(crate) fn count(st: &SmartState) -> StillCut {
+        let mut bits = 0u8;
+        for p in PartId::ALL {
+            if st.part(p).runs_full() {
+                bits |= 1 << p.index();
+            }
+        }
+        if st.wash.cuts.runs_full() {
+            bits |= Self::WASH;
+        }
+        StillCut(bits)
+    }
+
+    pub const fn part(self, p: PartId) -> bool {
+        self.0 & (1 << p.index()) != 0
+    }
+
+    pub const fn wash(self) -> bool {
+        self.0 & Self::WASH != 0
+    }
+}
+
 /// Every Part's SMART EQ and the reverb return's, in `PartEqs` (ITCM on
 /// the unit). All-zero bytes are `REST`: nothing heard, nothing cut.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -697,6 +738,8 @@ pub struct SmartState {
     /// is published).
     pub(crate) turn: u8,
     pub(crate) live: Live,
+    /// Who still runs cut, for the bill.
+    pub(crate) still: StillCut,
 }
 
 impl SmartState {
@@ -710,6 +753,7 @@ impl SmartState {
         rate: Rate::NONE,
         turn: 0,
         live: Live::Bypass,
+        still: StillCut::NONE,
     };
 
     #[inline(always)]
