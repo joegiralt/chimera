@@ -201,7 +201,7 @@ fn op(wave: WaveId, coarse: u8, env: [u8; 5], feedback: u8) -> (WaveId, AlgoOpPa
         d1l,
         d2r,
         rr,
-        feedback,
+        feedback: chimera_core::dsp::algo::params::Fdbk::tx(feedback),
         ..AlgoOpParams::default()
     };
     (wave, o)

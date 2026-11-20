@@ -82,7 +82,7 @@ fn random_formant_case(seed: u32) -> (AlgoParams, u8, usize, Jumps) {
         let o = &mut p.ops[i];
         o.coarse = r.below(16) as u8;
         o.level = [0, 60, 80, 99][r.below(4) as usize];
-        o.feedback = r.below(8) as u8;
+        o.feedback = chimera_core::dsp::algo::params::Fdbk::tx(r.below(8) as u8);
         (o.frmt, o.bw, o.skirt) = (r.below(169) as u8, r.below(217) as u8, r.below(4) as u8);
         (o.key, o.res, o.vslot) = (r.below(101) as u8, r.below(101) as u8, r.below(5) as u8);
     }

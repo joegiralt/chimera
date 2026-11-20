@@ -197,12 +197,13 @@ static AUDIO: [Row; 3 + cfg!(feature = "usb-audio") as usize] = [
     crumb("USB AUDIO", "USB", Leaf(&super::leaves::USB_AUDIO_LEAF)),
 ];
 
-static PERSONALIZE: [Row; 5] = [
+static PERSONALIZE: [Row; 6] = [
     row("THEME", Leaf(&THEME_LEAF)),
     crumb("SCREENSAVER", "SAVER", Leaf(&SAVER_LEAF)),
     crumb("CHAIN MAP", "MAP", Leaf(&MAP_LEAF)),
     crumb("TEXT SIZE", "TEXT", Leaf(&TEXT_LEAF)),
     crumb("PAD FOLLOW", "FOLLOW", Leaf(&FOLLOW_LEAF)),
+    crumb("ALGO PAGES", "ALGO", Leaf(&super::leaves::ALGO_PAGES_LEAF)),
 ];
 
 /// A row per DEMO page, by its short name.

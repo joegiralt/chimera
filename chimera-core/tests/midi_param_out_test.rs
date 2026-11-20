@@ -461,7 +461,7 @@ fn data_reads_back_through_the_in_law() {
                 ValueLaw::Place14 => spec.denormalize(f32::from(p.get()) / 16383.0),
                 _ => {
                     let i = (u32::from(p.get()) * u32::from(nrpn::steps(spec)) + 8191) / 16383;
-                    spec.min + i as f32
+                    spec.min + i as f32 * spec.step
                 }
             };
             let tol = (spec.max - spec.min).abs() * 2e-4;

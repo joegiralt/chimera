@@ -694,12 +694,12 @@ param OP_F.RS "OP6" cont lin 0 3 1 0 m
 OK
 page 15 FBK of 37
 panel FBK -
-param OP_A.FDBK "OP1" cont lin 0 7 1 0 m
-param OP_B.FDBK "OP2" cont lin 0 7 1 0 m
-param OP_C.FDBK "OP3" cont lin 0 7 1 0 m
-param OP_D.FDBK "OP4" cont lin 0 7 1 0 m
-param OP_E.FDBK "OP5" cont lin 0 7 1 0 m
-param OP_F.FDBK "OP6" cont lin 0 7 1 0 m
+param OP_A.FDBK "OP1" cont lin 0 7 0.1 0 m
+param OP_B.FDBK "OP2" cont lin 0 7 0.1 0 m
+param OP_C.FDBK "OP3" cont lin 0 7 0.1 0 m
+param OP_D.FDBK "OP4" cont lin 0 7 0.1 0 m
+param OP_E.FDBK "OP5" cont lin 0 7 0.1 0 m
+param OP_F.FDBK "OP6" cont lin 0 7 0.1 0 m
 OK
 page 16 OP1 of 37
 panel OP1 TABLE
@@ -789,7 +789,7 @@ opt OP_A.CRSE 62 "24.22"
 opt OP_A.CRSE 63 "25.95"
 param OP_A.FINE "FINE" cont lin 0 15 1 0 m
 param OP_A.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_A.FDBK "FDBK" cont lin 0 7 1 0 m
+param OP_A.FDBK "FDBK" cont lin 0 7 0.1 0 m
 param OP_A.VEL "VELOCITY" cont lin 0 7 1 0 m
 panel OP1 FORMANT
 param OP_A.WAVE "WAVE" choice lin 0 17 1 0 m
@@ -940,7 +940,7 @@ opt OP_B.CRSE 62 "24.22"
 opt OP_B.CRSE 63 "25.95"
 param OP_B.FINE "FINE" cont lin 0 15 1 0 m
 param OP_B.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_B.FDBK "FDBK" cont lin 0 7 1 0 m
+param OP_B.FDBK "FDBK" cont lin 0 7 0.1 0 m
 param OP_B.VEL "VELOCITY" cont lin 0 7 1 0 m
 panel OP2 FORMANT
 param OP_B.WAVE "WAVE" choice lin 0 17 1 0 m
@@ -1091,7 +1091,7 @@ opt OP_C.CRSE 62 "24.22"
 opt OP_C.CRSE 63 "25.95"
 param OP_C.FINE "FINE" cont lin 0 15 1 0 m
 param OP_C.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_C.FDBK "FDBK" cont lin 0 7 1 0 m
+param OP_C.FDBK "FDBK" cont lin 0 7 0.1 0 m
 param OP_C.VEL "VELOCITY" cont lin 0 7 1 0 m
 panel OP3 FORMANT
 param OP_C.WAVE "WAVE" choice lin 0 17 1 0 m
@@ -1242,7 +1242,7 @@ opt OP_D.CRSE 62 "24.22"
 opt OP_D.CRSE 63 "25.95"
 param OP_D.FINE "FINE" cont lin 0 15 1 0 m
 param OP_D.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_D.FDBK "FDBK" cont lin 0 7 1 0 m
+param OP_D.FDBK "FDBK" cont lin 0 7 0.1 0 m
 param OP_D.VEL "VELOCITY" cont lin 0 7 1 0 m
 panel OP4 FORMANT
 param OP_D.WAVE "WAVE" choice lin 0 17 1 0 m
@@ -1393,7 +1393,7 @@ opt OP_E.CRSE 62 "24.22"
 opt OP_E.CRSE 63 "25.95"
 param OP_E.FINE "FINE" cont lin 0 15 1 0 m
 param OP_E.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_E.FDBK "FDBK" cont lin 0 7 1 0 m
+param OP_E.FDBK "FDBK" cont lin 0 7 0.1 0 m
 param OP_E.VEL "VELOCITY" cont lin 0 7 1 0 m
 panel OP5 FORMANT
 param OP_E.WAVE "WAVE" choice lin 0 17 1 0 m
@@ -1544,7 +1544,7 @@ opt OP_F.CRSE 62 "24.22"
 opt OP_F.CRSE 63 "25.95"
 param OP_F.FINE "FINE" cont lin 0 15 1 0 m
 param OP_F.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_F.FDBK "FDBK" cont lin 0 7 1 0 m
+param OP_F.FDBK "FDBK" cont lin 0 7 0.1 0 m
 param OP_F.VEL "VELOCITY" cont lin 0 7 1 0 m
 panel OP6 FORMANT
 param OP_F.WAVE "WAVE" choice lin 0 17 1 0 m

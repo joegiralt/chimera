@@ -19,7 +19,7 @@ Short names are the chain map's node labels; the sub-page row spells pages in fu
 | MENU | SETTINGS; inside, back a level (SEQ goes back a level too). Hold: quick-save |
 | Dialogs | EDIT confirms; MENU or SEQ cancels; any encoder moves the highlight |
 
-SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK; TEXT SIZE › SIZE picks NORMAL or LARGE.
+SETTINGS › PERSONALIZE › CHAIN MAP › PAGES picks ROW or STACK; TEXT SIZE › SIZE picks NORMAL or LARGE. ALGO PAGES › FIRST picks which of ALGO's views OSC opens on: PARAMS (one parameter across the six operators, then each operator's page) or OPS (OP1 to OP6, then the parameter pages); every page is there either way.
 
 ---
 
@@ -31,6 +31,7 @@ The chain follows the Part's engine. Every chain ends in MOD, and FLT and AMP ar
 ALGO    ALG ── OSC ── FLT ── AMP ── MOD
          └ PIT  └ CRS … FBK (12), OP1 … OP6 (6)
                  (a formant operator adds FRM first)
+                 (ALGO PAGES › FIRST at OPS: OP1 … OP6, then OSC's WAVE, CRS … FBK)
 
 MODAL   EXC ── RES ── FLT ── AMP ── MOD
                 └ MDL2, PIT
@@ -96,6 +97,8 @@ DECK: MODEL · FINGER · SPEED · LENGTH · XFADE · DRAG. The SCRUB page: TAPE 
 
 ### PIT
 
+ALGO's OSC pages: the envelope's five are ATTACK RATE, DECAY 1 RATE, DECAY 1 LEVEL (DECAY 1 LVL in the header, which has no room for it), DECAY 2 RATE and RELEASE RATE (the TX81Z's AR, D1R, D1L, D2R, RR, which their tabs keep), and the focus band names the stage over the value (`ATTACK RATE`), the lit cell the operator. A rate is faster the higher it is. DECAY 1 LEVEL is where decay 1 ends; with DECAY 1 RATE at 0 the envelope holds at full and the band says the level is never reached. RATE SCALE's band reads `HIGH NOTES, FASTER ENVELOPES`. On CRSE, FINE and DETUN the band shows where the operator lands: `RATIO 1.41`, and with DETUN off 0 `RATIO 1.41, DETUNE +4.5 CENTS`. FDBK runs 0.0 to 7.0 in tenths: a whole number is the TX81Z's step, a tick is a tenth, MIX + a turn steps the whole numbers. Every operator has its own FDBK into itself, in every algorithm; the algorithm's chart (ALG's band) draws a loop on each operator that feeds back, brighter from 4.0; FBK's page keeps the live scope. FBK's band hints its two turns: `MIX+TURN WHOLE`, `SEQ+TURN FINE`.
+
 Every engine has PIT: PITCH · FINE · STEAL · TIME (glide) · SNAP, F empty. The scope's top-right corner is a tuner (ADR 0201): the pitch the Part's last note sounds at, as a note and cents (`C4 +12ct`, A4 = 440 Hz) over its frequency (`261.6 Hz`). It is worked out from the note, PITCH, FINE, TUNING and the engine's own transposition (ALGO's TRNSP, VA's OSC 1), so it moves the moment PITCH or FINE turns. It is lit while the Part sounds and dim between notes; before the Part's first note it reads middle C, marked `REF C4`. Glide, bend, modulation and wow are left out: it reads where the pitch rests.
 
 On TAPE a source plays at the key it is played on, by its root. A source whose import found no pitch has no known root: the corner reads `ROOT ?` over the shift from the source's own speed (`+7st +0ct`). TRANSWAVE plays the note; SCRUB plays at twice MOTION's speed, `STILL` at 0. A TAPE Part with no source shows nothing. With bank 2 closed the corner is empty.
@@ -147,7 +150,7 @@ ORBIT         RENAME (later), CLEAR, SAVE TO PROJ, RELOAD FROM PROJ
 MIDI CONFIG   SYNC, PORT CONFIG (later), CHANNELS, CONTROL CHANNELS, ECHO
 SYSEX DUMP    later
 AUDIO ROUTING OUTPUTS, SENDS (later), TUNING
-PERSONALIZE   THEME, SCREENSAVER, CHAIN MAP, TEXT SIZE
+PERSONALIZE   THEME, SCREENSAVER, CHAIN MAP, TEXT SIZE, PAD FOLLOW, ALGO PAGES
 SYSTEM        OS UPGRADE, STORAGE (later), FORMAT CARD (later), USB CONFIG (later),
               DIAGNOSTICS, PUSH ENCODERS, ABOUT
 ```

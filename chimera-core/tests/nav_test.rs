@@ -231,9 +231,11 @@ fn pages_of(c: PartChain) -> Vec<PageAt> {
         .collect()
 }
 
-const CHAINS: [PartChain; 6] = [
+const CHAINS: [PartChain; 8] = [
     PartChain::Algo,
     PartChain::AlgoFormant,
+    PartChain::AlgoOps,
+    PartChain::AlgoOpsFormant,
     PartChain::Modal,
     PartChain::Tape,
     PartChain::Va,
