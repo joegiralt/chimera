@@ -180,7 +180,7 @@ impl FxBus {
         self.chorus
             .process_wet(chorus, &params.chorus, sample_rate, ret);
         let dry =
-            self.delay.process_wet(delay, &params.delay, sample_rate) && crate::dsp::may_skip();
+            self.delay.play(delay, &params.delay, tempo, sample_rate) && crate::dsp::may_skip();
         if !dry {
             add(&mut ret.l, delay);
             add(&mut ret.r, delay);
@@ -234,6 +234,11 @@ impl FxBus {
         self.limiter.process(dac, sample_rate);
         self.master_out
             .apply(dac.out_mut(), &params.comp, sample_rate);
+    }
+
+    /// The delay, for reading its fold.
+    pub fn delay(&self) -> &TapeDelay {
+        &self.delay
     }
 
     /// The reverb, for reading its arena and state.

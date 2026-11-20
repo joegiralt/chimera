@@ -8,6 +8,7 @@ use super::{
     read, to_line,
 };
 use crate::dsp::clampf;
+use crate::dsp::rev::sync::Tempo;
 use crate::dsp::ease::{at, step_of};
 use chimera_hal::BLOCK_SIZE;
 
@@ -20,6 +21,7 @@ pub fn run(
     d: &mut TapeDelay,
     buf: &mut [f32; BLOCK_SIZE],
     params: &DelayParams,
+    tempo: Tempo,
     sample_rate: u32,
     insert: bool,
 ) -> bool {
@@ -27,17 +29,17 @@ pub fn run(
     if params.kind() == DelayType::Grain || d.grain.share != crate::dsp::Unit::ZERO {
         // GRAIN writes the line its own way: TAPE's count starts again.
         d.zeros = 0;
-        super::grain::run(d, buf, params, sample_rate, insert);
+        super::grain::run(d, buf, params, tempo, sample_rate, insert);
         return false;
     }
-    let tap = Tap::new(params, sample_rate);
-    if !d.primed {
-        (d.time, d.primed) = (tap.base(), true);
-    }
-    if d.fade == 0 && tap.base() != d.time {
-        (d.next, d.fade) = (tap.base(), TIME_FADE);
-    }
+    // TIME, the knob's or SYNC's note (ADR 0302), and the head set toward
+    // it: a crossfade's start, or a tempo change's glide.
+    let (tap, slide) = super::sync::aim(d, params, tempo, sample_rate);
     let e = d.eased(params, sample_rate);
+    if let Some(s) = slide {
+        super::sync::glide(d, buf, &tap, e, s, insert);
+        return false;
+    }
     if d.fade == 0 && !e.moving() && idle(d, buf, &tap, &e, insert, sample_rate) {
         // The block `span` would play, every bit of it: the transport moves
         // as each sample moves it; the line, its filter and the return
@@ -54,13 +56,16 @@ pub fn run(
         return true;
     }
     match (d.fade > 0, e.moving()) {
-        (false, false) => span::<false, false>(d, buf, &tap, e, insert),
-        (false, true) => span::<false, true>(d, buf, &tap, e, insert),
-        (true, false) => span::<true, false>(d, buf, &tap, e, insert),
-        (true, true) => span::<true, true>(d, buf, &tap, e, insert),
+        (false, false) => span::<false, false, false>(d, buf, &tap, e, STILL, insert),
+        (false, true) => span::<false, true, false>(d, buf, &tap, e, STILL, insert),
+        (true, false) => span::<true, false, false>(d, buf, &tap, e, STILL, insert),
+        (true, true) => span::<true, true, false>(d, buf, &tap, e, STILL, insert),
     }
     false
 }
+
+/// No glide: `span`'s `slide` where the head stays.
+const STILL: (f32, f32) = (0.0, 0.0);
 
 /// Whether a steady, unfaded block of `span` would leave everything but the
 /// transport and the write head as it is (#793): the send all +0, the line
@@ -102,13 +107,16 @@ fn idle(
 
 /// The block: `FADE` while a TIME crossfade runs, `RAMP` while any
 /// eased setting moves (each ramps from its `.0` to its `.1`; one
-/// that isn't moving ramps by 0, so plays its value).
+/// that isn't moving ramps by 0, so plays its value), `GLIDE` while the
+/// head moves at `slide.0` samples a sample, changing by `2 · slide.1` a
+/// sample (`sync::glide`'s alone).
 #[inline(always)]
-fn span<const FADE: bool, const RAMP: bool>(
+pub(super) fn span<const FADE: bool, const RAMP: bool, const GLIDE: bool>(
     d: &mut TapeDelay,
     buf: &mut [f32; BLOCK_SIZE],
     tap: &Tap,
     e: Eased,
+    slide: (f32, f32),
     insert: bool,
 ) {
     let ramp = |v: (f32, f32)| (v.0, step_of(v, BLOCK_SIZE));
@@ -150,6 +158,13 @@ fn span<const FADE: bool, const RAMP: bool>(
             transport.offsets(tap)
         };
         let head = |base: f32| clampf(base + wow + flutter, 1.0, top);
+        let time = if GLIDE {
+            // The head's speed ramps across the block: no kink.
+            let n = (i + 1) as f32;
+            time + (slide.0 + slide.1 * n) * n
+        } else {
+            time
+        };
         let mut delayed = read(&d.buffer, write_pos, head(time));
         if FADE {
             delayed += (read(&d.buffer, write_pos, head(next)) - delayed) * t;
@@ -364,7 +379,14 @@ mod tests {
         (d.lp_state, d.zeros) = (lp, MAX_DELAY_SAMPLES as u32);
         let mut buf = [0.0; BLOCK_SIZE];
         NEVER_SKIP.store(!skip, Ordering::Relaxed);
-        run(&mut d, &mut buf, &DelayParams::DEFAULT, 48_000, false);
+        run(
+            &mut d,
+            &mut buf,
+            &DelayParams::DEFAULT,
+            crate::dsp::rev::sync::Tempo::DEFAULT,
+            48_000,
+            false,
+        );
         NEVER_SKIP.store(false, Ordering::Relaxed);
         (d, buf.map(f32::to_bits))
     }

@@ -4,11 +4,13 @@
 //! bank 2's).
 
 pub mod grain;
+pub mod sync;
 mod tape;
 
 use crate::block::{Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt};
 use crate::dsp::algo::math::inv_sqrt;
 use crate::dsp::ease::{Ease, ease_coeff};
+use crate::dsp::rev::sync::{Division, FoldState, GATE_LENGTH, Tempo, index_of};
 use crate::dsp::{SendLevel, clampf};
 use crate::dsp::{sin_turns, xorshift_noise};
 use chimera_hal::BLOCK_SIZE;
@@ -71,7 +73,76 @@ impl DelayType {
     }
 }
 
-/// Delay parameters: TIME, FDBK, TONE, MIX and REV are both TYPEs'.
+/// How TIME is read (ADR 0302); stored as its index, which is forever.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DelaySync {
+    /// The knob's ms.
+    #[default]
+    Free = 0,
+    /// A note of the tempo (`DelayNote`).
+    Sync = 1,
+}
+
+impl DelaySync {
+    pub const NAMES: [&'static str; 2] = ["FREE", "SYNC"];
+
+    /// The state at `v`, its index; NaN and out of range are held in it.
+    pub const fn at(v: f32) -> Self {
+        if v >= 0.5 { Self::Sync } else { Self::Free }
+    }
+
+    /// Its index, as `DelayParams::more` holds it.
+    pub const fn value(self) -> f32 {
+        self as u8 as f32
+    }
+}
+
+/// TIME's note under SYNC: a place in the reverb's `GATE_LENGTH`, 1/32T
+/// to 1/4 by length (ADR 0302). Always in the list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DelayNote(u8);
+
+impl DelayNote {
+    /// The notes a turn walks.
+    pub const COUNT: usize = GATE_LENGTH.len();
+    /// 1/8D: 375 ms at 120 BPM, TIME's own default.
+    pub const DEFAULT: Self = Self(9);
+
+    /// Place `i`, held in the list.
+    pub const fn new(i: usize) -> Self {
+        Self(if i < Self::COUNT { i } else { Self::COUNT - 1 } as u8)
+    }
+
+    /// The note stored as `p` (`rev::sync::index_of`: `i / (COUNT − 1)`).
+    pub fn at(p: f32) -> Self {
+        Self::new(index_of(p, Self::COUNT))
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    /// As `DelayParams::more` holds it.
+    pub const fn value(self) -> f32 {
+        self.0 as f32 / (Self::COUNT - 1) as f32
+    }
+
+    /// The note value, read at compile time (bank 2's copy is
+    /// `sync::NOTES`).
+    pub const fn division(self) -> Division {
+        GATE_LENGTH[self.0 as usize]
+    }
+}
+
+// The default is the dotted eighth.
+const _: () = {
+    let d = DelayNote::DEFAULT.division();
+    assert!(d.num == 1 && d.den == 8 && matches!(d.kind, crate::dsp::rev::sync::DivKind::Dotted));
+};
+
+/// Delay parameters: TIME, FDBK, TONE, MIX, REV, SYNC and its NOTE are
+/// both TYPEs'.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DelayParams {
     /// Delay time in ms (10..500)
@@ -91,11 +162,13 @@ pub struct DelayParams {
     /// The delay's return into the reverb's send: FX diet spec § REV SEND,
     /// fed as its tapered gain (ADR 0278).
     pub rev_send: SendLevel,
-    /// GRAIN's TYPE and knobs, ids 7–11 in order: TYPE's index (0 TAPE,
+    /// Ids 7–13 in order. GRAIN's TYPE and knobs: TYPE's index (0 TAPE,
     /// 1 GRAIN, `kind`), SIZE, DENSITY, PITCH (semitones, −24..24) and
-    /// TEXTURE (ADR 0202). One array, so `get` and `write` reach them in
-    /// one arm each and bank 1's codec code stays as it was (ADR 0198).
-    pub grain: [f32; 5],
+    /// TEXTURE (ADR 0202). Then SYNC's index (0 FREE, 1 SYNC, `sync`) and
+    /// its NOTE (`note`, ADR 0302), kept beside `time_ms`, never in it.
+    /// One array, so `get` and `write` reach them in one arm each and
+    /// bank 1's codec code stays as it was (ADR 0198).
+    pub more: [f32; 7],
 }
 
 impl DelayParams {
@@ -107,7 +180,7 @@ impl DelayParams {
         tone: 0.6,
         mix: 1.0, // unity return (sends spec § 4)
         rev_send: SendLevel::OFF,
-        grain: [0.0, 0.6, 0.6, 0.0, 0.2],
+        more: [0.0, 0.6, 0.6, 0.0, 0.2, 0.0, DelayNote::DEFAULT.value()],
     };
 }
 
@@ -133,32 +206,42 @@ impl DelayParams {
     pub const REV_SEND: ParamId = ParamId(6);
     pub const TYPE: ParamId = ParamId(7);
 
-    /// The TYPE `grain` holds.
+    /// The TYPE `more` holds.
     pub const fn kind(&self) -> DelayType {
-        DelayType::at(self.grain[0])
+        DelayType::at(self.more[0])
     }
 
     pub const fn size(&self) -> f32 {
-        self.grain[1]
+        self.more[1]
     }
 
     pub const fn density(&self) -> f32 {
-        self.grain[2]
+        self.more[2]
     }
 
     pub const fn pitch(&self) -> f32 {
-        self.grain[3]
+        self.more[3]
     }
 
     pub const fn texture(&self) -> f32 {
-        self.grain[4]
+        self.more[4]
     }
 
-    /// These params with GRAIN's `id` (7–11) at `v`; any other id leaves
-    /// them as they are.
+    /// SYNC's state.
+    pub const fn sync(&self) -> DelaySync {
+        DelaySync::at(self.more[5])
+    }
+
+    /// SYNC's note, whatever `sync` is: FREE keeps it.
+    pub fn note(&self) -> DelayNote {
+        DelayNote::at(self.more[6])
+    }
+
+    /// These params with `id` (7–13) at `v`; any other id leaves them as
+    /// they are.
     pub const fn with(mut self, id: ParamId, v: f32) -> Self {
-        if let Some(i) = grain_slot(id) {
-            self.grain[i] = v;
+        if let Some(i) = more_slot(id) {
+            self.more[i] = v;
         }
         self
     }
@@ -166,6 +249,8 @@ impl DelayParams {
     pub const DENSITY: ParamId = ParamId(9);
     pub const PITCH: ParamId = ParamId(10);
     pub const TEXTURE: ParamId = ParamId(11);
+    pub const SYNC: ParamId = ParamId(12);
+    pub const NOTE: ParamId = ParamId(13);
 }
 
 /// Delay runs outside `Voice`, on the FX bus: nothing is modulatable.
@@ -173,7 +258,7 @@ impl DelayParams {
 const RINGS: crate::glyph::FocusGlyph =
     crate::glyph::FocusGlyph::Composite(crate::glyph::CompositeId::DelayRings);
 
-pub static DELAY_SPECS: [ParamSpec; 12] = [
+pub static DELAY_SPECS: [ParamSpec; 14] = [
     ParamSpec::continuous(
         0,
         "TIME",
@@ -330,7 +415,36 @@ pub static DELAY_SPECS: [ParamSpec; 12] = [
     )
     .ident("TEXTURE")
     .short("TEXT"),
+    // Tempo sync (ADR 0302). SYNC stored as its index, as TYPE is; NOTE
+    // as the reverb stores a division, a tick a note. A project without
+    // them loads FREE and 1/8D.
+    ParamSpec::stepped(
+        12,
+        "SYNC",
+        ValFmt::Names(&DelaySync::NAMES),
+        0.0,
+        1.0,
+        0.0,
+        false,
+        Motion::Stepped(Change::Crossfade),
+    )
+    .ident("SYNC")
+    .glyph(crate::glyph::FocusGlyph::None),
+    ParamSpec::continuous(
+        13,
+        "NOTE",
+        ValFmt::Law(crate::dsp::modulator::law::Law::DelayNote),
+        0.0,
+        1.0,
+        NOTE_DEFAULT,
+        1.0 / (DelayNote::COUNT - 1) as f32,
+        false,
+        Smoothing::Own,
+    )
+    .ident("NOTE"),
 ];
+
+const NOTE_DEFAULT: f32 = DelayNote::DEFAULT.value();
 
 impl Block for DelayParams {
     fn specs(&self) -> &'static [ParamSpec] {
@@ -347,7 +461,7 @@ impl Block for DelayParams {
             Self::TONE => self.tone,
             Self::MIX => self.mix,
             Self::REV_SEND => self.rev_send.get(),
-            _ => grain_slot(id).map_or(0.0, |i| self.grain[i]),
+            _ => more_slot(id).map_or(0.0, |i| self.more[i]),
         }
     }
 
@@ -362,8 +476,8 @@ impl Block for DelayParams {
             Self::MIX => self.mix = v,
             Self::REV_SEND => self.rev_send = SendLevel::new(v),
             _ => {
-                if let Some(i) = grain_slot(id) {
-                    self.grain[i] = v;
+                if let Some(i) = more_slot(id) {
+                    self.more[i] = v;
                 }
             }
         }
@@ -392,11 +506,11 @@ pub const fn extra_cost(p: &DelayParams) -> crate::hw::Cost {
     }
 }
 
-/// `id`'s place in `DelayParams::grain`, if it is GRAIN's.
+/// `id`'s place in `DelayParams::more`, if it is there.
 #[inline(always)]
-const fn grain_slot(id: ParamId) -> Option<usize> {
+const fn more_slot(id: ParamId) -> Option<usize> {
     let i = id.0.wrapping_sub(DelayParams::TYPE.0) as usize;
-    if i < DelayParams::DEFAULT.grain.len() {
+    if i < DelayParams::DEFAULT.more.len() {
         Some(i)
     } else {
         None
@@ -407,7 +521,7 @@ const fn grain_slot(id: ParamId) -> Option<usize> {
 /// 0213): bank 1 calls `run` once a block.
 #[repr(C)]
 pub struct DelayDoor {
-    pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, u32, bool) -> bool,
+    pub run: fn(&mut TapeDelay, &mut [f32; BLOCK_SIZE], &DelayParams, Tempo, u32, bool) -> bool,
 }
 
 impl DelayDoor {
@@ -598,7 +712,8 @@ const _: () = assert!((TIME_FADE as usize).is_multiple_of(BLOCK_SIZE));
 /// the send is doing now, never a frozen tail (#61). MIX, FDBK, SAT, TONE
 /// and MECHANICS ease (FDBK, SAT and TONE change what is written, heard a
 /// TIME later; MECHANICS moves the read head); a TIME change crossfades
-/// two read heads, never gliding one.
+/// two read heads; under SYNC a small tempo change glides the one
+/// (`sync::aim`, ADR 0302).
 pub struct TapeDelay {
     /// At `LINE_SCALE` (ADR 0090).
     buffer: [i16; MAX_DELAY_SAMPLES],
@@ -613,6 +728,13 @@ pub struct TapeDelay {
     fade: u16,
     /// A block has set `time`.
     primed: bool,
+    /// SYNC and its note as the last block read them, and how its note
+    /// was folded into the line (`sync::tap`).
+    aim: sync::Aim,
+    fold: FoldState,
+    /// The gliding head's speed off the tape's, samples of delay a
+    /// sample; 0 at rest.
+    speed: f32,
     mix: Ease,
     feedback: Ease,
     saturation: Ease,
@@ -626,7 +748,7 @@ pub struct TapeDelay {
     zeros: u32,
 }
 
-crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, mix, feedback, saturation, tone, mechanics, grain, zeros });
+crate::in_place::field_list!(TapeDelay => TapeDelay { buffer, write_pos, lp_state, transport, time, next, fade, primed, aim, fold, speed, mix, feedback, saturation, tone, mechanics, grain, zeros });
 
 /// One block's eased settings, each `(from, to)`.
 #[derive(Clone, Copy)]
@@ -669,6 +791,9 @@ impl TapeDelay {
             next: 0.0,
             fade: 0,
             primed: false,
+            aim: sync::Aim::NEW,
+            fold: FoldState(0),
+            speed: 0.0,
             mix: Ease::default(),
             feedback: Ease::default(),
             saturation: Ease::default(),
@@ -677,6 +802,13 @@ impl TapeDelay {
             grain: grain::State::NEW,
             zeros: 0,
         }
+    }
+
+    /// TAPE's head: its delay in samples, and the samples its crossfade
+    /// has left.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn head(&self) -> (f32, u16) {
+        (self.time, self.fade)
     }
 
     /// The line holds exact zeros: its tail has ended (ADR 0090).
@@ -688,7 +820,8 @@ impl TapeDelay {
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid for writes of one `Self`. Every field is
-        // valid as zero bytes (floats, integers, `false`, `Ease`, and
+        // valid as zero bytes (floats, integers, `false`, `Ease`, FREE's
+        // `Aim` at note 0, no fold, and
         // GRAIN's state, which its kernel renews before its first block)
         // and all but the transport's seed are zero in `new()`; the
         // transport is written whole before the slot is assumed
@@ -700,21 +833,38 @@ impl TapeDelay {
         }
     }
 
-    /// Insert use: dry/wet mix in place.
+    /// Insert use: dry/wet mix in place, at 120 BPM.
     pub fn process(&mut self, buf: &mut [f32; BLOCK_SIZE], params: &DelayParams, sample_rate: u32) {
-        self.run(buf, params, sample_rate, true);
+        self.run(buf, params, Tempo::DEFAULT, sample_rate, true);
     }
 
-    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
-    /// return level, in place of the send. Whether the return is known all
-    /// +0 (#793).
+    /// `play` at 120 BPM: FREE never reads the tempo.
     pub fn process_wet(
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         params: &DelayParams,
         sample_rate: u32,
     ) -> bool {
-        self.run(buf, params, sample_rate, false)
+        self.play(buf, params, Tempo::DEFAULT, sample_rate)
+    }
+
+    /// Send/return use (the FX bus): writes only the wet signal × MIX, the
+    /// return level, in place of the send; SYNC's note is read at `tempo`
+    /// (ADR 0302). Whether the return is known all +0 (#793).
+    pub fn play(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        params: &DelayParams,
+        tempo: Tempo,
+        sample_rate: u32,
+    ) -> bool {
+        self.run(buf, params, tempo, sample_rate, false)
+    }
+
+    /// How the last block folded SYNC's note into the line; none under
+    /// FREE. What the TIME cell's mark reads.
+    pub fn fold(&self) -> FoldState {
+        self.fold
     }
 
     /// Through the door with `bank2`; closed, the return is silent and an
@@ -723,13 +873,14 @@ impl TapeDelay {
         &mut self,
         buf: &mut [f32; BLOCK_SIZE],
         params: &DelayParams,
+        tempo: Tempo,
         sample_rate: u32,
         insert: bool,
     ) -> bool {
         #[cfg(feature = "bank2")]
         {
             crate::bank2::DOOR_CELL
-                .with(|d| (d.delay.run)(self, buf, params, sample_rate, insert))
+                .with(|d| (d.delay.run)(self, buf, params, tempo, sample_rate, insert))
                 .unwrap_or_else(|| {
                     if !insert {
                         buf.fill(0.0);
@@ -738,7 +889,7 @@ impl TapeDelay {
                 })
         }
         #[cfg(not(feature = "bank2"))]
-        tape::run(self, buf, params, sample_rate, insert)
+        tape::run(self, buf, params, tempo, sample_rate, insert)
     }
 
     /// The block's eased settings: MIX (0 while off), FDBK, SAT, TONE and

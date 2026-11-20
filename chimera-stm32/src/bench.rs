@@ -431,7 +431,7 @@ fn worst_grain(s: &mut AudioShared) {
 /// `worst_grain`, TYPE TAPE and GRAIN in turn every 16 blocks.
 fn grain_switch(s: &mut AudioShared, b: u32) {
     worst_grain(s);
-    s.fx.delay.grain[0] = ((b / 16) % 2) as f32;
+    s.fx.delay.more[0] = ((b / 16) % 2) as f32;
 }
 
 fn worst_chorus(s: &mut AudioShared) {

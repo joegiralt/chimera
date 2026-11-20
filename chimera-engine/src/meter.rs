@@ -105,14 +105,23 @@ pub fn sounding_parts() -> PartSet {
     PartSet::from_bits(SOUNDING_PARTS.load(Ordering::Relaxed))
 }
 
-/// The tempo the reverb follows and its synced time's fold, in one word:
-/// tempo × 4 (its 0.25 BPM grid) in the low 16 bits, the fold above. What
+/// The tempo the reverb and the delay follow and their synced times'
+/// folds, in one word: tempo × 4 (its 0.25 BPM grid) in the low 16 bits,
+/// the reverb's fold above, the delay's (ADR 0302) in the top byte. What
 /// a synced cell shows. Global as `MASTER_GR`: only a test binary whose
 /// renders keep 120 BPM may draw synced cells.
 static REV_CLOCK: AtomicU32 = AtomicU32::new(0);
 
-pub fn publish_rev_clock(t: Tempo, f: FoldState) {
-    REV_CLOCK.store(clock_word(t, f), Ordering::Relaxed);
+pub fn publish_rev_clock(t: Tempo, f: FoldState, delay: FoldState) {
+    REV_CLOCK.store(
+        clock_word(t, f) | (delay.0 as u8 as u32) << 24,
+        Ordering::Relaxed,
+    );
+}
+
+/// The delay's fold as last published; none before any.
+pub fn delay_fold() -> FoldState {
+    FoldState((REV_CLOCK.load(Ordering::Relaxed) >> 24) as u8 as i8)
 }
 
 /// `t` × 4 in bits 0–15, `f` in bits 16–23: the published word, and what

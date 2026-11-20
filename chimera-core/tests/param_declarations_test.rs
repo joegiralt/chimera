@@ -359,6 +359,9 @@ const OWN_OUTSIDE: &[&str] = &[
     "Delay DENSITY",
     "Delay PITCH",
     "Delay TEXTURE",
+    // SYNC's note: a turn crossfades the heads, a tempo move glides or
+    // crossfades (ADR 0302).
+    "Delay NOTE",
     // Reverb: each TYPE eases its gains and filters (τ 20-50 ms), crossfades
     // its read heads (30 ms), and MIX `Ease`s; TYPE and SYNC are choices.
     "Reverb TIME",
