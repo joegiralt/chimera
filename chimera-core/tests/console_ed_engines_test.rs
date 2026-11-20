@@ -1167,21 +1167,31 @@ fn a_refused_ed_set_says_why_as_a_cc_does() {
 // ---- refusals over the protocol: `refused <ADDR> "<reason>"` in since ----
 
 /// `since`'s `refused` lines, each checked to come before its `OK`, and
-/// the answer's number.
-fn refused_lines(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
-    let got = ask(f, &format!("ed since {n}\n"));
-    let ok = got.rfind("OK ").unwrap();
-    let lines: Vec<String> = got
-        .lines()
-        .filter(|l| l.starts_with("refused "))
-        .map(str::to_string)
-        .collect();
-    assert!(
-        got[..ok].matches("refused ").count() == lines.len(),
-        "{got}"
-    );
-    let m = got[ok + 3..].trim_end().parse().unwrap();
-    (lines, m)
+/// the answer's number. An answer that owes sections (`OK <m> more`: a
+/// whole DRUM answer with 0.4's mixer is within 200 B of the bound) is
+/// asked again, its lines joined, as a client does.
+fn refused_lines(f: &mut Fake, mut n: u32) -> (Vec<String>, u32) {
+    let mut lines: Vec<String> = vec![];
+    loop {
+        let got = ask(f, &format!("ed since {n}\n"));
+        let ok = got.rfind("OK ").unwrap();
+        let said = got.lines().filter(|l| l.starts_with("refused "));
+        let before = lines.len();
+        lines.extend(said.map(str::to_string));
+        assert!(
+            got[..ok].matches("refused ").count() == lines.len() - before,
+            "{got}"
+        );
+        let end = got[ok + 3..].trim_end();
+        let (m, more) = match end.strip_suffix(" more") {
+            Some(m) => (m, true),
+            None => (end, false),
+        };
+        n = m.parse().unwrap_or_else(|_| panic!("{got}"));
+        if !more {
+            return (lines, n);
+        }
+    }
 }
 
 /// A turn the box refuses is said in the next `since`, in the toast's
