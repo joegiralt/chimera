@@ -147,9 +147,10 @@ bench-algo.
      a pad's side). So a Part cut by SMART EQ already feeds the reverb
      cut; the return's own bands act on what the reverb makes of it.
    - **Against REV › DUCK (ADR 0295):** DUCK is level-only and self-keyed:
-     the whole return turned down under its own input. This is per band
-     and keyed by the Parts that outrank the return. They stack; DUCK
-     follows in the chain when tester-04 merges.
+     the whole return turned down under its own input, inside the
+     reverb's play. This is per band and keyed by the Parts that outrank
+     the return, on what DUCK leaves: they stack, and SMART EQ hears the
+     ducked return.
    - The delay's return is not a member: it is mono and would be half
      the cost, but needs its own role, bill, state and column; left out,
      for the owner to ask.
@@ -175,52 +176,61 @@ bench-algo.
     door table. A closed door rests it with the EQ.
 12. **State in ITCM** with the EQ (`PartEqs::smart`).
 13. **UI.**
-    - ROLE: MIXER › PRT › EQ cell C. Its band: the Part's four bands as
-      bars with the cut heard in dB (bars by the square root of the cut,
-      27 dB the whole box).
+    - ROLE: MIXER › PRT › EQ cell C. Its band keeps the Parts' overview
+      and meters (ADR 0293) and adds, beside each Part's meter, its four
+      bands as thin bars (by the square root of the cut heard, 27 dB the
+      whole bar), the edited Part's lit with its deepest cut in dB by its
+      number.
     - MIXER › MST › LVL: SMART EQ (D), AMOUNT (E), REV ROLE (F) under VOL
       and PAN; its band, each Part's four cuts and role letter and the
-      return's (`REV`). Not a page of its own (D2), and no free cell on
-      the REV pages (every one is its TYPE's panel's): REV ROLE can move
-      to REV › DUCK's page when tester-04 merges.
-    - Bank 2 plans the band (`ui::smart_eq::plan_in`, through
-      `UiDoor::smart_eq`); bank 1 draws the plan. A closed door draws
-      nothing.
+      return's (`REV`). Not a page of its own (D2). The return's role is
+      also REV › DUCK's cell C, SMART ROLE, beside the duck.
+    - Bank 2 plans the band (`ui::smart_eq::plan_in`); bank 1 draws the
+      plan. It is asked through `UiDoor`'s `meters` entry
+      (`part_meter::Ask::Cuts`): with tester-04's entries the table is
+      full at 32 words, and the bench's, ORBIT's and the MIDI UI's tables
+      follow it at fixed slots, so it is not grown. Its helpers are all
+      inlined into `plan_in`: a call between them is one the outliner
+      shared with bank 1 (a jump into bank 2, caught by the split). A
+      closed door draws nothing.
 
 ## Measurements
-Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 b136ef37 against this
-change, each set built in both trees. Each budget line is raised by exactly
-its set's measured change, never ADR 0198's slack:
+Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 a1dd3a9c (tester-04
+merged) against this change merged with it, each set built in both trees.
+Each budget line is 0.4's plus exactly its set's measured change, never
+ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +1,768 | +21,280 |
-| orbit | +1,880 | +21,344 |
-| bank2-gate | +1,760 | +21,280 |
-| orbit,usb-config-writer | +1,872 | |
-| fault-inject | +2,120 | |
-| bench-algo | +2,112 | |
-| bench-algo,master-tape | +2,064 | |
-| bench-routing | +2,200 | |
-| bench-memory | +2,392 | |
-| bench-stress | +2,248 | |
-| bench-orbit | +2,088 | |
-| bench-tape | +2,344 | |
-| filter-probes | +2,120 | |
+| default | +2,232 | +21,440 |
+| orbit | +2,416 | +21,408 |
+| bank2-gate | +2,240 | +21,440 |
+| orbit,usb-config-writer | +2,408 | |
+| fault-inject | +2,512 | |
+| bench-algo | +2,384 | |
+| bench-algo,master-tape | +2,384 | |
+| bench-routing | +2,528 | |
+| bench-memory | +2,648 | |
+| bench-stress | +2,608 | |
+| bench-orbit | +2,344 | |
+| bench-tape | +2,696 | |
+| filter-probes | +2,512 | |
 
-- Bank 1 on ORBIT (900,928 B): the three settings' specs and
+- Bank 1 on ORBIT (902,716 B; +1,880 before the merge, the rest PRT ›
+  EQ's band over tester-04's overview and meters and REV › DUCK's cell): the three settings' specs and
   `get`/`write`/`enum_*` arms (code, an exception to ADR 0198 as ADR
   0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
   admission's with the door open or closed), the stub's test and the
   return's ask in `FxBus`, the renderer's arm and the plan's painter.
-- Bank 2 on ORBIT: S4–S5 +21,344 B (`answer` 10.0 KB with the Parts'
+- Bank 2 on ORBIT: S4–S5 +21,408 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
   478 KB. S0–S3 8,096 → 8,000 B free (the reverb's ROLE arms; under ADR
   0251's 8 KB warning before this change).
-- RAM: ITCM +1,424 B (`PART_EQS`: seven members' filters, levels, cuts
+- RAM: ITCM +1,432 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
-  44,704 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged.
+  44,808 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
+  D2 a page id overflowed, links with tester-04's page 119 and no new id.
 
 ### CPU
 The ORBIT build's instruction counts (`tools/loop_count.py`'s 1.606 cycles
@@ -369,8 +379,6 @@ against off:
   about 12 dB the bands cut less than asked; the pages read what is
   heard.
 - The four bands are fixed: no user control of their place or width.
-- Open: tester-04 merges first (its PRT meters share PRT › EQ's band, and
-  `UiDoor` is then 32 of 32 words): the merge keeps both.
 - A docs page (annotated screenshots) is owed for PRT › EQ and MST › LVL.
 
 ## Sources
