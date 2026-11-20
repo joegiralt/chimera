@@ -8,7 +8,7 @@ mod common;
 mod screen;
 
 use chimera_core::addr::{BlockRef, Blocks, ParamAddr};
-use chimera_core::midi_in::{CtrlEvent, CtrlRing, DinSinks, PipeSlot, Port};
+use chimera_core::midi_in::{CtrlEvent, CtrlRing, DinSinks, PipeSlot, Port, SYSEX_IN};
 use chimera_core::midi_map::{Mappable, MidiMap};
 use chimera_core::note_queue::NoteQueue;
 use chimera_core::nrpn::{self, ChartLine};
@@ -22,7 +22,7 @@ use chimera_hal::ButtonId;
 use chimera_hal::EncoderId;
 use chimera_hal::Ms;
 use chimera_midi::ctl::DataValue;
-use chimera_midi::sysex::{DumpAsk, DumpWho, PartNo};
+use chimera_midi::sysex::{DumpWho, PartNo};
 use chimera_midi::value::Channel;
 use screen::{Input as Key, feed};
 
@@ -71,9 +71,13 @@ impl Rig {
     }
 
     /// One UI pass, then the UART's 4 ms of DIN.
-    fn pass(&mut self, ev: &[(Port, CtrlEvent)]) {
+    fn pass(&mut self, asks: &[(Port, Ask)]) {
         self.now += PASS_MS;
-        self.ui.hear_ccs(ev.iter().copied(), Ms(self.now), true);
+        let ev = asks.iter().map(|&(port, Ask(who))| {
+            assert!(SYSEX_IN[port as usize].push(&body(who)));
+            (port, CtrlEvent::SysEx)
+        });
+        self.ui.hear_ccs(ev, Ms(self.now), true);
         self.ui.send(&OutPorts::new(&self.din, &self.usb));
         self.peak = self.peak.max(self.din.held());
         self.credit += DIN_BYTES_PER_S * PASS_MS;
@@ -103,9 +107,26 @@ impl Rig {
     }
 }
 
-fn ask(who: DumpWho) -> CtrlEvent {
-    CtrlEvent::Dump(DumpAsk::of(who))
+/// `SYSEX_IN` is global: one test at a time feeds it.
+static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
+
+/// The request's body, as the pipe hands it on.
+fn body(who: DumpWho) -> [u8; 5] {
+    [0x7D, 0x43, 0x48, 0x01, who.wire().get()]
+}
+
+/// A request for `who`, heard: its body waits in the port's ring (the
+/// caller names the port), its marker is the event.
+fn ask(who: DumpWho) -> Ask {
+    Ask(who)
+}
+
+#[derive(Clone, Copy)]
+struct Ask(DumpWho);
 
 fn part(n: u8) -> DumpWho {
     DumpWho::Part(PartNo::new(n).unwrap())
@@ -172,48 +193,39 @@ fn want(ui: &UiState, p: PartId) -> Vec<Heard> {
         .collect()
 }
 
-/// The request as a controller sends it, through DIN's pipe.
-fn through_the_pipe(bytes: &[u8]) -> Vec<CtrlEvent> {
+/// The request as a controller sends it, through DIN's pipe: a body for
+/// the UI, as any manufacturer's message, and the UI answers it.
+#[test]
+fn the_request_is_heard_through_the_pipe() {
+    let _g = lock();
+    let mut r = Rig::new(EngineType::Va);
     let q = Box::leak(Box::new(NoteQueue::new()));
     let (mut prod, _cons) = q.split().unwrap();
     let ring: CtrlRing = CtrlRing::new();
     let mut slot = PipeSlot::new();
     chimera_core::midi_in::feed(
         &mut slot,
-        bytes,
+        &[0xF0, 0x7D, 0x43, 0x48, 0x01, 0x00, 0xF7],
         &mut DinSinks {
             notes: &mut prod,
             ctrl: &ring,
-            sysex: None,
+            sysex: Some(&SYSEX_IN[0]),
         },
     );
-    ring.drain().collect()
-}
-
-#[test]
-fn the_request_is_heard_through_the_pipe() {
-    assert_eq!(
-        through_the_pipe(&[0xF0, 0x7D, 0x43, 0x48, 0x01, 0x02, 0xF7]),
-        [ask(part(2))]
-    );
-    assert_eq!(
-        through_the_pipe(&[0xF0, 0x7D, 0x43, 0x48, 0x01, 0x1F, 0xF7]),
-        [ask(DumpWho::Channel(Channel::new(15).unwrap()))]
-    );
-    assert_eq!(
-        through_the_pipe(&[0xF0, 0x7D, 0x43, 0x48, 0x01, 0x7F, 0xF7]),
-        [ask(DumpWho::Editing)]
-    );
-    // The ring carries it whole.
-    for who in [part(0), part(15), DumpWho::Editing] {
-        assert_eq!(CtrlEvent::unpack(ask(who).pack()), Some(ask(who)));
-    }
+    r.now += PASS_MS;
+    r.ui.hear_ccs(ring.drain(), Ms(r.now), true);
+    r.until_end(3_000);
+    let (heard, end) = dump(&r.wire);
+    assert_eq!((heard, end), (want(&r.ui, P[0]), Some(0)));
+    // Never a binding's: learn armed hears nothing of it.
+    assert_eq!(r.ui.project().part(P[0]).sound.map, MidiMap::EMPTY);
 }
 
 /// Every engine: each cell's NRPN once, its value the Sound's, on the
 /// Part's channel, then the end naming the Part; DIN's alone.
 #[test]
 fn a_request_answers_every_cell_of_the_sound() {
+    let _g = lock();
     for engine in EngineType::ALL {
         let mut r = Rig::new(engine);
         // Off its default: a value to read.
@@ -249,6 +261,7 @@ fn a_request_answers_every_cell_of_the_sound() {
 /// and PARAM OUT, whose turn goes out within the half ring's 41 ms.
 #[test]
 fn din_is_paced_and_a_turn_still_goes_at_once() {
+    let _g = lock();
     let mut r = Rig::new(EngineType::Algo);
     let m = r.ui.midi().with_param_out(true);
     r.ui.set_midi(m);
@@ -288,6 +301,7 @@ fn din_is_paced_and_a_turn_still_goes_at_once() {
 /// Asked on USB, answered on USB alone, a ring at a time.
 #[test]
 fn asked_on_usb_it_answers_on_usb() {
+    let _g = lock();
     let mut r = Rig::new(EngineType::Va);
     r.pass(&[(Port::Usb, ask(part(0)))]);
     let mut got = r.drain_usb();
@@ -305,6 +319,7 @@ fn asked_on_usb_it_answers_on_usb() {
 /// being edited; a number or a channel with no Part answers nothing.
 #[test]
 fn the_request_names_its_part() {
+    let _g = lock();
     let mut r = Rig::new(EngineType::Algo);
     screen::init_part_engine(&mut r.ui, P[2], EngineType::Va);
     screen::init_part_engine(&mut r.ui, P[4], EngineType::Modal);
@@ -344,6 +359,7 @@ fn the_request_names_its_part() {
 /// ECHO off: no answer, then or later, as the identity request.
 #[test]
 fn echo_off_refuses() {
+    let _g = lock();
     let mut r = Rig::new(EngineType::Algo);
     let m = r.ui.midi().with_echo(false);
     r.ui.set_midi(m);
@@ -375,6 +391,7 @@ fn echo_off_refuses() {
 /// the first.
 #[test]
 fn a_load_or_a_new_ask_starts_again() {
+    let _g = lock();
     let mut r = Rig::new(EngineType::Algo);
     r.pass(&[(Port::Din, ask(part(0)))]);
     for _ in 0..30 {

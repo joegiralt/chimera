@@ -538,13 +538,6 @@ impl UiState {
                 self.cc.ui().echo.ask(port);
                 continue;
             }
-            // A dump request asks only to read: taken busy or not, the
-            // Part it names resolved now, answered by `out` (ADR 0301).
-            if let HeardEv::Ctrl(port, CtrlEvent::Dump(ask)) = e {
-                let (ui, project) = (self.cc.ui(), &self.project);
-                ui.dump.ask(port, ask.who(), project, at);
-                continue;
-            }
             // The notes already let go: say why, busy or not (#818).
             if let HeardEv::Ctrl(port, CtrlEvent::SensingLost) = e {
                 self.notice(Line::new(match port {
@@ -557,6 +550,13 @@ impl UiState {
             if let HeardEv::Ctrl(port, CtrlEvent::SysEx) = e {
                 let mut b = [0; SX_LEN];
                 while let Some(n) = SYSEX_IN[port as usize].pop(&mut b) {
+                    // A dump request (ADR 0301) asks only to read: taken
+                    // busy or not, never a binding's, answered by `out`.
+                    if let Some(who) = chimera_midi::sysex::dump_request(&b[..n]) {
+                        let (ui, project) = (self.cc.ui(), &self.project);
+                        ui.dump.ask(port, who, project, at);
+                        continue;
+                    }
                     if !busy && !self.learn_sysex(&b[..n]) {
                         self.cc_sysex(&b[..n], now);
                     }

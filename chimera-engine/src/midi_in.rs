@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU16, AtomicU32, Ordering};
 use chimera_midi::ctl::{Controllers, Ctl, DataValue, Dir, FreeCc, Heard, Sel};
 use chimera_midi::sense::Sensing;
 use chimera_midi::stream::{self, Event, FaultCounts, Parsed, Parser, RealTime as Rt, Voice};
-use chimera_midi::sysex::{self, DumpAsk};
+use chimera_midi::sysex;
 use chimera_midi::usb::Cable;
 use chimera_midi::value::{Channel, U7, U14};
 
@@ -135,8 +135,6 @@ pub enum CtrlEvent {
     /// Reset All Controllers on this channel: expression back to 127 (ADR
     /// 0263). Its own event, so learn never hears it as a CC.
     Reset(Channel),
-    /// A parameter dump request (#984, ADR 0301): whose values it asks.
-    Dump(DumpAsk),
 }
 
 const T_CC: u32 = 0;
@@ -150,12 +148,11 @@ const T_LOST: u32 = 7;
 const T_SYSEX: u32 = 8;
 const T_KEY: u32 = 9;
 const T_RESET: u32 = 10;
-const T_DUMP: u32 = 11;
 // Every tag its own (ADR 0254: KEY's 8 met SYSEX's on the merge).
 const _: () = {
     let t = [
         T_CC, T_COARSE, T_FINE, T_STEP, T_PROGRAM, T_PRESSURE, T_IDENTITY, T_LOST, T_SYSEX, T_KEY,
-        T_RESET, T_DUMP,
+        T_RESET,
     ];
     let mut i = 0;
     while i < t.len() {
@@ -218,7 +215,6 @@ impl CtrlEvent {
             CtrlEvent::SysEx => (T_SYSEX, 0, 0),
             CtrlEvent::Key(k) => (T_KEY, 0, u32::from(k.get())),
             CtrlEvent::Reset(c) => (T_RESET, c.get(), 0),
-            CtrlEvent::Dump(ask) => (T_DUMP, 0, u32::from(ask.wire().get())),
         };
         [tag << 4 | u32::from(ch), pay]
     }
@@ -258,7 +254,6 @@ impl CtrlEvent {
             T_SYSEX => Some(CtrlEvent::SysEx),
             T_KEY => Some(CtrlEvent::Key(MidiNote::new((p & 0x7F) as u8)?)),
             T_RESET => Some(CtrlEvent::Reset(c?)),
-            T_DUMP => DumpAsk::from_wire(u7(p)?).map(CtrlEvent::Dump),
             _ => None,
         }
     }
@@ -1031,9 +1026,6 @@ impl DinPipe {
                         && let Some(dev) = s.bytes().get(1).and_then(|&d| U7::new(d))
                     {
                         sink.ctrl(CtrlEvent::Identity { dev });
-                    } else if let Some(who) = sysex::dump_request(s) {
-                        // Chimera's own (#984): never a binding's.
-                        sink.ctrl(CtrlEvent::Dump(DumpAsk::of(who)));
                     } else if !matches!(s.bytes().first(), Some(0x7E | 0x7F) | None)
                         && s.bytes().len() <= SX_LEN
                     {
