@@ -318,7 +318,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_hall_more2", 0x2803da1ca58848ff),
     // REV › DUCK (ADR 0295).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_duck", 0x0b08deae6182360a),
+    ("mixer_fx_reverb_duck", 0x61b92168727683fa),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate", 0xe7a27e3bf03f7f81),
     #[cfg(not(feature = "master-tape"))]
@@ -347,7 +347,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xe6fc4c9683caa417),
+    ("mixer_master_level", 0xd74cd0e47b3abd6c),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
@@ -371,7 +371,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_hall_more2", 0xec9dcc70c3dcc1e8),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_duck", 0x6cd78223efed5939),
+    ("mixer_fx_reverb_duck", 0x992a26843e1361a9),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate", 0x7f8d7ae08ef421ae),
     #[cfg(feature = "master-tape")]
@@ -397,7 +397,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_master", 0x7b0e9395aaa4c7f8),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x93f9f676f3139591),
+    ("mixer_master_level", 0x302de6272919c31a),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]

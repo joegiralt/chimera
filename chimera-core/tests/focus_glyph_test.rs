@@ -166,6 +166,8 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Reverb", "DENSITY", CUBE),
     ("Reverb", "TYPE", NONE),
     ("Reverb", "SYNC", NONE),
+    // The return's SMART EQ role (ADR 0296): three words.
+    ("Reverb", "ROLE", NONE),
     // Blends between two ends: a crossfader.
     ("Algo", "MORPH", XF),
     ("VoiceFx", "MIX", XF),
@@ -182,6 +184,10 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Part", "RESERVE", NONE),
     // A toggle (ADR 0284).
     ("Part", "LO_CUT", SWITCH),
+    // SMART EQ (ADR 0296): a toggle, and three named roles.
+    ("Comp", "SMART_EQ", SWITCH),
+    ("Comp", "AMOUNT", LEVEL),
+    ("Part", "ROLE", NONE),
     ("Theme", "GAMMA", NONE),
     ("Theme", "ACCENT", NONE),
     ("Theme", "HINTS", SWITCH),
@@ -1594,10 +1600,10 @@ fn cube_ui(slot: EncoderId) -> UiState {
 
 #[test]
 fn glyph_cube_page_moves_only_inside_its_box() {
-    // Every reverb knob carries the composite; TYPE and SYNC are words;
-    // REV › DUCK's (ADR 0295) are the duck's, not the room's: arcs.
+    // Every reverb knob carries the composite; TYPE, SYNC and ROLE are
+    // words; REV › DUCK's (ADR 0295) are the duck's, not the room's: arcs.
     for s in BlockRef::Reverb.specs() {
-        if matches!(s.ident, "TYPE" | "SYNC") {
+        if matches!(s.ident, "TYPE" | "SYNC" | "ROLE") {
             assert_eq!(s.glyph, NONE, "{}", s.ident);
             continue;
         }

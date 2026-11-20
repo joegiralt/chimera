@@ -20,7 +20,7 @@ use crate::modulation::{MAX_MOD_SOURCES, ModSource};
 use crate::params::{EnvParams, FilterParams, OutParams, PitchParams};
 use crate::part::PartParams;
 use crate::ui::block_def::{
-    BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, VizType,
+    BlockDef, ChainBlock, ChainDef2, FxFlow, FxNode, MachineSlot, ParamSlot, SmartScope, VizType,
 };
 use crate::ui::midi_settings::MidiSettings;
 use crate::ui::page::{PageLayout, ValFmt};
@@ -510,7 +510,9 @@ pub static EFX_DUCK: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DUCK).with_label(&"AMOUNT"),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::DUCK_RELEASE),
-        EMPTY,
+        // The return's SMART EQ role (ADR 0296), MST › LVL's REV ROLE: what
+        // else turns the return down, beside the duck.
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::ROLE).with_label(&"SMART ROLE"),
         EMPTY,
         EMPTY,
         EMPTY,
@@ -631,20 +633,24 @@ pub static MASTER: BlockDef = BlockDef {
 };
 
 /// MST › LEVEL: the legacy VOL and PAN, off the compressor's page (FX diet
-/// spec § UI; an assumed default, pending the owner's word).
+/// spec § UI; an assumed default, pending the owner's word); and SMART EQ
+/// and AMOUNT (ADR 0296), the master's own mix settings, and the reverb
+/// return's role in it (cell F, `LevelCell::WashRole`); its band every
+/// Part's live SMART EQ cuts and the return's. A page of their own would take a new page
+/// id, and `FocusMemory` (a byte an id) grows past D2 on bench-algo.
 pub static MASTER_LEVEL: BlockDef = BlockDef {
     id: 58,
     name: "Level",
     short: "LVL",
     layout: PageLayout::CellGrid,
-    viz: VizType::None,
+    viz: VizType::SmartEq(SmartScope::All),
     params: [
         ParamSlot::param(BlockRef::Comp, CompParams::VOL),
         ParamSlot::param(BlockRef::Comp, CompParams::PAN),
         EMPTY,
-        EMPTY,
-        EMPTY,
-        EMPTY,
+        ParamSlot::param(BlockRef::Comp, CompParams::SMART_EQ),
+        ParamSlot::param(BlockRef::Comp, CompParams::AMOUNT),
+        ParamSlot::param(BlockRef::Reverb, ReverbParams::ROLE),
     ],
 };
 
@@ -1132,17 +1138,18 @@ pub static PART_VOICES: BlockDef = BlockDef {
 };
 
 /// PRT's second sub-page: the Part's channel EQ (ADR 0284), TILT and LO
-/// CUT, before LEVEL, PAN and the sends.
+/// CUT, before LEVEL, PAN and the sends, and its SMART EQ ROLE; the band
+/// shows SMART EQ's four live cuts on the Part (ADR 0296).
 pub static PART_EQ: BlockDef = BlockDef {
     id: 118,
     name: "EQ",
     short: "EQ",
     layout: PageLayout::CellGrid,
-    viz: VizType::MixerLevels,
+    viz: VizType::SmartEq(SmartScope::Part),
     params: [
         ParamSlot::param(BlockRef::Part, PartParams::TILT),
         ParamSlot::param(BlockRef::Part, PartParams::LO_CUT),
-        EMPTY,
+        ParamSlot::param(BlockRef::Part, PartParams::ROLE),
         EMPTY,
         EMPTY,
         EMPTY,

@@ -278,7 +278,10 @@ pub struct UiDoor {
     /// The band's words on 0.4's tester cells (`ui::notes`, ADR 0292):
     /// the matrix's VCA column, AMP's BASE.
     notes: fn(crate::ui::notes::Ask<'_>),
-    /// MIXER › PRT's meters and key marks (`ui::part_meter`, ADR 0293).
+    /// MIXER › PRT's meters and key marks (`ui::part_meter`, ADR 0293),
+    /// and SMART EQ's live cuts beside them (`Ask::Cuts`, ADR 0296: the
+    /// table is full at 32 words, and the tables after it are at fixed
+    /// slots).
     meters: fn(crate::ui::part_meter::Ask<'_>),
 }
 

@@ -192,6 +192,12 @@ pub enum Ask<'a> {
     Frame(&'a mut PartMeters, Shown<'a>),
     /// `paint`.
     Paint(&'a mut dyn Paint, &'a PartMeters),
+    /// SMART EQ's live cuts for the mixer's bands (`ui::smart_eq`, ADR
+    /// 0296), as a plan bank 1 draws.
+    Cuts(
+        &'a crate::ui::smart_view::Shown,
+        &'a mut crate::ui::smart_view::Plan,
+    ),
 }
 
 /// Whether MIXER › PRT is up, with what its key marks read.
@@ -209,6 +215,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
     match a {
         Ask::Frame(m, s) => frame(m, s),
         Ask::Paint(on, m) => paint(on, m),
+        Ask::Cuts(s, plan) => crate::ui::smart_eq::plan_in(s, plan),
     }
 }
 

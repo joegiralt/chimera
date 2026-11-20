@@ -460,6 +460,7 @@ fn part_snap_default_is_neutral() {
                 PartParams::RESERVE,
                 PartParams::TILT,
                 PartParams::LO_CUT,
+                PartParams::ROLE,
             ]
             .map(|i| i.0)
             .contains(&e[0])

@@ -742,6 +742,62 @@ fn the_eq_round_trips_and_an_old_file_loads_flat() {
     assert_eq!(m.pan, p.part(PartId::ALL[2]).mix.pan);
 }
 
+/// The FX context's block `block` with its param `ids` taken out.
+fn fx_without(p: &Project, block: u8, ids: &[u8]) -> Vec<u8> {
+    edited(p, |recs| {
+        let r = context(recs, FX, 0);
+        let at = recs[r.clone()]
+            .iter()
+            .position(|(t, b)| *t == BLOCK && b[0] == block)
+            .unwrap();
+        let b = &mut recs[r.start + at].1;
+        let kept: Vec<u8> = b[1..]
+            .chunks(5)
+            .filter(|e| !ids.contains(&e[0]))
+            .flatten()
+            .copied()
+            .collect();
+        b.truncate(1);
+        b.extend(kept);
+    })
+}
+
+#[test]
+fn smart_eq_and_roles_round_trip_and_an_old_file_loads_mid_and_off() {
+    use chimera_core::dsp::comp::CompParams;
+    use chimera_core::part_eq::smart::{Amount, Role, SmartEq, Switch};
+    let (p, _) = full();
+    let on = SmartEq::new(Switch::On, Amount::from_code(100).unwrap());
+    assert_eq!(
+        p.part(PartId::ALL[2]).mix.role,
+        Role::Front,
+        "full() sets it"
+    );
+    assert_eq!(p.perf().fx.comp.smart, on, "full() sets it");
+    let (mut q, _) = Project::boxed();
+    decode(&encode(&p), &mut q).unwrap();
+    assert_eq!(q.part(PartId::ALL[2]).mix.role, Role::Front);
+    assert_eq!(q.part(PartId::ALL[1]).mix.role, Role::Mid);
+    assert_eq!(q.perf().fx.comp.smart, on);
+    // A file from before SMART EQ: every Part MID, SMART EQ off.
+    let old = mix_without(&p, PartId::ALL[2], &[PartParams::ROLE.0]);
+    decode(&old, &mut q).unwrap();
+    assert_eq!(q.part(PartId::ALL[2]).mix.role, Role::Mid);
+    assert_eq!(q.part(PartId::ALL[2]).mix.eq, p.part(PartId::ALL[2]).mix.eq);
+    let old = fx_without(&p, 24, &[CompParams::SMART_EQ.0, CompParams::AMOUNT.0]);
+    decode(&old, &mut q).unwrap();
+    assert_eq!(q.perf().fx.comp.smart, SmartEq::OFF);
+    // The reverb return's role is the project's too; an old file's is BACK.
+    let (mut r, _) = full();
+    r.edit_fx().reverb.role = Role::Front;
+    decode(&encode(&r), &mut q).unwrap();
+    assert_eq!(q.perf().fx.reverb.role, Role::Front);
+    let old = fx_without(&r, 22, &[chimera_core::dsp::reverb::ReverbParams::ROLE.0]);
+    decode(&old, &mut q).unwrap();
+    assert_eq!(q.perf().fx.reverb.role, Role::Back);
+    assert_eq!(q.perf().fx.comp.vol, p.perf().fx.comp.vol);
+}
+
 #[test]
 fn a_sound_load_leaves_the_part_s_eq() {
     use chimera_core::part_eq::{LoCut, PartEq, Tilt};

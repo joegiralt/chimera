@@ -50,6 +50,9 @@ pub mod part_page;
 pub mod part_voices;
 pub mod perf;
 pub mod pit_tuner;
+// SMART EQ's band (ADR 0296): the paint bank 2's, the view bank 1's.
+pub mod smart_eq;
+pub mod smart_view;
 // MIDI MAP's pointing (ADR 0288): bank 2's, an S4 group.
 #[cfg(feature = "midi-map")]
 pub mod pointing;
@@ -3535,9 +3538,11 @@ impl UiState {
                     continue;
                 }
                 // The reverb turns by its TYPE's panel, and TYPE keeps the
-                // knobs it leaves (reverb TYPEs spec § Pages).
+                // knobs it leaves (reverb TYPEs spec § Pages); the return's
+                // SMART EQ role (ADR 0296) is no panel's, a plain choice.
                 if let Some(a) = v.addr()
                     && a.block == BlockRef::Reverb
+                    && a.param != crate::dsp::reverb::ReverbParams::ROLE
                     && (!shift
                         || reverb_panel::whole_ticks(&self.project.perf().fx.reverb, a.param))
                 {
@@ -3711,11 +3716,15 @@ impl UiState {
         }
         // MIXER › PRT's meters (ADR 0293): bank 2's, measured while shown.
         let shown = match self.page_def().viz {
-            VizType::MixerLevels if self.loc.on_mixer() => part_meter::Shown::On {
-                parts: self.project.perf().parts(),
-                zones: self.midi.mpe,
-                dt: part_meter::Ms(animation::FRAME_MS as u16),
-            },
+            VizType::MixerLevels | VizType::SmartEq(block_def::SmartScope::Part)
+                if self.loc.on_mixer() =>
+            {
+                part_meter::Shown::On {
+                    parts: self.project.perf().parts(),
+                    zones: self.midi.mpe,
+                    dt: part_meter::Ms(animation::FRAME_MS as u16),
+                }
+            }
             _ => part_meter::Shown::Off,
         };
         let meters = &mut self.meters;

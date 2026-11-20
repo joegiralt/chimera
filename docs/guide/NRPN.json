@@ -5997,6 +5997,19 @@
       "codes": null
     },
     {
+      "section": "Master FX",
+      "block": "COMP",
+      "name": "AMOUNT",
+      "msb": 24,
+      "lsb": 9,
+      "nrpn": 3081,
+      "kind": "msb",
+      "min": 0,
+      "max": 127,
+      "screen": null,
+      "codes": null
+    },
+    {
       "section": "ORBIT",
       "block": "RING 1",
       "name": "HITS",

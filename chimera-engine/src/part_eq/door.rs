@@ -5,10 +5,24 @@
 //! A closed door plays every Part flat.
 
 use super::PartEqs;
-use super::dsp::{PartsBlock, run_parts};
+use super::dsp::PartsBlock;
 
-/// The EQ's block as the table carries it.
-pub type EqRun = for<'a> fn(&mut PartEqs, PartsBlock<'a>);
+/// What bank 1 asks of the EQ: one entry, as the table's stride holds
+/// (`DOOR_TABLE_STRIDE`).
+pub enum Ask<'a, 'b> {
+    /// The Parts' block: LO CUT, TILT, then SMART EQ's listening and cuts.
+    Parts(&'a mut PartEqs, PartsBlock<'b>),
+    /// SMART EQ on the reverb's return (ADR 0296), later in the block.
+    Wash {
+        eqs: &'a mut PartEqs,
+        wet: &'a mut crate::dsp::Stereo,
+        reverb: super::smart::Returned,
+        sample_rate: u32,
+    },
+}
+
+/// The EQ's entry as the table carries it.
+pub type EqRun = for<'a, 'b> fn(Ask<'a, 'b>);
 
 /// `EqDoor`'s entry: called, never handed out.
 #[repr(transparent)]
@@ -16,8 +30,8 @@ pub struct EqEntry(EqRun);
 
 impl EqEntry {
     #[inline(always)]
-    pub fn run(&self, eqs: &mut PartEqs, b: PartsBlock<'_>) {
-        (self.0)(eqs, b)
+    pub fn run(&self, ask: Ask<'_, '_>) {
+        (self.0)(ask)
     }
 }
 
@@ -27,7 +41,7 @@ impl EqEntry {
 #[repr(transparent)]
 struct Magic(u32);
 
-const MAGIC: Magic = Magic(0xB2E0_0284);
+const MAGIC: Magic = Magic(0xB2E0_0296);
 
 /// The EQ's table, at its own slot (`PART_EQ_DOOR_ADDR`, `bank2.x`).
 #[repr(C)]
@@ -39,7 +53,7 @@ pub struct EqDoor {
 impl EqDoor {
     const OWN: EqDoor = EqDoor {
         magic: MAGIC,
-        eq: EqEntry(run_parts),
+        eq: EqEntry(super::dsp::answer),
     };
 
     #[inline(always)]

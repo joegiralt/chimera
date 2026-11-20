@@ -393,6 +393,8 @@ const OWN_OUTSIDE: &[&str] = &[
     // The master VOL and PAN, `Ease`d after the limiter (`MasterOut`).
     "Comp VOL",
     "Comp PAN",
+    // SMART EQ's cuts follow it over seconds (ADR 0296).
+    "Comp AMOUNT",
     // The Part's pan × LEVEL gains, `Ease`.
     "Part LEVEL",
     "Part PAN",
