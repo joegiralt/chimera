@@ -49,6 +49,9 @@ const ASSIGNED: &[(&str, &str, FocusGlyph)] = &[
     ("Va", "NOISEKIND", NONE),
     ("Va", "WAVE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
     ("Va", "WAVE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
+    // SHAPE draws the wave it makes (#980).
+    ("Va", "SHAPE1", FocusGlyph::Va(VaGlyph::Wave(VaOsc::One))),
+    ("Va", "SHAPE2", FocusGlyph::Va(VaGlyph::Wave(VaOsc::Two))),
     // TAPE's machine cells: the machine's glyph (ADR 0173).
     ("TapeEngine", "MODEL", TAPE),
     ("TapeEngine", "TYPE", TAPE),

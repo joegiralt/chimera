@@ -291,9 +291,9 @@ fn every_first_landing_is_the_chains_home() {
     // B<n> from elsewhere, though its page was left elsewhere.
     feed(&mut ui, Input::press(ButtonId::Plus));
     assert_ne!(ui.location(), res(P[1]));
-    feed(&mut ui, Input::press(ButtonId::B1));
+    feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::B1));
     feed(&mut ui, Input::press(ButtonId::B2));
-    assert_eq!(ui.location(), res(P[1]), "B2 from Part 1");
+    assert_eq!(ui.location(), res(P[1]), "B2 from Part 1's mixer");
 
     // An engine change behind the mixer.
     let mut ui = crate::screen::stack_ui();
