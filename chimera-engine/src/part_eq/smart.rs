@@ -152,6 +152,12 @@ impl Band {
         matches!(self, Band::Low | Band::LowMid)
     }
 
+    /// The band whose turn `n` is: each comes up in order.
+    #[inline(always)]
+    pub(crate) const fn of_turn(n: u8) -> Band {
+        Band::ALL[n as usize % BANDS]
+    }
+
     /// Its name on PRT › EQ.
     pub const fn name(self) -> &'static str {
         match self {
@@ -352,7 +358,7 @@ impl Default for SmartEq {
     }
 }
 
-/// One band filter's memory (a TPT SVF's two integrators).
+/// One band filter's memory (its two state words).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BandTaps {
     pub(crate) s1: f32,
@@ -457,8 +463,8 @@ impl Blocks {
     }
 
     #[inline(always)]
-    pub(crate) const fn after(self, n: u16) -> Blocks {
-        Blocks(self.0.saturating_add(n))
+    pub(crate) const fn after(self, n: Blocks) -> Blocks {
+        Blocks(self.0.saturating_add(n.0))
     }
 
     #[inline(always)]
@@ -519,6 +525,8 @@ pub(crate) struct PartSmart {
     pub(crate) key: Power,
     /// `key`'s recent peak, falling slowly: the hit `key` is measured from.
     pub(crate) key_peak: Power,
+    /// `key` as the kick's rule last saw it: an onset is its rise.
+    pub(crate) key_was: Power,
     /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW,
     /// and its target as the kick's rule last set it.
     pub(crate) kick: CutDb,
@@ -544,6 +552,7 @@ impl PartSmart {
         dipped: [CutDb::ZERO; BANDS],
         key: Power::ZERO,
         key_peak: Power::ZERO,
+        key_was: Power::ZERO,
         kick: CutDb::ZERO,
         kick_want: CutDb::ZERO,
         since: Blocks::ZERO,
@@ -576,7 +585,7 @@ pub(crate) struct Sv {
     pub(crate) g: f32,
 }
 
-/// HIGH MID's and HIGH's filter: the bilinear band-pass (the TPT SVF's
+/// HIGH MID's and HIGH's filter: the bilinear band-pass (a trapezoidal SVF's
 /// response exactly) as a transposed direct form II, unity at its
 /// centre: `y = b x + s1`, `s1 = s2 − a1 y`, `s2 = −b x − a2 y`. Four
 /// multiply-adds a sample; its round-off is far under the signal this
@@ -601,15 +610,18 @@ pub(crate) struct Rate {
     pub(crate) thin_high: [Bq; 2],
     /// One-pole coefficients a block: the level's rise and fall, the
     /// key's fall, the kick dip's and the cut's attack and release.
-    pub(crate) rise: f32,
-    pub(crate) fall: f32,
-    pub(crate) key_fall: f32,
+    pub(crate) rise: Unit,
+    pub(crate) fall: Unit,
+    pub(crate) key_fall: Unit,
     pub(crate) kick_attack: Unit,
     pub(crate) kick_release: Unit,
     pub(crate) attack: Unit,
     pub(crate) release: Unit,
-    /// `HOLD_UNDER_S` in blocks.
-    pub(crate) hold_under: Blocks,
+    /// The kick's hold: whole to this gap, none from that one; and how
+    /// soon after an onset another counts.
+    pub(crate) hold_full: Blocks,
+    pub(crate) hold_none: Blocks,
+    pub(crate) refract: Blocks,
 }
 
 impl Rate {
@@ -628,15 +640,25 @@ impl Rate {
             a1: 0.0,
             a2: 0.0,
         }; 2],
-        rise: 0.0,
-        fall: 0.0,
-        key_fall: 0.0,
+        rise: Unit::ZERO,
+        fall: Unit::ZERO,
+        key_fall: Unit::ZERO,
         kick_attack: Unit::ZERO,
         kick_release: Unit::ZERO,
         attack: Unit::ZERO,
         release: Unit::ZERO,
-        hold_under: Blocks::ZERO,
+        hold_full: Blocks::ZERO,
+        hold_none: Blocks::ZERO,
+        refract: Blocks::ZERO,
     };
+}
+
+/// Whether the reverb returned anything this block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Returned {
+    Sounding,
+    /// At rest: nothing played, nothing to run.
+    Rests,
 }
 
 /// The reverb's return as a member of SMART EQ (owner, 2026-11-19: "we
@@ -684,6 +706,16 @@ impl SmartState {
         turn: 0,
         live: Live::Bypass,
     };
+
+    #[inline(always)]
+    pub(crate) fn part(&self, p: PartId) -> &PartSmart {
+        &self.parts[p.index()]
+    }
+
+    #[inline(always)]
+    pub(crate) fn part_mut(&mut self, p: PartId) -> &mut PartSmart {
+        &mut self.parts[p.index()]
+    }
 
     /// Listening or still releasing: bank 1's stub calls the door.
     pub fn live(&self) -> bool {

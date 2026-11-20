@@ -493,6 +493,11 @@ fn the_kick_dip_moves_fast_but_smoothly_and_the_rest_stay_slow() {
 /// A FRONT DRUM Part's kick every `gap` samples (a 120 → 50 Hz sweep,
 /// 60 ms) over a 55 Hz sine bass, MID: each block's kick dip on the bass.
 fn kicks_every(gap: usize, secs: f32) -> Vec<f32> {
+    kicks_at(gap, secs, 64)
+}
+
+/// `kicks_every` at AMOUNT `amount`.
+fn kicks_at(gap: usize, secs: f32, amount: u8) -> Vec<f32> {
     let gens: [Gen; MAX_PARTS] = core::array::from_fn(|p| -> Gen {
         match p {
             0 => Box::new(move |n| {
@@ -508,7 +513,7 @@ fn kicks_every(gap: usize, secs: f32) -> Vec<f32> {
     let r = roles(&[0], &[]);
     (0..seconds(secs))
         .map(|k| {
-            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(64));
+            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(amount));
             st.kick(PAD).get()
         })
         .collect()
@@ -830,6 +835,7 @@ fn washed(
 ) -> chimera_engine::dsp::Stereo {
     use chimera_engine::dsp::Stereo;
     use chimera_engine::part_eq::dsp::smart::run_wash;
+    use chimera_engine::part_eq::smart::Returned;
     let mut buses: Buses = [[0.0; BLOCK_SIZE]; MAX_PARTS];
     for (i, s) in buses[0].iter_mut().enumerate() {
         *s = lead(start + i);
@@ -863,7 +869,12 @@ fn washed(
             wet.r[i] = 0.5 * w(start + i);
         }
     }
-    run_wash(st, &mut wet, wash.is_some(), FS);
+    let reverb = if wash.is_some() {
+        Returned::Sounding
+    } else {
+        Returned::Rests
+    };
+    run_wash(st, &mut wet, reverb, FS);
     wet
 }
 
@@ -976,4 +987,34 @@ fn the_kick_dips_the_return_s_low_and_a_reverb_at_rest_is_left_alone() {
     for b in Band::ALL {
         assert_eq!(st.wash_cut(b), CutDb::ZERO);
     }
+}
+
+/// The kick dip's swing (most less least, dB) on the bass once settled,
+/// under kicks `gap_ms` apart.
+fn swing(gap_ms: f32, amount: u8) -> f32 {
+    let dip = kicks_at((gap_ms * FS as f32 / 1000.0) as usize, 6.0, amount);
+    let tail = &dip[seconds(3.0)..];
+    let (lo, hi) = tail
+        .iter()
+        .fold((f32::MAX, 0.0f32), |(l, h), &d| (l.min(d), h.max(d)));
+    hi - lo
+}
+
+#[test]
+fn no_gap_between_kicks_is_a_cliff() {
+    // The hold fades from kicks 100 ms apart to none at 220 ms: from 60 to
+    // 400 ms no step of 10 ms moves the swing by 1 dB (a hard edge at
+    // 150 ms was 5.6 dB one millisecond on).
+    // At DEEP (AMOUNT 95, a 10 dB dip), where it matters most.
+    let swings: Vec<f32> = (0..=34).map(|i| swing(60.0 + 10.0 * i as f32, 95)).collect();
+    for (i, w) in swings.windows(2).enumerate() {
+        let at = 60 + 10 * i;
+        assert!((w[1] - w[0]).abs() < 1.0, "{at} ms: {} to {} dB", w[0], w[1]);
+    }
+    assert!(swings[0] < 0.5 && swings[4] < 0.5, "held to 100 ms: {swings:?}");
+    assert!(swings[34] > 3.0, "at 400 ms each kick dips and lets go: {}", swings[34]);
+    // 32nds at 120 BPM, 62.5 ms apart: each kick lands on the last one's
+    // body, the key never quiet between them; still one dip.
+    let fast = swing(62.5, 95);
+    assert!(fast < 0.5, "{fast} dB peak to peak under 32nds at 120 BPM");
 }

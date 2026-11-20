@@ -245,9 +245,9 @@ pub fn answer(ask: super::door::Ask<'_, '_>) {
         Ask::Wash {
             eqs,
             wet,
-            sounding,
+            reverb,
             sample_rate,
-        } => smart::run_wash(&mut eqs.smart, wet, sounding, sample_rate),
+        } => smart::run_wash(&mut eqs.smart, wet, reverb, sample_rate),
     }
 }
 

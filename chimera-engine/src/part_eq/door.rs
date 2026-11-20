@@ -16,8 +16,7 @@ pub enum Ask<'a, 'b> {
     Wash {
         eqs: &'a mut PartEqs,
         wet: &'a mut crate::dsp::Stereo,
-        /// Whether the reverb returned anything this block.
-        sounding: bool,
+        reverb: super::smart::Returned,
         sample_rate: u32,
     },
 }

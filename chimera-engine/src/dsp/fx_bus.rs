@@ -226,7 +226,11 @@ impl FxBus {
             let ask = Ask::Wash {
                 eqs,
                 wet: &mut wet,
-                sounding: !none,
+                reverb: if none {
+                    crate::part_eq::smart::Returned::Rests
+                } else {
+                    crate::part_eq::smart::Returned::Sounding
+                },
                 sample_rate,
             };
             through(|d| d.eq().run(ask));
