@@ -449,22 +449,14 @@ impl Level {
     }
 }
 
-/// Blocks counted since something, saturating: a kick's last onset, the
-/// gap between its last two.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Blocks(u16);
+/// A count of blocks: how often the rules take their turns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Blocks(u16);
 
 impl Blocks {
-    pub(crate) const ZERO: Blocks = Blocks(0);
-
     #[inline(always)]
     pub(crate) const fn of(n: u16) -> Blocks {
         Blocks(n)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn after(self, n: Blocks) -> Blocks {
-        Blocks(self.0.saturating_add(n.0))
     }
 
     #[inline(always)]
@@ -516,21 +508,10 @@ pub(crate) struct PartSmart {
     pub(crate) key: Power,
     /// `key`'s recent peak, falling slowly: the hit `key` is measured from.
     pub(crate) key_peak: Power,
-    /// `key`'s floor (down at once, up slowly): an onset rises over it.
-    pub(crate) floor: Power,
-    /// What the last onset added over what it landed on, an amplitude,
-    /// falling slowly: the next onset's measure.
-    pub(crate) onset: f32,
-    /// What that onset landed on, an amplitude.
-    pub(crate) under: f32,
     /// The kick's fast LOW dip on this Part, on top of `cut`'s slow LOW,
     /// and its target as the kick's rule last set it.
     pub(crate) kick: CutDb,
     pub(crate) kick_want: CutDb,
-    /// Its own kick's onsets: blocks since the last, and between the last
-    /// two (0: not known).
-    pub(crate) since: Blocks,
-    pub(crate) gap: Blocks,
     pub(crate) hears: Hears,
     pub(crate) cuts: Cuts,
 }
@@ -547,13 +528,8 @@ impl PartSmart {
         dipped: [CutDb::ZERO; BANDS],
         key: Power::ZERO,
         key_peak: Power::ZERO,
-        floor: Power::ZERO,
-        onset: 0.0,
-        under: 0.0,
         kick: CutDb::ZERO,
         kick_want: CutDb::ZERO,
-        since: Blocks::ZERO,
-        gap: Blocks::ZERO,
         hears: Hears::Thin,
         cuts: Cuts::Rest,
     };
@@ -618,20 +594,10 @@ pub(crate) struct Rate {
     pub(crate) rise: Unit,
     pub(crate) fall: Unit,
     pub(crate) key_fall: Unit,
-    /// The most the key's floor rises a turn of the kick's rule: a gain
-    /// of power, less one (zero bytes at rest).
-    pub(crate) floor_rise: Unit,
-    /// The last onset's size's fall, a turn of the kick's rule.
-    pub(crate) onset_fall: Unit,
     pub(crate) kick_attack: Unit,
     pub(crate) kick_release: Unit,
     pub(crate) attack: Unit,
     pub(crate) release: Unit,
-    /// The kick's hold: whole to this gap, none from that one; and how
-    /// soon after an onset another counts.
-    pub(crate) hold_full: Blocks,
-    pub(crate) hold_none: Blocks,
-    pub(crate) refract: Blocks,
 }
 
 impl Rate {
@@ -653,15 +619,10 @@ impl Rate {
         rise: Unit::ZERO,
         fall: Unit::ZERO,
         key_fall: Unit::ZERO,
-        floor_rise: Unit::ZERO,
-        onset_fall: Unit::ZERO,
         kick_attack: Unit::ZERO,
         kick_release: Unit::ZERO,
         attack: Unit::ZERO,
         release: Unit::ZERO,
-        hold_full: Blocks::ZERO,
-        hold_none: Blocks::ZERO,
-        refract: Blocks::ZERO,
     };
 }
 
@@ -812,11 +773,6 @@ impl SmartState {
     /// The kick's fast LOW dip on Part `p`.
     pub fn kick(&self, p: PartId) -> CutDb {
         self.parts[p.index()].kick
-    }
-
-    /// Blocks since Part `p`'s kick last began (its onset).
-    pub fn since_kick(&self, p: PartId) -> Blocks {
-        self.parts[p.index()].since
     }
 
     /// The reverb return's cut in `b` as last decided, the kick's dip

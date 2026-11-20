@@ -21,7 +21,7 @@ use chimera_hal::BLOCK_SIZE;
 use super::tan_small;
 use crate::dsp::Stereo;
 use crate::dsp::algo::math::{exp2, log2};
-use crate::dsp::{Db, Unit, clampf, sqrt};
+use crate::dsp::{Db, Unit, clampf};
 use crate::hw::MAX_PARTS;
 use crate::instrument::Sides;
 use crate::part_eq::Live;
@@ -46,53 +46,19 @@ const KEY_FALL_S: f32 = 0.02;
 /// The kick's dip deepens with this time constant, seconds: two blocks,
 /// inside the kick's first cycle at 50 Hz.
 const KICK_ATTACK_S: f32 = 0.003;
-/// ...and lets go with this one (owner's range 60–150 ms) once the hit
-/// has passed: over a kick's body, gone before the next kick of a bar in
-/// four (`a_front_kick_dips…` holds it under 30 % by 240 ms at 120 BPM).
-/// No control: kicks closer than `HOLD_NONE_S` hold the dip instead.
+/// ...and lets go with this one (owner's range 60–150 ms) once the key
+/// has fallen: over a kick's body, gone before the next kick of a bar in
+/// four. A plain sidechain follower (owner 2026-11-20): no hold, so
+/// kicks closer than the release wobble the dip at their own rate.
 const KICK_RELEASE_S: f32 = 0.1;
-/// Kicks whose onsets come this close (seconds) or closer hold the dip
-/// between them whole, for `HOLD_OF_GAP` of their gap: 16ths at 170 BPM
-/// are 88 ms apart, less than the release, and would flutter the bass at
-/// 11 Hz...
-const HOLD_FULL_S: f32 = 0.1;
-/// ...and from this far apart not at all: each kick dips and lets go.
-/// Between the two the hold fades, so no gap is a cliff (a hard edge at
-/// 150 ms was 5.6 dB of flutter one millisecond past it).
-const HOLD_NONE_S: f32 = 0.22;
-/// A kick's onset is its key hitting (within 3 dB of its recent peak)
-/// and risen this much (power, 3 dB) over its floor: a kick after quiet,
-/// or over the last one's tail...
-const ONSET_RISE: f32 = 2.0;
-/// ...the floor being the key followed down at once and up no faster
-/// than this (dB a second): a kick's attack outruns it; a tremolo's
-/// swell (8 Hz, 5 dB deep, is 90) and a low tone's ripple on the key from
-/// block to block (2.2 dB at 50 Hz, 2.7 at 40) do not. A tone held under
-/// 35 Hz and a tremolo over 5 dB deep do pass it: their onsets only
-/// steady a dip that is already held down...
-const FLOOR_RISE_DB_S: f32 = 150.0;
-/// ...and no sooner than this after the last (seconds): one kick's
-/// attack, a flam or a tom's first cycles are one onset.
-/// ...and adding, as an amplitude over what it lands on, this much of
-/// what the last onset added (3 dB under it at most): a snare's LOW after
-/// a kick is no onset and stretches no hold...
-const ONSET_NEAR: f32 = core::f32::consts::FRAC_1_SQRT_2;
-/// ...the last onset's size falling this fast (dB a second), so a quieter
-/// kick is an onset again soon after a loud one (6 dB under, a second on).
-const ONSET_FALL_DB_S: f32 = 6.0;
-const REFRACT_S: f32 = 0.045;
-/// How long past a dense kick's onset its dip is held, of the gap to the
-/// one before: a late hit is still covered.
-const HOLD_OF_GAP: f32 = 1.5;
-/// A hit is the key within this of its recent peak: a kick's attack and
-/// the top of its body, not its tail (a 150 ms 808 falls 6 dB in about
-/// 100 ms). A kit's LOW that stays up (a held 50 Hz sub, an 808 two
-/// seconds long) is a hit for as long as it holds within this: the dip
-/// stays down with it, a duck for the tail's whole length. Meant (owner
-/// 2026-11-20): the tail counts.
+/// How hard a kit presses falls with its key: whole at its recent peak
+/// (falling τ 0.5 s), none this far under it, straight in dB between. A
+/// kick's attack and the top of its body press, its tail lets go (a
+/// 150 ms 808 falls 6 dB in about 100 ms); a quieter hit presses by how
+/// near the peak its LOW comes. A kit's LOW that stays up (a held sub, an
+/// 808 two seconds long) presses for as long as it holds: the tail counts
+/// (owner 2026-11-20).
 const HIT_SPAN: Db = Db::new(6.0);
-/// A key this far into `HIT_SPAN` (3 dB from its peak) can be an onset.
-const HIT_ON: f32 = 0.5;
 /// A cut deepens with this time constant, seconds.
 const ATTACK_S: f32 = 0.5;
 /// A cut lets go with this one, seconds.
@@ -385,7 +351,6 @@ impl Rate {
     #[inline(never)]
     fn at(sample_rate: u32) -> Rate {
         let fs = sample_rate as f32;
-        let blocks = |s: f32| Blocks::of((s * fs / BLOCK_SIZE as f32) as u16);
         Rate {
             hz: sample_rate,
             low: LOW_PAIR.map(|b| Sv::at(b, fs)),
@@ -395,24 +360,10 @@ impl Rate {
             rise: Unit::new(pole(LEVEL_RISE_S, sample_rate)),
             fall: Unit::new(pole(LEVEL_FALL_S, sample_rate)),
             key_fall: Unit::new(pole(KEY_FALL_S, sample_rate)),
-            // A turn of the kick's rule on.
-            onset_fall: Unit::new(exp2(
-                -ONSET_FALL_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
-                    * (core::f32::consts::LOG2_10 / 20.0),
-            )),
-            floor_rise: Unit::new(
-                exp2(
-                    FLOOR_RISE_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
-                        * (core::f32::consts::LOG2_10 / 10.0),
-                ) - 1.0,
-            ),
             kick_attack: Unit::new(pole(KICK_ATTACK_S, sample_rate)),
             kick_release: Unit::new(pole(KICK_RELEASE_S, sample_rate)),
             attack: Unit::new(pole(ATTACK_S, sample_rate)),
             release: Unit::new(pole(RELEASE_S, sample_rate)),
-            hold_full: blocks(HOLD_FULL_S),
-            hold_none: blocks(HOLD_NONE_S),
-            refract: blocks(REFRACT_S),
         }
     }
 }
@@ -762,9 +713,9 @@ fn own(levels: &[Level; BANDS], b: Band) -> f32 {
     clampf((levels[b.index()].over() - leak) * PER_DB, 0.0, 1.0)
 }
 
-/// How much a DRUM Part's kick is hitting now: its key within `HIT_SPAN`
-/// of its recent peak, the peak itself active. A snare on the same Part
-/// barely moves LOW's low-pass.
+/// How hard a DRUM Part's kick presses now, 0 to 1: its key against its
+/// recent peak (`HIT_SPAN`), the peak itself active. A snare on the same
+/// Part presses by what its LOW is, usually little.
 #[inline(always)]
 fn hit(key: Level, peak: Level) -> f32 {
     const PER_DB: f32 = 1.0 / HIT_SPAN.get();
@@ -955,65 +906,20 @@ impl PartSmart {
         }
         self.heard[read.index()] = level(self.level[read.index()]);
     }
-
-    /// This Part's kick as a key, `blocks` blocks on: how hard it presses,
-    /// 0 to 1. Its hit; and between kicks that come closer than the dip
-    /// can let go, held: whole to `HOLD_FULL_S` apart, fading to none at
-    /// `HOLD_NONE_S`, so a dense run is one dip, not a flutter, and no
-    /// gap is a cliff.
-    #[inline(always)]
-    fn kick_press(&mut self, r: &Rate, blocks: Blocks) -> f32 {
-        let (key, peak) = (level(self.key), level(self.key_peak));
-        let h = hit(key, peak);
-        // An onset: near its peak and risen fast over its floor (after
-        // quiet, or over the last kick's body), once per attack.
-        let since = self.since.after(blocks);
-        let key = self.key.get();
-        let floor = key.min(self.floor.get() * (1.0 + r.floor_rise.get()));
-        // What this hit adds over what was already sounding, as an
-        // amplitude: a kick's own size, whatever tail it lands on.
-        let amp = sqrt(key);
-        let adds = amp - sqrt(floor);
-        self.onset *= r.onset_fall.get();
-        let kick = adds >= ONSET_NEAR * self.onset;
-        if h >= HIT_ON && key > ONSET_RISE * floor && kick && since >= r.refract {
-            (self.gap, self.since, self.floor) = (since, Blocks::ZERO, self.key);
-            (self.onset, self.under) = (adds, amp - adds);
-        } else {
-            (self.since, self.floor) = (since, Power::new(floor));
-            // Its attack is still rising: the onset is as big as it gets.
-            if since < r.refract {
-                self.onset = self.onset.max(amp - self.under);
-            }
-        }
-        if self.gap == Blocks::ZERO {
-            return h;
-        }
-        let (gap, full, none) = (
-            f32::from(self.gap.get()),
-            f32::from(r.hold_full.get()),
-            f32::from(r.hold_none.get()),
-        );
-        let hold = clampf((none - gap) / (none - full), 0.0, 1.0);
-        if f32::from(self.since.get()) < HOLD_OF_GAP * gap {
-            h.max(hold * active(peak))
-        } else {
-            h
-        }
-    }
 }
 
 /// The kick's rule (ADR 0296 § 4, owner 2026-11-19): each member's fast
 /// LOW dip target, the deepest any higher-role DRUM Part's kick asks.
-/// With no kit pressing, none. Run every `blocks` blocks.
+/// With no kit pressing, none: a plain sidechain's target, the dip
+/// following it 3 ms in and 100 ms out (`PartSmart::step`).
 #[inline(always)]
-fn kick_rule(st: &mut SmartState, r: &Rate, roles: &Roles<'_>, cap: CutDb, blocks: Blocks) {
+fn kick_rule(st: &mut SmartState, roles: &Roles<'_>, cap: CutDb) {
     let mut any = false;
     // How hard each kit's kick presses, and its LOW's level.
     let press = PerPart::of((0.0f32, Level::SILENT), |q| match roles.kind(q) {
         PartKind::Drum if st.part(q).key_peak != Power::ZERO => {
-            let m = st.part_mut(q);
-            let p = m.kick_press(r, blocks);
+            let m = st.part(q);
+            let p = hit(level(m.key), level(m.key_peak));
             any |= p > 0.0;
             (p, m.heard[Band::Low.index()])
         }
@@ -1131,7 +1037,7 @@ pub fn run(st: &mut SmartState, b: SmartBlock<'_>) {
     if st.turn.is_multiple_of(rules) {
         slow_rule(st, Band::of_turn(st.turn / rules), &roles, caps);
     } else {
-        kick_rule(st, &r, &roles, caps.kick, RULES);
+        kick_rule(st, &roles, caps.kick);
     }
     st.turn = (st.turn + 1) % SmartState::TURNS;
     let mut any = st.wash.cuts.step(&r);

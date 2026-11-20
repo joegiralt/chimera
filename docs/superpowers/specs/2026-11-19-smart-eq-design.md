@@ -123,8 +123,12 @@ sample more a cut Part.
   120 BPM hits every 0.5 s: the slow cuts sit near their average.
 - Every dip is lerped across its block, sample by sample: at polite
   depths under 0.001 dB a sample for the slow cuts, 0.05 for the kick's.
-- Dense kicks (onsets to 100 ms apart, fading out by 220 ms) hold one
-  steady dip; sparse ones each dip and let go.
+- The kick's dip is a plain sidechain follower (owner's decision,
+  2026-11-20): the press follows the kit's LOW key, 3 ms in and 100 ms
+  out, with no hold. Dense kicks wobble the dip at their own rate (16ths
+  at 170 BPM: 1.5 dB of 4 at AMOUNT 64, 3.8 of 10 at 95). A hold was
+  built and removed: no onset rule told a humanised kick on a tail from
+  a snare (ADR 0296 § 4).
 - The tail counts (owner's decision, 2026-11-20): a long 808 tail or a
   held sub on a higher-role DRUM Part keeps the lower Parts' LOW dipped
   for its whole length.
@@ -204,12 +208,15 @@ Clean room: no code read or copied from any implementation.
 - A ringing tail keeps its LOW cut while it rings within reach.
 - A sine bass under a 4/4 kick with off-beat snares: a LOW dip on each
   kick, gone by 240 ms, none on the snares, no click above 2 kHz.
-- 16ths at 170 BPM hold one dip (under 0.5 dB peak to peak); quarter
-  notes at 120 BPM each let go.
+- 16ths at 170 BPM and 32nds at 120 wobble the dip within the plain
+  follower's measured bound, growing smoothly with ±1 to ±3 dB of level
+  variation; quarter notes at 120 BPM each let go.
+- A long 808 tail holds the dip for its length; a snare presses by its
+  low end, no less when louder.
 - Every combination of the knots' cuts on the real filters, on a fine
   grid: the measured bounds of ADR 0296 § 6, and the readout is what the
   filters do.
-- Kick gaps from 60 to 400 ms: no cliff; 32nds at 120 BPM one dip.
+- Kick gaps from 60 to 420 ms: no cliff.
 - A Part moved to FRONT is billed as cut until its cuts let go.
 - AMOUNT's curve passes its knots and only deepens.
 - A listened Part's side is never run; a cut Part's side takes the cut.

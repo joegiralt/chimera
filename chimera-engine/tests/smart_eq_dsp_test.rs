@@ -490,67 +490,6 @@ fn the_kick_dip_moves_fast_but_smoothly_and_the_rest_stay_slow() {
     assert!(worst > 0.001 && worst < 0.05, "{worst} dB a sample");
 }
 
-/// A FRONT DRUM Part's kick every `gap` samples (a 120 → 50 Hz sweep,
-/// 60 ms) over a 55 Hz sine bass, MID: each block's kick dip on the bass.
-fn kicks_every(gap: usize, secs: f32) -> Vec<f32> {
-    kicks_at(gap, secs, 64)
-}
-
-/// `kicks_every` at AMOUNT `amount`.
-fn kicks_at(gap: usize, secs: f32, amount: u8) -> Vec<f32> {
-    let gens: [Gen; MAX_PARTS] = core::array::from_fn(|p| -> Gen {
-        match p {
-            0 => Box::new(move |n| {
-                let t = (n % gap) as f32 / FS as f32;
-                let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
-                Some(0.8 * (-t / 0.06).exp() * ph.sin())
-            }),
-            1 => Box::new(|n| Some(0.3 * (2.0 * PI * 55.0 * n as f32 / FS as f32).sin())),
-            _ => Box::new(|_| None),
-        }
-    });
-    let mut st = PartEqs::REST.smart;
-    let r = roles(&[0], &[]);
-    (0..seconds(secs))
-        .map(|k| {
-            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(amount));
-            st.kick(PAD).get()
-        })
-        .collect()
-}
-
-#[test]
-fn dense_kicks_hold_one_steady_dip_and_sparse_ones_each_let_go() {
-    // 16ths at 170 BPM, 88 ms apart: closer than the dip lets go. Held,
-    // not fluttering at 11 Hz (1.8 dB peak to peak before the hold).
-    let dense = kicks_every(FS as usize * 60 / 170 / 4, 6.0);
-    let tail = &dense[seconds(3.0)..];
-    let (lo, hi) = tail
-        .iter()
-        .fold((f32::MAX, 0.0f32), |(l, h), &d| (l.min(d), h.max(d)));
-    assert!(hi > 3.0, "the dip holds: {hi} dB");
-    assert!(
-        hi - lo < 0.5,
-        "{} dB peak to peak under 16ths at 170 BPM",
-        hi - lo
-    );
-    // Quarter notes at 120 BPM: each kick dips and is let go before the
-    // next.
-    let beat = FS as usize / 2;
-    let sparse = kicks_every(beat, 6.0);
-    for kick in 6..11 {
-        let at = kick * beat / BLOCK_SIZE;
-        let bar = &sparse[at..at + beat / BLOCK_SIZE];
-        let peak = bar.iter().fold(0.0f32, |m, &d| m.max(d));
-        let before_next = bar[bar.len() - 2];
-        assert!(peak > 3.0, "{peak} dB");
-        assert!(
-            before_next < 0.05 * peak,
-            "{before_next} dB left of {peak} before the next kick"
-        );
-    }
-}
-
 /// One block: Part 1 a FRONT sine at 100 Hz, Part 2 a MID pad at 110 Hz,
 /// each with `side` beside its bus.
 fn sided(st: &mut SmartState, start: usize, side: Option<&dyn Fn(usize) -> f32>) -> Sides {
@@ -1113,50 +1052,6 @@ fn the_kick_dips_the_return_s_low_and_a_reverb_at_rest_is_left_alone() {
     }
 }
 
-/// The kick dip's swing (most less least, dB) on the bass once settled,
-/// under kicks `gap_ms` apart.
-fn swing(gap_ms: f32, amount: u8) -> f32 {
-    let dip = kicks_at((gap_ms * FS as f32 / 1000.0) as usize, 6.0, amount);
-    let tail = &dip[seconds(3.0)..];
-    let (lo, hi) = tail
-        .iter()
-        .fold((f32::MAX, 0.0f32), |(l, h), &d| (l.min(d), h.max(d)));
-    hi - lo
-}
-
-#[test]
-fn no_gap_between_kicks_is_a_cliff() {
-    // The hold fades from kicks 100 ms apart to none at 220 ms: from 60 to
-    // 400 ms no step of 10 ms moves the swing by 1 dB (a hard edge at
-    // 150 ms was 5.6 dB one millisecond on).
-    // At DEEP (AMOUNT 95, a 10 dB dip), where it matters most.
-    let swings: Vec<f32> = (0..=34)
-        .map(|i| swing(60.0 + 10.0 * i as f32, 95))
-        .collect();
-    for (i, w) in swings.windows(2).enumerate() {
-        let at = 60 + 10 * i;
-        assert!(
-            (w[1] - w[0]).abs() < 1.0,
-            "{at} ms: {} to {} dB",
-            w[0],
-            w[1]
-        );
-    }
-    assert!(
-        swings[0] < 0.5 && swings[4] < 0.5,
-        "held to 100 ms: {swings:?}"
-    );
-    assert!(
-        swings[34] > 3.0,
-        "at 400 ms each kick dips and lets go: {}",
-        swings[34]
-    );
-    // 32nds at 120 BPM, 62.5 ms apart: each kick lands on the last one's
-    // body, the key never quiet between them; still one dip.
-    let fast = swing(62.5, 95);
-    assert!(fast < 0.5, "{fast} dB peak to peak under 32nds at 120 BPM");
-}
-
 #[test]
 fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
     use chimera_engine::part_eq::PartEq;
@@ -1198,136 +1093,6 @@ fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
     assert_eq!(StillCut::of(&st).part(BASS), Bands::Listened);
 }
 
-/// A kit (Part 1, FRONT) playing `kit` over the sine bass, at DEEP: each
-/// block's kick dip on the bass, and the blocks the kit's onsets fell on.
-fn kit_over_bass(kit: impl Fn(f32) -> f32 + 'static, secs: f32) -> (Vec<f32>, Vec<usize>) {
-    let gens: [Gen; MAX_PARTS] = [
-        Box::new(move |n| Some(kit(n as f32 / FS as f32))),
-        Box::new(|n| Some(0.3 * (2.0 * PI * 55.0 * n as f32 / FS as f32).sin())),
-        Box::new(|_| None),
-        Box::new(|_| None),
-        Box::new(|_| None),
-        Box::new(|_| None),
-    ];
-    let mut st = PartEqs::REST.smart;
-    let r = roles(&[0], &[]);
-    let (mut dip, mut onsets) = (Vec::new(), Vec::new());
-    let mut was = st.since_kick(BASS);
-    for k in 0..seconds(secs) {
-        block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(95));
-        dip.push(st.kick(PAD).get());
-        let since = st.since_kick(BASS);
-        if since < was {
-            onsets.push(k);
-        }
-        was = since;
-    }
-    (dip, onsets)
-}
-
-/// A kick `t` seconds in: a 120 to 50 Hz sweep, its body 150 ms.
-fn kick_at(t: f32) -> f32 {
-    if t < 0.0 {
-        return 0.0;
-    }
-    let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
-    (-t / 0.15).exp() * ph.sin()
-}
-
-#[test]
-fn only_a_kick_is_an_onset() {
-    let ms = |m: f32| (m * FS as f32 / 1000.0) as usize / BLOCK_SIZE;
-    // White, from the sample's own number.
-    let noise = |t: f32| {
-        let n = (t * FS as f32 + 0.5) as u32;
-        ((n.wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0
-    };
-    // A kick every 500 ms, and a snare after each on the same Part: no
-    // onset, and the dip lets go as it does with no snare. The snare's
-    // LOW is 14.9, 8.9 and 5.4 dB under the kick's at 0.4, 0.8 and 1.2.
-    let snare = move |t: f32, level: f32, after: f32| {
-        let u = t % 0.5 - after;
-        if u < 0.0 {
-            return 0.0;
-        }
-        let tone = (2.0 * PI * 180.0 * u).sin() + (2.0 * PI * 330.0 * u).sin();
-        level * (-u / 0.08).exp() * (0.5 * tone + noise(t))
-    };
-    let (plain, plain_on) = kit_over_bass(|t| 0.8 * kick_at(t % 0.5), 6.0);
-    // Settled, from the second kick: twelve kicks, eleven onsets. (From
-    // silence the first kick's key has no peak to be near yet.)
-    let settled = |on: &[usize]| on.iter().filter(|&&k| k > ms(250.0)).count();
-    assert_eq!(settled(&plain_on), 11, "{plain_on:?}");
-    for (level, after) in [
-        (0.4, 0.125),
-        (0.8, 0.125),
-        (1.2, 0.125),
-        (0.8, 0.18),
-        (1.2, 0.18),
-    ] {
-        let (with, with_on) = kit_over_bass(
-            move |t| 0.8 * kick_at(t % 0.5) + snare(t, level, after),
-            6.0,
-        );
-        assert_eq!(
-            settled(&with_on),
-            11,
-            "a snare at {level}, {after} s on, is no onset: {with_on:?}"
-        );
-        // No hold: the dip lets go as with no snare, but for what the
-        // snare's own LOW presses while it sounds (the level rule: real
-        // low energy within 6 dB of the kit's peak counts, ADR 0296 § 4).
-        // The quiet snare leaves it within 1 dB; the loud ones press up
-        // to 4 dB more, and the dip is under 3 dB by 310 ms (228 ms
-        // plain; a hold kept it over 3 dB to 408 ms).
-        let more = if level < 0.5 { 1.0 } else { 4.0 };
-        for bar in 8..11 {
-            let kick = ms(500.0 * bar as f32);
-            for at in ms(1000.0 * after + 5.0)..ms(480.0) {
-                let (a, b) = (plain[kick + at], with[kick + at]);
-                assert!(
-                    b - a < more && a - b < 1.0,
-                    "snare {level} at {after} s, bar {bar}, block {at}: {a} dB plain, {b} with"
-                );
-            }
-            for at in ms(310.0)..ms(480.0) {
-                assert!(
-                    with[kick + at] < 3.0,
-                    "snare {level} at {after} s: block {at}"
-                );
-            }
-        }
-    }
-    // One tom is one onset, one ghost kick is one.
-    // (Each a second after a kick at 0.)
-    for (hz, level) in [(70.0, 0.7), (90.0, 0.7), (60.0, 1.2), (80.0, 1.2)] {
-        let tom = move |t: f32| {
-            let u = (t - 1.0).max(0.0);
-            0.8 * kick_at(t) + level * (-u / 0.2).exp() * (2.0 * PI * hz * u).sin()
-        };
-        let (_, on) = kit_over_bass(tom, 3.0);
-        assert_eq!(settled(&on), 1, "a {hz} Hz tom at {level}: {on:?}");
-    }
-    for level in [0.6, 0.4] {
-        let (_, on) = kit_over_bass(move |t| 0.8 * kick_at(t) + level * kick_at(t - 1.0), 3.0);
-        assert_eq!(settled(&on), 1, "a ghost kick at {level}: {on:?}");
-    }
-    // A held sub with tremolo (5.4 dB deep here) is one onset, not one a
-    // cycle. Deeper, its swells are onsets, steadying a dip already held.
-    for (sub, rate, deep) in [(50.0, 5.0, 0.3), (40.0, 8.0, 0.3), (60.0, 6.5, 0.3)] {
-        let trem = move |t: f32| {
-            let u = (t - 1.0).max(0.0);
-            let swell = 1.0 + deep * (2.0 * PI * rate * u).sin();
-            0.8 * kick_at(t) + 0.6 * swell * (2.0 * PI * sub * u).sin()
-        };
-        let (_, on) = kit_over_bass(trem, 5.0);
-        assert!(
-            settled(&on) <= 1,
-            "a {sub} Hz sub, tremolo {rate} Hz: {on:?}"
-        );
-    }
-}
-
 #[test]
 fn a_return_moved_to_front_still_runs_cut_until_its_cuts_let_go() {
     use chimera_engine::part_eq::smart::{Bands, StillCut};
@@ -1358,4 +1123,217 @@ fn a_return_moved_to_front_still_runs_cut_until_its_cuts_let_go() {
     assert_eq!(st.wash_cut(Band::LowMid), CutDb::ZERO);
     assert_eq!(StillCut::of(&st).wash(), Bands::Listened);
     assert_eq!(StillCut::of(&st).part(BASS), Bands::Listened);
+}
+
+/// A kit (Part 1, FRONT) playing `kit` (of the time in seconds) over the
+/// sine bass at AMOUNT `amount`: each block's kick dip on the bass.
+fn kit_over_bass(kit: impl Fn(f32) -> f32 + 'static, secs: f32, amount: u8) -> Vec<f32> {
+    let gens: [Gen; MAX_PARTS] = [
+        Box::new(move |n| Some(kit(n as f32 / FS as f32))),
+        Box::new(|n| Some(0.3 * (2.0 * PI * 55.0 * n as f32 / FS as f32).sin())),
+        Box::new(|_| None),
+        Box::new(|_| None),
+        Box::new(|_| None),
+        Box::new(|_| None),
+    ];
+    let mut st = PartEqs::REST.smart;
+    let r = roles(&[0], &[]);
+    (0..seconds(secs))
+        .map(|k| {
+            block_kinds(&mut st, k * BLOCK_SIZE, &gens, &r, &DRUM_FIRST, on(amount));
+            st.kick(PAD).get()
+        })
+        .collect()
+}
+
+/// The blocks in `m` milliseconds.
+fn ms(m: f32) -> usize {
+    (m * FS as f32 / 1000.0) as usize / BLOCK_SIZE
+}
+
+/// The most and the least of `x`.
+fn span(x: &[f32]) -> (f32, f32) {
+    x.iter()
+        .fold((f32::MAX, 0.0f32), |(l, h), &d| (l.min(d), h.max(d)))
+}
+
+/// A short kick `t` seconds in (a 120 to 50 Hz sweep, its body 60 ms),
+/// as `kicks_at`'s.
+fn short_kick(t: f32) -> f32 {
+    if t < 0.0 {
+        return 0.0;
+    }
+    let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+    (-t / 0.06).exp() * ph.sin()
+}
+
+/// The dip's wobble (most less least, dB) once settled, at `amount`, under
+/// kicks `gap_ms` apart whose levels vary by ±`vary_db` from hit to hit.
+fn wobble(gap_ms: f32, vary_db: f32, amount: u8) -> f32 {
+    let gap = gap_ms / 1000.0;
+    let kit = move |t: f32| {
+        // Each kick and the one before it (its tail), each at its level.
+        let n = (t / gap) as u32;
+        let level = |n: u32| {
+            let u = (n.wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0 - 1.0;
+            0.6 * 10f32.powf(vary_db * u / 20.0)
+        };
+        let now = level(n) * short_kick(t - n as f32 * gap);
+        let last = if n == 0 {
+            0.0
+        } else {
+            level(n - 1) * short_kick(t - (n - 1) as f32 * gap)
+        };
+        now + last
+    };
+    let dip = kit_over_bass(kit, 8.0, amount);
+    let (lo, hi) = span(&dip[seconds(3.0)..]);
+    hi - lo
+}
+
+#[test]
+fn dense_kicks_wobble_the_dip_as_a_plain_follower_does() {
+    // No hold (owner 2026-11-20): kicks closer than the release wobble
+    // the dip at their own rate. At DEEP (a 10 dB dip), measured: 16ths
+    // at 170 BPM (88 ms) and 32nds at 120 BPM (62.5 ms).
+    let (sixteenths, thirty_seconds) = (wobble(88.2, 0.0, 95), wobble(62.5, 0.0, 95));
+    println!("16ths at 170: {sixteenths:.2} dB; 32nds at 120: {thirty_seconds:.2} dB");
+    let polite = (wobble(88.2, 0.0, 64), wobble(62.5, 0.0, 64));
+    println!("at AMOUNT 64: {polite:?}");
+    assert!(
+        polite.0 < WOBBLE_POLITE && polite.1 < WOBBLE_POLITE,
+        "{polite:?}"
+    );
+    assert!(
+        sixteenths < WOBBLE_16THS,
+        "{sixteenths} dB under 16ths at 170 BPM"
+    );
+    assert!(
+        thirty_seconds < WOBBLE_32NDS,
+        "{thirty_seconds} dB under 32nds at 120 BPM"
+    );
+    // A drummer's hand: the wobble grows smoothly with how much the hits
+    // vary, no cliff.
+    for gap in [88.2, 62.5] {
+        let by: Vec<f32> = [0.0, 1.0, 2.0, 3.0]
+            .iter()
+            .map(|&v| wobble(gap, v, 95))
+            .collect();
+        println!("{gap} ms, ±0 1 2 3 dB: {by:?}");
+        for w in by.windows(2) {
+            assert!(w[1] - w[0] < WOBBLE_STEP, "{gap} ms: {by:?}");
+            assert!(w[1] > w[0] - 0.5, "{gap} ms: {by:?}");
+        }
+    }
+    // Quarter notes at 120 BPM: each kick dips and is let go before the
+    // next.
+    let dip = kit_over_bass(|t| 0.6 * short_kick(t % 0.5), 6.0, 95);
+    for kick in 6..11 {
+        let bar = &dip[ms(500.0 * kick as f32)..ms(500.0 * (kick + 1) as f32)];
+        let (_, peak) = span(bar);
+        assert!(peak > 3.0, "{peak} dB");
+        let before_next = bar[bar.len() - 2];
+        assert!(before_next < 0.05 * peak, "{before_next} dB left of {peak}");
+    }
+}
+
+/// Measured at DEEP (3.80 and 2.35 dB of a 10 dB dip), with a little
+/// room; and at AMOUNT 64 (1.52 and 0.94 dB of a 4 dB dip), both.
+const WOBBLE_16THS: f32 = 4.2;
+const WOBBLE_32NDS: f32 = 2.7;
+const WOBBLE_POLITE: f32 = 1.8;
+/// The most a dB more of variation adds to the wobble (measured 1.1).
+const WOBBLE_STEP: f32 = 1.4;
+
+#[test]
+fn no_gap_between_kicks_is_a_cliff() {
+    // From 60 to 420 ms apart by 10: no step moves the wobble by 1 dB.
+    let by: Vec<f32> = (0..=36)
+        .map(|i| wobble(60.0 + 10.0 * i as f32, 0.0, 95))
+        .collect();
+    println!("{by:?}");
+    for (i, w) in by.windows(2).enumerate() {
+        let at = 60 + 10 * i;
+        assert!(
+            (w[1] - w[0]).abs() < 1.0,
+            "{at} ms: {} to {} dB",
+            w[0],
+            w[1]
+        );
+    }
+}
+
+#[test]
+fn a_long_tail_holds_the_dip_and_a_snare_presses_by_its_low_end() {
+    // An 808 two seconds long (50 Hz, falling 6 dB over its length) on
+    // the FRONT kit: the bass's LOW stays dipped for its length (owner
+    // 2026-11-20: the tail counts), then lets go.
+    let long = |t: f32| {
+        let u = t % 4.0;
+        if u < 2.0 {
+            0.6 * 0.5f32.powf(u / 2.0) * (2.0 * PI * 50.0 * u).sin()
+        } else {
+            0.0
+        }
+    };
+    let dip = kit_over_bass(long, 8.0, 95);
+    let held = &dip[ms(4_100.0)..ms(5_900.0)];
+    let (least, most) = span(held);
+    println!(
+        "the long tail: {least:.2} to {most:.2} dB; 400 ms after: {:.2}",
+        dip[ms(6_400.0)]
+    );
+    assert!(least > 5.0, "held through the tail: {least} dB at least");
+    assert!(
+        dip[ms(6_400.0)] < 0.5,
+        "let go after it: {} dB",
+        dip[ms(6_400.0)]
+    );
+    // A kick every 500 ms and a snare 125 ms after each on the same
+    // Part: how much more the bass is dipped while the snare sounds, by
+    // the snare's level. A quiet one barely presses; louder presses more.
+    let noise = |t: f32| {
+        let n = (t * FS as f32 + 0.5) as u32;
+        ((n.wrapping_mul(2_654_435_761) >> 8) as f32 / 8_388_608.0) - 1.0
+    };
+    let kick = |t: f32| {
+        let ph = 2.0 * PI * (50.0 * t + 70.0 * 0.03 * (1.0 - (-t / 0.03).exp()));
+        0.8 * (-t / 0.15).exp() * ph.sin()
+    };
+    let with = move |level: f32| {
+        let kit = move |t: f32| {
+            let u = t % 0.5 - 0.125;
+            let tone = (2.0 * PI * 180.0 * u).sin() + (2.0 * PI * 330.0 * u).sin();
+            let snare = if u < 0.0 {
+                0.0
+            } else {
+                level * (-u / 0.08).exp() * (0.5 * tone + noise(t))
+            };
+            kick(t % 0.5) + snare
+        };
+        kit_over_bass(kit, 6.0, 95)
+    };
+    let plain = with(0.0);
+    let more: Vec<f32> = [0.2, 0.4, 0.8, 1.2, 1.6]
+        .iter()
+        .map(|&level| {
+            let dip = with(level);
+            (ms(4_130.0)..ms(4_480.0))
+                .map(|k| dip[k] - plain[k])
+                .fold(0.0f32, f32::max)
+        })
+        .collect();
+    println!("a snare at 0.2 0.4 0.8 1.2 1.6 presses {more:?} dB more");
+    assert!(
+        more[0] < 0.5 && more[1] < 1.0,
+        "a quiet snare barely presses: {more:?}"
+    );
+    // (To where the snare's own LOW is the kit's peak: there it holds.)
+    for w in more.windows(2) {
+        assert!(w[1] >= w[0] - 0.15, "louder presses no less: {more:?}");
+    }
+    assert!(
+        more[4] > more[1] + 1.0,
+        "a loud low snare presses: {more:?}"
+    );
 }

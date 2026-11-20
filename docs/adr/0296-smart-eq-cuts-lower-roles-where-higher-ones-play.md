@@ -82,58 +82,48 @@ bench-algo.
      `q` and some to 30 dB under (a quiet ringing tail still clouds);
      above, full at `q`'s level and none from 12 dB under.
    - FRONT is never cut; one role never cuts itself.
-4. **The kick's dip (owner).** In LOW a higher-role DRUM Part
-   (`PartKind::Drum`) presses only through a fast dip on its hits, never
-   slowly; the other bands keep the slow rule against every Part.
-   - The key is the DRUM Part's own LOW low-pass, so a snare barely keys
-     it: its power rises at once and falls with τ 20 ms; a hit is the key
-     within 6 dB of its recent peak (τ 0.5 s).
-   - **A sustained low tone on a DRUM Part ducks: the tail counts
-     (owner's decision, 2026-11-20).** A kit's LOW that
-     stays up (a held 50 Hz sub, an 808 two seconds long) is a hit for as
+4. **The kick's dip is a plain sidechain follower (owner).** In LOW a
+   higher-role DRUM Part (`PartKind::Drum`) presses only through a fast
+   dip, never slowly; the other bands keep the slow rule against every
+   Part.
+   - The key is the DRUM Part's own LOW low-pass, so a snare keys it only
+     by what low end it has: its power rises at once and falls with
+     τ 20 ms.
+   - **How hard it presses follows the key, straight in dB**: whole at
+     the key's recent peak (falling τ 0.5 s), none 6 dB under it, scaled
+     by how active the peak is (silence −66 dBFS, whole 24 dB over: a kit
+     under about −51 dBFS in LOW dips nothing). Monotonic, no
+     thresholds, no state but the key and its peak.
+   - The dip follows the press with τ 3 ms in and τ 100 ms out, lerped a
+     sample; the rule runs on the blocks between the slow rule's
+     (2.7 ms). A kick at 120 BPM is in within 30 ms and let go by 240 ms.
+   - **The tail counts (owner's decision, 2026-11-20).** A kit's LOW that
+     stays up (a held 50 Hz sub, an 808 two seconds long) presses for as
      long as it holds within those 6 dB: a lower Part's LOW stays dipped
-     under it (measured 9.6 falling to 7.5 dB over 2 s at AMOUNT 95).
-     The key does not tell a long kick from a held note, and is not
-     meant to: a long 808 tail on a FRONT kit holds everything under it
-     down in LOW for its whole length.
-   - The dip follows with τ 3 ms in and τ 100 ms out; the rule runs on the
-     blocks between the slow rule's (2.7 ms).
-   - **Dense kicks hold one dip.** Between kicks the dip is held, for
-     1.5 of their gap past each onset: whole for onsets to 100 ms apart,
-     fading to none at 220 ms, so no gap is a cliff (a hard edge at
-     150 ms was 5.6 dB of flutter one millisecond past it). 16ths at
-     170 BPM (88 ms) and 32nds at 120 BPM (62.5 ms) are one steady dip
-     (under 0.5 dB peak to peak at AMOUNT 95); from 60 to 400 ms no 10 ms
-     of gap moves the swing by 1 dB. Slower kicks each dip and let go.
-     Held, not a release scaled to the gap: a release that slow would
-     smear a sparse kick's dip into a duck.
-   - An onset is a kick starting: the key within 3 dB of its recent
-     peak, risen 3 dB over its floor (the key followed down at once and
-     up no faster than 150 dB a second), no sooner than 45 ms after the
-     last, and adding, as an amplitude over what it lands on, at least
-     0.71 (3 dB under) of what the last onset added. That measure falls
-     6 dB a second, so a quieter kick is an onset again a second after
-     one 6 dB louder. Onsets only time the hold; they dip nothing
-     themselves.
-     - A snare on the same Part is no onset while its LOW is more than
-       about 3 dB under the kick's (tested at 14.9, 8.9 and 5.4 dB under,
-       125 and 180 ms after the kick): it starts and stretches no hold.
-       Its own LOW still presses while it sounds, by the level rule (it
-       is low energy within 6 dB of the kit's peak): the bass's dip is up
-       to 1 dB deeper for the quiet snare, up to 4 dB for the loud ones,
-       and under 3 dB by 310 ms (228 ms with no snare).
-     - One tom (60 to 90 Hz, to 1.2) and one ghost kick are one onset
-       each.
-     - A held sub's tremolo is no onset to about 5 dB deep (5 to 8 Hz).
-       Deeper, each swell is one; so is the ripple of a tone held under
-       about 35 Hz. Both only steady a dip the tone already holds down.
-     - From silence the first kick's onset comes late, 42 to 45 ms in
-       (its key has no peak to be near until then): its dip lasts about
-       19 ms longer than a later kick's. No click.
-   - **A kick under about −51 dBFS in LOW is no onset and no dip**: a hit
-     is scaled by how active its peak is (silence −66 dBFS, whole 24 dB
-     over), and an onset needs half a hit. A quiet kit does not dip the
-     bass.
+     under it for its whole length (9.8 to 9.9 dB of 10 at AMOUNT 95
+     through a 2 s tail, let go 400 ms after). The key does not tell a
+     long kick from a held note, and is not meant to.
+   - **A second hit presses by its own low end.** A snare 125 ms after a
+     kick on the same Part deepens the bass's dip while it sounds by
+     0.2 dB at a level of 0.2, 0.5 dB at 0.4 (its LOW 15 dB under the
+     kick's) and 2.2 dB from 0.8 up (9 dB under and louder, where it is
+     the kit's LOW at that moment): no less for a louder snare.
+   - **No hold: dense kicks wobble the dip at their own rate (owner's
+     decision, 2026-11-20).** As any sidechain ducker: kicks closer than
+     the release let the dip part-way up between them. Measured, peak to
+     peak: 16ths at 170 BPM (88 ms) 1.5 dB of a 4 dB dip at AMOUNT 64 and
+     3.8 dB of 10 at 95; 32nds at 120 BPM (62.5 ms) 0.9 and 2.4 dB. Hits
+     varying ±1, ±2, ±3 dB in level: 4.2, 5.3, 6.4 dB at 16ths (95),
+     growing about a dB a dB, no cliff. From 60 to 420 ms between kicks
+     no 10 ms of gap moves the wobble by 1 dB.
+     - **Why the hold went.** A hold between dense kicks (one steady dip)
+       needs the kicks' onsets. Over five review rounds every onset rule
+       failed one way or the other: a level threshold counted a snare, a
+       tom's ripple or a tremolo as kicks and stretched the dip; a rule
+       tight enough to refuse a snare on a kick's tail (by the size of
+       what a hit adds) dropped a drummer's quieter kicks and fluttered
+       5.9 dB. No fixed threshold separates a humanised kick on a tail
+       from a snare. A plain follower has no such case.
    - LOW plays the deeper of its slow cut and the dip. Whole-mix pumping
      is not this (#13).
 5. **AMOUNT is a curve (owner).** How deep BACK yields under FRONT (one
@@ -407,8 +397,9 @@ against off:
   20 kHz: not for an instrument sold on its sound.
 - **A broadband gain on a pad's side.** Does not null against a band's
   cut.
-- **The kick's release scaled to the gap between hits.** Smears sparse
-  kicks; a hold only acts where hits outrun the release.
+- **The kick's release scaled to the gap between hits, or a hold
+  between dense kicks.** Both need the kicks' onsets, which no rule
+  found reliably (Decision 4): built, reviewed five times, removed.
 - **Cutting the reverb's send, not its return.** A third of the cost (the
   send is mono), but the tail already in the tank would not be carved,
   and the kick could not dip it.
@@ -418,8 +409,8 @@ against off:
   promise: two FRONT Parts stay as mixed.
 - **A learned, static curve (smart:EQ 4).** A synth's Parts change by the
   bar, and there is no learn button; it listens all the time, slowly.
-- **A KICK RELEASE control.** One value and the hold cover what is
-  played; a control only if a unit test by ear asks for it.
+- **A KICK RELEASE control.** One value for now; a control only if a
+  unit test by ear asks for it.
 - **Keying the dip from the kit's whole LOW band.** Its skirt hears a
   snare's body; LOW's low-pass does not.
 - **A new S4 door table, or a second entry.** The EQ's door already
