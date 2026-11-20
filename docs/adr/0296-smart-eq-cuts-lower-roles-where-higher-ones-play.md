@@ -225,8 +225,8 @@ ADR 0198's slack:
 - Bank 2 on ORBIT: S4–S5 +21,408 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
-  478 KB. S0–S3 8,096 → 8,000 B free (the reverb's ROLE arms; under ADR
-  0251's 8 KB warning before this change).
+  472 KB. S0–S3 has 7,808 B free on ORBIT, 96 B less for the reverb's ROLE
+  arms (under ADR 0251's 8 KB warning before this change).
 - RAM: ITCM +1,432 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
   44,808 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
