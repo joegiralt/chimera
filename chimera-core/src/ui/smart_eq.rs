@@ -54,7 +54,6 @@ impl Bytes<'_> {
     }
 
     #[inline(always)]
-
     fn byte(&mut self, b: u8) -> &mut Self {
         let at = usize::from(self.0.len);
         if let Some(slot) = self.0.bytes.get_mut(at) {
@@ -160,7 +159,6 @@ const ALL_X0: i32 = 20;
 const ALL_DX: i32 = 32;
 
 #[inline(always)]
-
 fn all(pen: &mut Pen<'_>, s: &Shown, sel: PartId) {
     #[inline(always)]
     fn column(pen: &mut Pen<'_>, i: usize, lit: bool, cuts: CutView, role: &'static str) -> i32 {
