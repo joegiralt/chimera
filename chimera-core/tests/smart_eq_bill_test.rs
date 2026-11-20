@@ -31,7 +31,10 @@ fn flat_and_at_rest_a_part_s_eq_bills_nothing() {
 #[test]
 fn each_part_is_billed_what_its_bands_run() {
     let (t, runs) = (PartKind::Tonal, SmartBill::RUNS);
-    assert_eq!(first_voice(TILTED, Role::Mid, t, SmartBill::RESTS, P1), TILT);
+    assert_eq!(
+        first_voice(TILTED, Role::Mid, t, SmartBill::RESTS, P1),
+        TILT
+    );
     assert_eq!(first_voice(PartEq::FLAT, Role::Front, t, runs, P1), LISTEN);
     assert_eq!(first_voice(PartEq::FLAT, Role::Mid, t, runs, P1), CUT);
     assert_eq!(first_voice(PartEq::FLAT, Role::Back, t, runs, P1), CUT);

@@ -664,7 +664,10 @@ impl Renderer {
             ),
             SmartScope::All => {
                 let span = (Role::ALL.len() - 1) as f32;
-                let wash = Role::from_f32(self.anim[crate::ui::block_def::LevelCell::WashRole.slot()].current() * span + 0.5);
+                let wash = Role::from_f32(
+                    self.anim[crate::ui::block_def::LevelCell::WashRole.slot()].current() * span
+                        + 0.5,
+                );
                 Shown::now(Shows::All(f.active_part), roles, wash)
             }
         }

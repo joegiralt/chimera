@@ -250,7 +250,7 @@ ADR 0198's slack:
 - Bank 2 on ORBIT: S4–S5 +23,872 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
-  467 KB. S0–S3 is untouched: 7,296 B free on ORBIT, as on 0.4 (under
+  467 KB. S0–S3 is untouched: 7,328 B free on ORBIT, none of it taken (under
   ADR 0251's 8 KB warning before this change).
 - RAM: ITCM +1,464 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
