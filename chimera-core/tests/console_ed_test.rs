@@ -533,6 +533,33 @@ fn get_bw_and_vowel_read_right_in_every_ui_state() {
     }
 }
 
+/// #1039: a stored value that is no number reads `nan`, `inf` or `-inf`
+/// in `val`'s stored word, never a number in its place; `since` the same.
+#[test]
+fn get_says_a_stored_value_that_is_no_number() {
+    let mut f = Fake::new();
+    let a = cutoff();
+    let ed = EdAddr::sound(a).unwrap();
+    for (v, word) in [
+        (f32::NAN, "nan"),
+        (f32::INFINITY, "inf"),
+        (f32::NEG_INFINITY, "-inf"),
+    ] {
+        // No knob, CC or `set` stores one (`set` rests it at the least):
+        // only a write past them.
+        f.ui.project_mut().edit_part(P1).sound.params.filter.cutoff = v;
+        let got = ask(&mut f, &format!("ed get {ed}\n"));
+        let words: Vec<_> = got.lines().next().unwrap().split(' ').collect();
+        assert_eq!((words[0], words[1], words[3]), ("val", ed.to_string().as_str(), word), "{got}");
+        assert_eq!(got.lines().nth(1), Some("OK"), "{got}");
+        let (lines, _) = since(&mut f, 0);
+        assert!(
+            lines.iter().any(|l| l.starts_with(&format!("val {ed} ")) && l.split(' ').nth(3) == Some(word)),
+            "since: {word}"
+        );
+    }
+}
+
 #[test]
 fn get_unknown_addr_is_refused() {
     let mut f = Fake::new();

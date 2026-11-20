@@ -94,20 +94,70 @@ impl Wide {
     fn is_zero(&self) -> bool {
         self.0.iter().all(|&l| l == 0)
     }
+
+    /// A tenth of it, whole; what was left over comes out. Sixteen bits
+    /// at a time: no 64-bit divide.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.exact.tenth"))]
+    fn tenth(&mut self) -> u8 {
+        let mut rem = 0u32;
+        for l in self.0.iter_mut().rev() {
+            let hi = rem << 16 | *l >> 16;
+            let lo = (hi % 10) << 16 | *l & 0xFFFF;
+            *l = (hi / 10) << 16 | lo / 10;
+            rem = lo % 10;
+        }
+        rem as u8
+    }
 }
 
-/// `v`, finite, in the fewest decimals that read back as `v` (a whole
-/// part past `u32` is held at its top: no stored value is near it).
+/// A whole part's most digits: `f32::MAX`'s.
+pub const WHOLE_MAX: usize = 39;
+
+/// m · 2^e past `u32`, whole: every digit of it (#1039).
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.exact.huge"))]
+fn huge(w: &mut dyn Write, neg: bool, m: u32, e: u32) -> fmt::Result {
+    let mut n = Wide::pow2(e);
+    n.times(m);
+    let mut digits = [0u8; WHOLE_MAX];
+    let mut at = WHOLE_MAX;
+    while at > 0 && !n.is_zero() {
+        at -= 1;
+        digits[at] = b'0' + n.tenth();
+    }
+    if neg {
+        w.write_char('-')?;
+    }
+    for &d in &digits[at..] {
+        w.write_char(char::from(d))?;
+    }
+    Ok(())
+}
+
+/// `v` in the fewest decimals that read back as `v`, a whole part past
+/// `u32` in every digit. A value that is no number is `nan`, `inf` or
+/// `-inf`, never a number in its place (#1039): a corrupt stored value
+/// shows, and `ed set` takes none of the three back.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.exact.stored"))]
 pub(super) fn stored(w: &mut dyn Write, v: f32) -> fmt::Result {
     let bits = v.to_bits();
     let (exp, man) = ((bits >> 23 & 0xFF) as i32, bits & 0x7F_FFFF);
+    if exp == 0xFF {
+        return w.write_str(match (man, v < 0.0) {
+            (0, false) => "inf",
+            (0, true) => "-inf",
+            _ => "nan",
+        });
+    }
     // v = m · 2^e: a denormal's exponent is the smallest normal's.
     let (m, e) = if exp == 0 {
         (man, -149)
     } else {
         (man | 0x80_0000, exp - 150)
     };
+    // A normal's 24 bits shifted past bit 31.
+    if e > 8 {
+        return huge(w, v < 0.0, m, e as u32);
+    }
     // The whole part and the fraction n / 2^s.
     let (mut whole, n, s) = if e >= 0 {
         (v.abs() as u32, 0, 0)
@@ -137,7 +187,7 @@ pub(super) fn stored(w: &mut dyn Write, v: f32) -> fmt::Result {
                 let mut i = len;
                 loop {
                     if i == 0 {
-                        whole = whole.saturating_add(1);
+                        whole += 1;
                         break;
                     }
                     i -= 1;
@@ -305,6 +355,26 @@ mod tests {
         }
     }
 
+    /// #1039: a value that is no number says so, and one past `u32`
+    /// prints whole: nothing is held at a top that hides it.
+    #[test]
+    fn nothing_prints_as_another_number() {
+        assert_eq!(text(f32::NAN), "nan");
+        assert_eq!(text(-f32::NAN), "nan");
+        assert_eq!(text(f32::INFINITY), "inf");
+        assert_eq!(text(f32::NEG_INFINITY), "-inf");
+        assert_eq!(text(4294967296.0), "4294967296");
+        assert_eq!(text(-4294967296.0), "-4294967296");
+        assert_eq!(text(4294967040.0), "4294967040");
+        assert_eq!(text(1.0e10), "10000000000");
+        assert_eq!(text(f32::MAX), "340282346638528859811704183484516925440");
+        assert_eq!(text(f32::MIN), "-340282346638528859811704183484516925440");
+        // `ed set` takes none of the words back.
+        for t in ["nan", "inf", "-inf"] {
+            assert_eq!(read(t.as_bytes()), None);
+        }
+    }
+
     /// The two #1035 found: seven places read back an ulp off.
     #[test]
     fn the_values_seven_places_lost_read_back() {
@@ -317,19 +387,18 @@ mod tests {
         }
     }
 
-    /// Every finite value under `u32`'s top reads back as itself, bit for
-    /// bit: a sweep of random bits, each binade's edges, the denormals.
+    /// Every finite value reads back as itself, bit for bit: a sweep of random bits, each binade's edges, the denormals.
     #[test]
     fn every_value_reads_back_as_itself() {
         let check = |bits: u32| {
             let v = f32::from_bits(bits);
-            if !v.is_finite() || v.abs() >= 4.0e9 {
+            if !v.is_finite() {
                 return;
             }
             let t = text(v);
             let back: f32 = t.parse().unwrap();
             assert!(back == v, "{v:e} ({bits:#x}) printed {t}, read {back:e}");
-            assert!(t.len() <= 1 + 10 + 1 + DECIMALS_MAX, "{t}");
+            assert!(t.len() <= 1 + WHOLE_MAX + 1 + DECIMALS_MAX, "{t}");
         };
         let mut x = 0x9E37_79B9_7F4A_7C15u64;
         for _ in 0..400_000 {
