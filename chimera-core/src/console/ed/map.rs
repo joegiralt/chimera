@@ -804,7 +804,7 @@ pub(super) enum MapAct {
         name: Option<SoundName>,
     },
     /// The map the answer checked, marked `was`, renamed: the Part on
-    /// another by the card job, nothing is renamed (`ed_cue::ctl_rename`).
+    /// another by the card job, nothing is renamed (`CtlJob::RenameOf`).
     Rename {
         part: PartId,
         was: MapMark,
@@ -1013,6 +1013,7 @@ fn busy(ui: &UiState, p: PartId, row: Option<&Binding>) -> bool {
                 | CtlJob::Save(..)
                 | CtlJob::Drop(..)
                 | CtlJob::Rename(..)
+                | CtlJob::RenameOf(..)
                 | CtlJob::Delete(..),
             ),
             _,
@@ -1283,7 +1284,7 @@ pub(super) fn apply(ui: &mut UiState, a: MapAct) -> Pass {
             }
         }
         MapAct::Rename { part, was, name } => {
-            ed_cue::ctl_rename(ui, part, was, name);
+            ed_cue::ctl_ask(ui, CtlJob::RenameOf(part, name, was));
         }
         MapAct::List => return ed_cue::ask_maps(ui),
         MapAct::Learn(None) => return ed_cue::learn(ui, None),

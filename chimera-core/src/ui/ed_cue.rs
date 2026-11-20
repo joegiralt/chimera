@@ -318,20 +318,6 @@ pub(crate) fn ctl_ask(ui: &mut UiState, j: super::midi::layer::CtlJob) {
     ui.ctl_ask_in(j);
 }
 
-/// `ed map rename`: Part `p`'s map, marked `was` when the answer checked
-/// it, renamed `to` by the next card work, or nothing renamed if the Part
-/// is on another map by then (the box says MAP CHANGED).
-#[cfg(feature = "midi-map")]
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_rename"))]
-pub(crate) fn ctl_rename(
-    ui: &mut UiState,
-    p: PartId,
-    was: super::midi::layer::MapMark,
-    to: crate::name::SoundName,
-) {
-    ui.ctl_rename_of_in(p, was, to);
-}
-
 /// The map job waiting for the card, if any.
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_job"))]
