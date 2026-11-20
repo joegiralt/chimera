@@ -206,7 +206,7 @@ fn free_plays_the_same_at_any_tempo_and_note() {
 #[test]
 fn each_note_repeats_on_its_time() {
     for bpm in [60.0, 90.0, 120.0, 140.0, 174.0] {
-        for i in 0..DelayNote::COUNT {
+        for (i, d) in NOTES.iter().enumerate() {
             let n = DelayNote::new(i);
             let (want, halved) = fitted(n, bpm);
             let mut d = Box::new(TapeDelay::new());
@@ -214,7 +214,7 @@ fn each_note_repeats_on_its_time() {
             let peak = (0..out.len())
                 .max_by(|&a, &b| out[a].abs().total_cmp(&out[b].abs()))
                 .unwrap();
-            let what = format!("{:?} at {bpm} BPM: {want} samples", NOTES[i]);
+            let what = format!("{d:?} at {bpm} BPM: {want} samples");
             assert!((peak as f64 - want).abs() < 1.0, "{what}, peak at {peak}");
             // Linear interpolation: the click, whole, across two samples.
             let sum: f32 = out.iter().sum();
@@ -525,7 +525,7 @@ fn a_tempo_ramp_never_steps() {
     for n in [note(8, DivKind::Straight), note(4, DivKind::Straight)] {
         let p = on(clean(), n);
         let ramp = |b: usize| {
-            let t = (b as f32 / blocks(4.0) as f32 - 0.25).clamp(0.0, 1.0);
+            let t = chimera_core::dsp::clampf(b as f32 / blocks(4.0) as f32 - 0.25, 0.0, 1.0);
             (p, libm::roundf((126.0 - 26.0 * t) * 4.0) / 4.0)
         };
         let (out, heads) = through(6.0, ramp);
@@ -668,6 +668,9 @@ fn an_old_project_loads_free() {
 /// moving (118..122 BPM, a grid step every eight blocks: TAPE glides
 /// nearly every block), TAPE and GRAIN.
 /// `cargo test --release -p chimera-core --test delay_sync_test -- --ignored host_cost --nocapture`
+/// A block's tempo.
+type Bpm<'a> = &'a dyn Fn(usize) -> f32;
+
 #[test]
 #[ignore]
 fn host_cost() {
@@ -681,7 +684,7 @@ fn host_cost() {
         let q = (b / 8) % 32;
         118.0 + (if q < 16 { q } else { 32 - q }) as f32 * 0.25
     };
-    let cases: [(&str, DelayParams, &dyn Fn(usize) -> f32); 6] = [
+    let cases: [(&str, DelayParams, Bpm); 6] = [
         ("TAPE FREE", busy, &steady),
         ("TAPE SYNC", on(busy, DelayNote::DEFAULT), &steady),
         (
