@@ -224,34 +224,34 @@ ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +2,232 | +21,440 |
-| orbit | +2,416 | +21,408 |
-| bank2-gate | +2,240 | +21,440 |
-| orbit,usb-config-writer | +2,408 | |
-| fault-inject | +2,512 | |
-| bench-algo | +2,384 | |
-| bench-algo,master-tape | +2,384 | |
-| bench-routing | +2,528 | |
-| bench-memory | +2,648 | |
-| bench-stress | +2,608 | |
-| bench-orbit | +2,344 | |
-| bench-tape | +2,696 | |
-| filter-probes | +2,512 | |
+| default | +2,384 | +23,904 |
+| orbit | +2,560 | +23,904 |
+| bank2-gate | +2,360 | +23,904 |
+| orbit,usb-config-writer | +2,544 | |
+| fault-inject | +2,608 | |
+| bench-algo | +2,568 | |
+| bench-algo,master-tape | +2,512 | |
+| bench-routing | +2,688 | |
+| bench-memory | +2,824 | |
+| bench-stress | +2,672 | |
+| bench-orbit | +2,464 | |
+| bench-tape | +2,808 | |
+| filter-probes | +2,608 | |
 
-- Bank 1 on ORBIT (902,716 B; +1,880 before the merge, the rest PRT ›
+- Bank 1 on ORBIT (902,860 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
   EQ's band over tester-04's overview and meters and REV › DUCK's cell): the three settings' specs and
   `get`/`write`/`enum_*` arms (code, an exception to ADR 0198 as ADR
   0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
   admission's with the door open or closed), the stub's test and the
   return's ask in `FxBus`, the renderer's arm and the plan's painter.
-- Bank 2 on ORBIT: S4–S5 +21,408 B (`answer` 10.0 KB with the Parts'
+- Bank 2 on ORBIT: S4–S5 +23,904 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
-  472 KB. S0–S3 has 7,808 B free on ORBIT, 96 B less for the reverb's ROLE
+  470 KB. S0–S3 has 7,808 B free on ORBIT, 96 B less for the reverb's ROLE
   arms (under ADR 0251's 8 KB warning before this change).
-- RAM: ITCM +1,432 B (`PART_EQS`: seven members' filters, levels, cuts
+- RAM: ITCM +1,464 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
-  44,808 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
+  44,840 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
   D2 a page id overflowed, links with tester-04's page 119 and no new id.
 
 ### CPU
