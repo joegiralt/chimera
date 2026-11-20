@@ -392,7 +392,7 @@ impl Rate {
             floor_rise: exp2(
                 FLOOR_RISE_DB_S * f32::from(RULES.get()) * BLOCK_SIZE as f32 / fs
                     * (core::f32::consts::LOG2_10 / 10.0),
-            ),
+            ) - 1.0,
             kick_attack: Unit::new(pole(KICK_ATTACK_S, sample_rate)),
             kick_release: Unit::new(pole(KICK_RELEASE_S, sample_rate)),
             attack: Unit::new(pole(ATTACK_S, sample_rate)),
@@ -956,7 +956,7 @@ impl PartSmart {
         // quiet, or over the last kick's body), once per attack.
         let since = self.since.after(blocks);
         let key = self.key.get();
-        let floor = key.min(self.floor.get() * r.floor_rise);
+        let floor = key.min(self.floor.get() * (1.0 + r.floor_rise));
         if h >= HIT_ON && key > ONSET_RISE * floor && since >= r.refract {
             (self.gap, self.since, self.floor) = (since, Blocks::ZERO, self.key);
         } else {

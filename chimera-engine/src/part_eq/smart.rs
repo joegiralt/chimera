@@ -611,8 +611,8 @@ pub(crate) struct Rate {
     pub(crate) rise: Unit,
     pub(crate) fall: Unit,
     pub(crate) key_fall: Unit,
-    /// The most the key's floor rises a turn of the kick's rule, as a
-    /// gain of power.
+    /// The most the key's floor rises a turn of the kick's rule: a gain
+    /// of power, less one (zero bytes at rest).
     pub(crate) floor_rise: f32,
     pub(crate) kick_attack: Unit,
     pub(crate) kick_release: Unit,
@@ -644,7 +644,7 @@ impl Rate {
         rise: Unit::ZERO,
         fall: Unit::ZERO,
         key_fall: Unit::ZERO,
-        floor_rise: 1.0,
+        floor_rise: 0.0,
         kick_attack: Unit::ZERO,
         kick_release: Unit::ZERO,
         attack: Unit::ZERO,
