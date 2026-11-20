@@ -364,8 +364,12 @@ fn priming_past_matrix_capacity_on_the_algo_chain_reports_full() {
     let chain = seen.iter().filter(|&&s| s == PrimeStatus::Added).count();
     assert!(chain < MAX_MOD_DESTS, "{seen:?}");
     for (n, def) in [(1, &ENVELOPE), (2, &ENV_2), (3, &ENV_3)] {
+        // Via Part 2, then MINUS back: Part 1's home (B*n* keeps the page, #957).
         feed(&mut ui, Input::press(ButtonId::B2));
-        feed(&mut ui, Input::press(ButtonId::B1)); // via Part 2: Part 1's home
+        feed(&mut ui, Input::press(ButtonId::B1));
+        for _ in 0..8 {
+            feed(&mut ui, Input::press(ButtonId::Minus));
+        }
         to_mod_sub(&mut ui, n, def);
         // ATTACK, DECAY, SUSTAIN
         prime_every_slot(&mut ui, &ALL_SLOTS[..3], &mut seen);

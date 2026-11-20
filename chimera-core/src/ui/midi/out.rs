@@ -1,6 +1,6 @@
 //! MIDI out's pass (spec §§ 7, 8.4, 9-10): with MIDI CONFIG › ECHO on, the
 //! echo plan's identity replies and value echo, then PARAM OUT's NRPNs
-//! (ADR 0258), into DIN's ring and USB's,
+//! (ADR 0258) and a dump asked for (ADR 0301), into DIN's ring and USB's,
 //! each message whole when it fits, else a later pass (DIN) or lost
 //! (USB). Bank 2's, as `ui::midi` is.
 
@@ -64,6 +64,7 @@ impl UiState {
             echo,
             ctl,
             param_out,
+            dump,
             ..
         } = self.cc.ui();
         if on {
@@ -76,6 +77,12 @@ impl UiState {
             param_out.pump(&self.project, out);
         } else {
             param_out.clear();
+        }
+        // A dump asked for (ADR 0301): last, into the room the others left.
+        if on {
+            dump.pump(&self.project, out);
+        } else {
+            dump.silence();
         }
     }
 }

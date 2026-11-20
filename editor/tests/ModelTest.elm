@@ -1469,6 +1469,12 @@ suite =
                             , -- Not a refusal.
                               Model.lastRefusal >> Expect.equal Nothing
                             ]
+            , test "a_value_that_is_no_number_is_kept_as_the_unit_wrote_it" <|
+                \_ ->
+                    following
+                        |> feed [ "val FILTER.CUTOFF 0.5 nan \"?\"" ]
+                        |> Model.notices
+                        |> Expect.equal [ { notice = Unread "val FILTER.CUTOFF 0.5 nan \"?\"", times = 1 } ]
             , test "a_blank_line_says_nothing_and_is_no_notice" <|
                 \_ -> following |> feed [ "", "  ", "\u{000D}" ] |> Model.notices |> Expect.equal []
             , test "answers_tie_to_commands_in_the_order_sent" <|

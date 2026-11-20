@@ -358,28 +358,31 @@ fn the_map_draws_only_in_its_band_on_every_chain() {
     }
 }
 
-/// Spec addendum: ALGO is the Algo engine's home. A fresh Part lands on it,
-/// and so does entering another Part's chain (its button again opens its
-/// mixer, ADR 0057).
+/// Spec addendum: ALGO is the Algo engine's home: a fresh Part lands on
+/// it. Another Part's button from a sound page keeps the page (#957, ADR
+/// 0301); its button again opens its mixer (ADR 0057).
 #[test]
 fn a_fresh_algo_part_lands_on_the_algo_page() {
     use chimera_core::params::EngineType;
     use chimera_core::ui::block_registry::ALGO_ALG;
+    use chimera_core::ui::nav::PageAt;
     let mut ui = UiState::new();
     assert_eq!(
         ui.project().part(PartId::ALL[0]).sound.engine(),
         EngineType::Algo
     );
     assert_eq!(ui.page_def().id, ALGO_ALG.id);
+    assert_eq!(
+        ui.location(),
+        Location::pages(PartId::ALL[0], ALGO_CHAIN.home())
+    );
     feed(&mut ui, Input::press(ButtonId::Plus));
+    let next = |p: usize| Location::pages(PartId::ALL[p], PageAt::of(1, 0));
+    assert_eq!(ui.location(), next(0));
     feed(&mut ui, Input::press(ButtonId::B2));
-    let home = |p: usize| Location::pages(PartId::ALL[p], ALGO_CHAIN.home());
-    assert_eq!(ui.location(), home(1));
-    assert_eq!(ui.page_def().id, ALGO_ALG.id);
-    feed(&mut ui, Input::press(ButtonId::Plus));
+    assert_eq!(ui.location(), next(1), "the page kept");
     feed(&mut ui, Input::press(ButtonId::B1));
-    assert_eq!(ui.location(), home(0));
-    assert_eq!(ui.page_def().id, ALGO_ALG.id);
+    assert_eq!(ui.location(), next(0));
 }
 
 /// Spec § UI: whichever node is current, the Algo chain's map pill and

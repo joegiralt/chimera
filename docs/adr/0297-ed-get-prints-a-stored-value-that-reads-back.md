@@ -1,6 +1,6 @@
 # 0297. `ed get` prints a stored value that reads back as itself, and the mirror draws a still
 
-- **Status:** Accepted (2026-11-20)
+- **Status:** Accepted (2026-11-20); superseded in part by [0301](0301-small-0-4-tickets-the-page-kept-the-parameter-dump-eds-text-both-ways.md) (the whole part held at `u32`'s top, NaN and infinity printed as numbers, `ed set`'s float parse)
 - **Deciders:** firmware, the editor (#1035, found by `chimera-screen`'s `a_render_is_the_desktop_simulators`)
 
 ## Context
