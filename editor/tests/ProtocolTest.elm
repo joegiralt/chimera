@@ -420,10 +420,10 @@ suite =
                         |> List.map (parse >> isUnknown)
                         |> Expect.equal (List.repeat 7 True)
             , pm "slot" "slot 2 saved rev 7" (Maybe.map2 (\s r -> Answer (SlotIs { slot = s, state = SlotSaved, rev = r })) (Protocol.sceneNo 2) (Protocol.rev 7))
-            , pm "slot neutral" "slot 8 neutral rev 65535" (Maybe.map2 (\s r -> Answer (SlotIs { slot = s, state = SlotNeutral, rev = r })) (Protocol.sceneNo 8) (Protocol.rev 65535))
+            , pm "slot neutral" "slot 8 neutral rev 4294967295" (Maybe.map2 (\s r -> Answer (SlotIs { slot = s, state = SlotNeutral, rev = r })) (Protocol.sceneNo 8) (Protocol.rev 4294967295))
             , test "slots the unit never writes" <|
                 \_ ->
-                    [ "slot 0 saved rev 1", "slot 9 saved rev 1", "slot 1 saved rev 65536", "slot 1 empty rev 1", "slot 1 saved 1" ]
+                    [ "slot 0 saved rev 1", "slot 9 saved rev 1", "slot 1 saved rev 4294967296", "slot 1 empty rev 1", "slot 1 saved 1" ]
                         |> List.map (parse >> isUnknown)
                         |> Expect.equal (List.repeat 5 True)
             , pm "chord" "chord 8 12" (Maybe.map2 (\s d -> Answer (ChordIs s d)) (Protocol.segment 8) (Protocol.degree 12))
@@ -458,7 +458,7 @@ suite =
             , pe "save over a saved slot" "ed scene save 2 over 7" (Maybe.map2 (\n r -> OrbitCmd (SaveScene n (Over r))) (Protocol.sceneNo 2) (Protocol.rev 7))
             , pe "clear" "ed scene clear 3 12" (Maybe.map2 (\n r -> OrbitCmd (ClearScene n r)) (Protocol.sceneNo 3) (Protocol.rev 12))
             , pe "reload" "ed scene reload 3 0" (Maybe.map2 (\n r -> OrbitCmd (ReloadScene n r)) (Protocol.sceneNo 3) (Protocol.rev 0))
-            , pe "move" "ed scene move 1 4 9 65535" (Maybe.map4 (\a b ra rb -> Protocol.sceneMove ( a, ra ) ( b, rb ) |> Maybe.map (MoveScene >> OrbitCmd)) (Protocol.sceneNo 1) (Protocol.sceneNo 4) (Protocol.rev 9) (Protocol.rev 65535) |> Maybe.andThen identity)
+            , pe "move" "ed scene move 1 4 9 4294967295" (Maybe.map4 (\a b ra rb -> Protocol.sceneMove ( a, ra ) ( b, rb ) |> Maybe.map (MoveScene >> OrbitCmd)) (Protocol.sceneNo 1) (Protocol.sceneNo 4) (Protocol.rev 9) (Protocol.rev 4294967295) |> Maybe.andThen identity)
             , test "a scene moves only to another slot" <|
                 \_ ->
                     Expect.equal (Just Nothing) (Maybe.map2 (\a r -> Protocol.sceneMove ( a, r ) ( a, r )) (Protocol.sceneNo 3) (Protocol.rev 1))
@@ -471,7 +471,7 @@ suite =
                     [ Protocol.sceneNo 0 == Nothing
                     , Protocol.sceneNo 9 == Nothing
                     , Protocol.rev -1 == Nothing
-                    , Protocol.rev 65536 == Nothing
+                    , Protocol.rev 4294967296 == Nothing
                     , Protocol.segment 0 == Nothing
                     , Protocol.segment 9 == Nothing
                     , Protocol.degree 0 == Nothing

@@ -697,7 +697,7 @@ sceneNoToInt (SceneNo n) =
 
 
 {-| A slot's revision as `since` said it: a destructive scene command's
-witness, 0..65535.
+witness, 0..4294967295 (the unit's 32-bit count).
 -}
 type Rev
     = Rev Int
@@ -705,7 +705,7 @@ type Rev
 
 rev : Int -> Maybe Rev
 rev =
-    within 0 65535 Rev
+    within 0 4294967295 Rev
 
 
 revToInt : Rev -> Int
