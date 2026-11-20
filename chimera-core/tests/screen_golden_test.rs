@@ -332,14 +332,18 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_fx_reverb_bloom_more", 0x3ecbb992e1f631b3),
     // Re-recorded: the map's DLY branch holds GRAIN (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_char", 0x7fe37e9b8554bcb5),
+    ("mixer_fx_delay_char", 0x9516a3306e4a4c36),
     // GRAIN: DLY, DLY › GRAIN at PITCH +12, and bank 2 closed (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_grain", 0xef1ed3ecaaa14bba),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_delay_grain_page", 0x7a4dca57e6ea5ae9),
+    ("mixer_fx_delay_grain_page", 0x2f7ae84534b38a06),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_grain_needs_update", 0xc98f6ca5642f4246),
+    // SYNC (ADR 0302): TIME reads its note; CHAR and GRAIN above hold
+    // SYNC in cell E.
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_delay_sync", 0x7289f811a489c546),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master", 0xaa7cc5f71d43600a),
     #[cfg(not(feature = "master-tape"))]
@@ -379,13 +383,15 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom_more", 0xa4268cf47ee3f2ec),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_char", 0xcf1c9ac4c47f94ff),
+    ("mixer_fx_delay_char", 0xf736f15aa7f13ba4),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_grain", 0x869e1540291fb66c),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_delay_grain_page", 0xab3757952dfde4ef),
+    ("mixer_fx_delay_grain_page", 0xe77b33e5d4664d60),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay_grain_needs_update", 0x4d0db4ababe3a198),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_delay_sync", 0xf6084017ec3e2498),
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xd56bc8774f6193e4),
     #[cfg(feature = "master-tape")]
