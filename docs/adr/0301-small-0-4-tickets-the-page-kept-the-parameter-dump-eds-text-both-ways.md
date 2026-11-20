@@ -1,6 +1,6 @@
 # 0301. Small 0.4 tickets: B*n* keeps the page, a controller reads a Sound, `ed`'s text is exact both ways
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20)
 - **Deciders:** firmware (the `small-tickets` batch: #957, #961, #980, #984, #1038, #1039), for the owner's review
 
 ## Context
