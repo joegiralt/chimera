@@ -36,7 +36,7 @@ What the code had (origin/0.4 fda23e52):
 9. **Where SYNC lives.** Cell E of DLY › CHAR and of DLY › GRAIN (free on both, so it sits in one place whichever TYPE shows; the main page is full). From the main page **MIX + turn on TIME** flips it, right for SYNC and left for FREE, and the TIME cell's band says so: `MIX + TURN  FREE / SYNC`. TIME keeps its label and place; under SYNC its slot is the note (`view::view` binds NOTE there), so its value, its turn, a learned CC and the editor all read the note. The note turns a detent a note at any speed (a list's curve).
 10. **What the band says.** On TIME the gesture; folded, in its place, `HALVED TO FIT 500 MS` (or `DOUBLED TO FIT 10 MS`). On SYNC, `TIME TURNS NOTES OF THE TEMPO`. The design's longer line (`DOTTED EIGHTH · 375 MS AT 120 BPM`, with `EXT`) is not built: the band's foot is one line of about 30 characters, and the gesture's hint, which the owner asked for, has it. The readout is the note as the reverb writes it (`1/8D`).
 11. **Typed.** `DelaySync`, `DelayNote`, `Tempo`, `FoldState`, `Aim` (what a block's TIME was read from), `Cause` (a tempo move or a step) and `Slide` (a block of glide): no bare flag crosses a function.
-12. **Bank 2.** The DSP is `delay::sync` (the notes' named copy, `fit`, `tap`, `aim`, `glide`), an S4 group (`*5delay4sync*`); `tape::run` and `grain::run`, S0-S3's, call it, and `tape::span` gains a `GLIDE` instance inlined into `sync::glide`. The UI is `ui::delay_sync` (S4), reached through doors that exist: the note's text through `law_text` (`Law::DelayNote`), its curve and the hint through `feel`, the band's words through `band_note`, and MIX + turn through `feel`'s new `Ask::Snap`. Bank 1 gains the two specs, `DelayParams`' 8 B, the tempo in `DelayDoor::run`'s call, the delay's fold in the published clock word's top byte (`meter`), `SlotCtx`'s SYNC and the slot's binding, and the snap's stub: closed-door data and stubs (ADR 0198, 0251). A closed door silences the delay, as before.
+12. **Bank 2.** The DSP is `delay::sync` (`fit`, `tap`, `aim`, `glide`), an S4 group (`*5delay4sync*`); it reads the reverb's `GATE_LENGTH` where it is, in bank 1 (a named copy in bank 2 is folded with the reverb's by the linker, and bank 1 then reads bank 2: the firmware won't split); `tape::run` and `grain::run`, S0-S3's, call it, and `tape::span` gains a `GLIDE` instance inlined into `sync::glide`. The UI is `ui::delay_sync` (S4), reached through doors that exist: the note's text through `law_text` (`Law::DelayNote`), its curve and the hint through `feel`, the band's words through `band_note`, and MIX + turn through `feel`'s new `Ask::Snap`. Bank 1 gains the two specs, `DelayParams`' 8 B, the tempo in `DelayDoor::run`'s call, the delay's fold in the published clock word's top byte (`meter`), `SlotCtx`'s SYNC and the slot's binding, and the snap's stub: closed-door data and stubs (ADR 0198, 0251). A closed door silences the delay, as before.
 
 ## Alternatives considered
 - **Always crossfade on a tempo change** (the reverb's way, H9000, EchoBoy's notes): pitch-free, but a chain of crossfades under a moving clock, and not what a tape delay does. The owner chose the glide for small moves.
@@ -54,6 +54,34 @@ What the code had (origin/0.4 fda23e52):
 - A CC learned on TIME under FREE drives the ms, under SYNC the note: two params, two maps.
 - The editor and the NRPN chart gain DELAY SYNC and DELAY NOTE.
 - Needs the owner's ear on the unit: a DAW clock at 90, 120 and 140 BPM against the grid, and a tempo ramp for the glide.
+
+## Measurements
+Release builds, `CHIMERA_STAMP_CLEAN=1`, against 0.4 at c93eeab4 (merged in), each set built in both trees. Each budget line is raised by exactly its set's measured change, never the slack:
+
+| Set | Bank 1 (B) | Bank 2 used (B) |
+|---|---|---|
+| orbit | +520 | +4,640 |
+| default | +464 | +4,608 |
+| bank2-gate | +488 | +4,608 |
+| orbit,usb-config-writer | +528 |  |
+| fault-inject | +360 |  |
+| bench-algo | +488 |  |
+| bench-algo,master-tape | +512 |  |
+| bench-routing | +432 |  |
+| bench-memory | +400 |  |
+| bench-stress | +464 |  |
+| bench-orbit | +488 |  |
+| bench-tape | +416 |  |
+| filter-probes | +368 |  |
+
+- **Bank 1 on ORBIT, +520 (903,360 B; about 14.2 KB free):** `DELAY_SPECS`' two specs (+144), `UiState::ctx` building the longer `SlotCtx` (+156), `Division::write` now a function of its own where `param_text` had it inlined (+256 against −212), the door call's tempo, the clock word's top byte, TIME's binding in `view::view`, the snap's stub, and alignment.
+- **Bank 2:** S4 +4,448 (ORBIT): `sync::glide` 2,724 B (`tape::span`'s gliding instance, its `tanhf` with it), `sync::tap` 796 B, `sync::aim` 376 B, `ui::delay_sync` about 440 B with its words. More than the design's 1.5–2.5 KB: the glide is a whole copy of TAPE's loop, kept out of S0-S3. S0-S3 +192 (ORBIT; 7,104 B free, under ADR 0251's 8 KB warning): the calls in `tape::run`, `grain::run`, `walk`, `feel` and `notes`.
+- **RAM:** `DelayParams` +8 B (each `AudioShared` copy and the UI's); `TapeDelay` +8 B in AXI (what it read, the fold, the glide's speed). The line is unchanged.
+- **CPU, host** (release, best of five runs of 20,000 blocks, plucks through feedback and MECHANICS; `delay_sync_test::host_cost`, twice): TAPE FREE 1,475–1,476 ns a block against 0.4's 1,451–1,508; TAPE SYNC 1,477–1,481; TAPE with the tempo always moving (gliding nearly every block) 1,507–1,511, +2 %; GRAIN FREE 709–710 against 695–702; GRAIN SYNC 711–715. Within the run-to-run spread but for the glide. Not read on the unit; the bill is unchanged (GRAIN 320, ADR 0202): SYNC adds a note's `ms` and the fit a block, the glide two multiplies a sample while it runs.
+- **Null:** FREE at any tempo and note is `process_wet`'s output bit for bit, TAPE and GRAIN (`free_plays_the_same_at_any_tempo_and_note`); `delay_tape_hash_test`'s and `fx_golden_test`'s hashes, `delay_grain_test` and `golden_test` are unchanged, and the host bench's checksums equal 0.4's. SYNC on a note is FREE at its ms bit for bit (`sync_is_free_at_the_notes_ms`).
+- **The glide, measured** (`delay_sync_test`): 120 → 121 → 120 BPM on 1/8D bends a 440 Hz repeat ×0.9800 to ×1.0200, its second difference ×1.05 of the steady repeat's; crossfades (a jump, a note, a fold, SYNC, FREE TIME) ×1.00; a 126 → 100 BPM ramp ×1.05 on 1/8 and ×1.30 through 1/4's fold (a step of a hundredth of the sine would be ×3); GRAIN's tempo moves under ×1.0 of its steady.
+
+As built, beyond the design: the glide's speed ramps across each block and slows in over its last blocks (a block covers a quarter of what is left), so the head starts and stops with no kink in the repeat; a head still gliding when a step comes slows to rest over one block before the crossfade starts.
 
 ## Sources
 - The design and its precedent table: (private notes).

@@ -128,8 +128,7 @@ impl DelayNote {
         self.0 as f32 / (Self::COUNT - 1) as f32
     }
 
-    /// The note value, read at compile time (bank 2's copy is
-    /// `sync::NOTES`).
+    /// The note value.
     pub const fn division(self) -> Division {
         GATE_LENGTH[self.0 as usize]
     }

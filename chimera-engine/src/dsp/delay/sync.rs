@@ -5,7 +5,7 @@
 //! as a TIME turn always has.
 //!
 //! With `bank2` this module links into bank 2's S4 (`bank2.x`,
-//! `*5delay4sync*`), text and rodata; `tape::run` and `grain::run` reach
+//! `*5delay4sync*`); `tape::run` and `grain::run` reach
 //! it. The notes, the tempo and the fold's state and marks are the
 //! reverb's (`rev::sync`).
 
@@ -15,17 +15,10 @@ use crate::dsp::clampf;
 use crate::dsp::rev::sync::{Division, FoldState, GATE_LENGTH, HYST, Tempo};
 use chimera_hal::BLOCK_SIZE;
 
-/// The notes TIME walks, the reverb's list: a named copy, so it links
-/// with this module.
-pub static NOTES: [Division; DelayNote::COUNT] = {
-    let mut n = [GATE_LENGTH[0]; DelayNote::COUNT];
-    let mut i = 0;
-    while i < n.len() {
-        n[i] = GATE_LENGTH[i];
-        i += 1;
-    }
-    n
-};
+/// The notes TIME walks: the reverb's list itself. No copy: the linker
+/// folds an identical one into this module's rodata, bank 2's, and the
+/// reverb's bank-1 code would then read it there.
+pub const NOTES: &[Division] = GATE_LENGTH;
 
 /// TIME's range, ms: the line's (ADR 0014).
 pub const SHORTEST_MS: f32 = 10.0;
@@ -227,7 +220,7 @@ mod tests {
 
     #[test]
     fn the_notes_are_the_reverbs_and_the_default_the_dotted_eighth() {
-        assert_eq!(&NOTES[..], GATE_LENGTH);
+        assert_eq!(NOTES, GATE_LENGTH);
         assert_eq!(
             note(8, crate::dsp::rev::sync::DivKind::Dotted),
             DelayNote::DEFAULT
@@ -258,7 +251,7 @@ mod tests {
     fn a_fitted_note_is_in_the_line_and_on_the_grid() {
         for bpm4 in 30 * 4..=1_200 * 4 {
             let t = Tempo(bpm4 as f32 / 4.0);
-            for d in NOTES {
+            for &d in NOTES {
                 let mut st = FoldState(0);
                 let len = d.ms(t);
                 let ms = fit(len, &mut st);
