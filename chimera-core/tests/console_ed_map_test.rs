@@ -578,6 +578,22 @@ fn learn_takes_the_box_to_the_cell() {
     assert_eq!(rows(&a, "learn "), vec!["learn off \"\"".to_string()]);
 }
 
+/// `ed learn` is for the Part its answer checked: a box on another Part
+/// by the pass arms nothing there.
+#[test]
+fn learn_asked_on_a_part_the_box_left_arms_nothing() {
+    let mut f = Fake::new();
+    queued(&mut f, "ed learn FILTER.RESO");
+    screen::feed(&mut f.ui, screen::Input::press(chimera_hal::ButtonId::B2));
+    assert_eq!(f.ui.active_part, PartId::ALL[1]);
+    apply(&mut f);
+    assert_eq!(f.ui.learn(), Learn::Off);
+    // Asked again, on the Part the box shows: armed there.
+    queued(&mut f, "ed learn FILTER.RESO");
+    apply(&mut f);
+    assert!(matches!(f.ui.learn(), Learn::Armed { part, .. } if part == PartId::ALL[1]));
+}
+
 /// A diff after learn moved is its `learn` line alone.
 #[test]
 fn a_learn_change_is_its_line() {

@@ -46,6 +46,39 @@ pub(crate) fn formant_full() -> Line {
     Line::new(prompt::FORMANT_FULL)
 }
 
+/// What a queued act made of a UI pass: done (or dropped), or kept for
+/// the next pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pass {
+    Done,
+    Wait,
+}
+
+/// What a Part's Sound was when an act that takes several passes was
+/// queued for it: the Part's Sound loads (a library or INIT load, a
+/// program change) and the project's load. Either moved, the act was for
+/// a Sound that left, and is dropped (as pointing ends, ADR 0288). The
+/// project's load epoch is kept by its low byte, as `Loads` counts: an
+/// act lives a few passes, never 256 loads, and its copy sits in ITCM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LoadMark {
+    loads: crate::project::Loads,
+    project: u8,
+}
+
+/// Part `p`'s Sound as it is loaded now.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.load_mark"))]
+pub(crate) fn load_mark(ui: &UiState, p: PartId) -> LoadMark {
+    LoadMark {
+        loads: ui.project.part(p).loads(),
+        project: ui.orbit.epoch() as u8,
+    }
+}
+
+/// A column of the mod grid: a fixed one, or a registry destination's.
+#[derive(Clone, Copy)]
+struct GridCol(usize);
+
 /// Where `ed route` writes on the active Part's grid (ADR 0289): a cell's
 /// row and its column, a fixed one or a registry destination's (primed
 /// first when it isn't, as MIX + PLUS then a turn would).
@@ -61,46 +94,46 @@ pub(crate) enum RouteAt {
 /// `to` by at most a hand's fastest turn (`encoder_accel`'s top step),
 /// never a jump, or removed (`None`, the grid's MIX + MINUS). Through the
 /// grid's own writes (`MatrixState::set`, `clear`), then the Part's
-/// `ModState` and taps synced. `true` once the cell holds `to`, or can't:
+/// `ModState` and taps synced. Done once the cell holds `to`, or can't:
 /// a registry full when priming says so in the focus band, as the box.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.route"))]
-pub(crate) fn route(ui: &mut UiState, at: RouteAt, to: Option<i8>) -> bool {
+pub(crate) fn route(ui: &mut UiState, at: RouteAt, to: Option<i8>) -> Pass {
     use super::PrimeStatus;
     use super::mod_grid::{RowSource, dest_label};
     let part = ui.active_part;
-    let (row, col): (RowSource, usize) = match at {
-        RouteAt::Fixed(r, c) => (r, c.index()),
+    let (row, GridCol(col)): (RowSource, GridCol) = match at {
+        RouteAt::Fixed(r, c) => (r, GridCol(c.index())),
         RouteAt::Jack(j) => {
             let (r, c) = super::filter_panel::RouteView::Jack(j).cell(&ui.project.part(part).sound);
-            (r, c.index())
+            (r, GridCol(c.index()))
         }
         RouteAt::Reg(r, a) => match col_of(&ui.matrix_state, a) {
             Some(c) => (r, c),
             // Nothing to remove.
-            None if to.is_none() => return true,
+            None if to.is_none() => return Pass::Done,
             None => {
                 let sound = ui.project.edit_part(part).sound;
                 if let Err(e) = sound.dest_registry.add(a, dest_label(a)) {
                     ui.prime_status = Some(PrimeStatus::from(e));
-                    return true;
+                    return Pass::Done;
                 }
                 ui.matrix_state
                     .rebuild_dests_from_registry(&sound.dest_registry);
                 ui.matrix_state.load_amounts(&sound.mod_state);
                 match col_of(&ui.matrix_state, a) {
                     Some(c) => (r, c),
-                    None => return true,
+                    None => return Pass::Done,
                 }
             }
         },
     };
     let m = &mut ui.matrix_state;
-    let done = match to {
+    let pass = match to {
         None => {
             if m.is_present(row.index(), col) {
                 m.clear(row.index(), col);
             }
-            true
+            Pass::Done
         }
         Some(t) => {
             let now = m.amount(row.index(), col);
@@ -110,17 +143,20 @@ pub(crate) fn route(ui: &mut UiState, at: RouteAt, to: Option<i8>) -> bool {
             if next != now || !m.is_present(row.index(), col) {
                 m.set(row.index(), col, next);
             }
-            next == t
+            match next == t {
+                true => Pass::Done,
+                false => Pass::Wait,
+            }
         }
     };
     ui.sync_mod_state(part);
-    done
+    pass
 }
 
 /// The grid column of registry destination `a`: `MatrixState::col_of`'s
 /// walk, here in bank 2 (its `find` would be a generic bank 1 holds).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.col_of"))]
-fn col_of(m: &super::mod_grid::MatrixState, a: ParamAddr) -> Option<usize> {
+fn col_of(m: &super::mod_grid::MatrixState, a: ParamAddr) -> Option<GridCol> {
     let mut d = 0;
     while d < m.num_dests {
         if m.dests
@@ -129,7 +165,7 @@ fn col_of(m: &super::mod_grid::MatrixState, a: ParamAddr) -> Option<usize> {
             .flatten()
             .is_some_and(|x| x.addr == a)
         {
-            return Some(super::mod_grid::FIXED_COLS + d);
+            return Some(GridCol(super::mod_grid::FIXED_COLS + d));
         }
         d += 1;
     }
@@ -186,23 +222,22 @@ pub(crate) fn listed(
 
 /// One UI pass of `ed projects` (`None`) or an `ed project` command: the
 /// box's own card job queued for `card_work`, under BUSY, once the card is
-/// free (`false` until then, so the act waits and the answer never does).
-/// Checked again here: a save with no file of its own, a load whose
-/// listing moved or that has edits under it without `discard`, write
-/// nothing (`true`: the act is done).
+/// free (it waits until then, and the answer never does). Checked again
+/// here: a save with no file of its own, a load whose listing moved or
+/// that has edits under it without `discard`, write nothing (done).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.card"))]
-pub(crate) fn card(ui: &mut UiState, c: Option<crate::console::ProjectCmd>) -> bool {
+pub(crate) fn card(ui: &mut UiState, c: Option<crate::console::ProjectCmd>) -> Pass {
     use super::settings::job::Job;
     use crate::console::{OverEdits, ProjectCmd};
     use crate::project::{ProjectSource, ReplaceGuard};
     if ui.card_pending() {
-        return false;
+        return Pass::Wait;
     }
     let job = match c {
         None => Job::Relist(None),
         Some(ProjectCmd::Save) => match ui.project.meta().file() {
             Some(_) => Job::QuickSave(None),
-            None => return true,
+            None => return Pass::Done,
         },
         Some(ProjectCmd::SaveAs(n)) => Job::Relist(Some(n.get())),
         Some(ProjectCmd::Load {
@@ -211,28 +246,29 @@ pub(crate) fn card(ui: &mut UiState, c: Option<crate::console::ProjectCmd>) -> b
             over,
         }) => {
             let Some(e) = listed(ui, id, generation) else {
-                return true;
+                return Pass::Done;
             };
             if let Some(n) = super::settings::listing::refusal(&e) {
                 ui.show_note(n);
-                return true;
+                return Pass::Done;
             }
             let src = ProjectSource::File {
                 id: e.id,
                 vol: e.vol,
             };
             match (ReplaceGuard::check(&ui.project, ui.template, src), over) {
-                (Ok(go), OverEdits::Refuse | OverEdits::Discard) => Job::Load(go),
-                (Err(ask), OverEdits::Discard) => {
-                    let yes = chimera_engine::confirm::Said::editor_discard();
+                (Ok(go), OverEdits::Refuse | OverEdits::Discard(_)) => Job::Load(go),
+                // The editor's yes, said with this load's witness.
+                (Err(ask), OverEdits::Discard(d)) if d.said_of(generation) => {
+                    let yes = chimera_engine::confirm::Said::editor_discard(&d);
                     Job::Load(ask.into_pending().confirm(&ui.project, yes))
                 }
-                (Err(_), OverEdits::Refuse) => return true,
+                (Err(_), OverEdits::Refuse | OverEdits::Discard(_)) => return Pass::Done,
             }
         }
     };
     ui.job = Some(job);
-    true
+    Pass::Done
 }
 
 /// Part `p`'s controller map's rows as it plays them (ADR 0226): empty
@@ -262,11 +298,11 @@ pub(crate) fn set_own(ui: &mut UiState, p: PartId, m: crate::midi_map::MidiMap) 
 pub(crate) fn layer_edit(
     ui: &mut UiState,
     p: PartId,
-    i: usize,
+    i: crate::console::EdRowIx,
     was: crate::midi_map::Binding,
     to: crate::midi_map::Binding,
 ) -> bool {
-    let took = ui.cc.ui().ctl.edit(p, i, was, to);
+    let took = ui.cc.ui().ctl.edit(p, i.index(), was, to);
     match took {
         true => ui.cc.reset_part(p),
         false => ui.error(Line::new(chimera_hal::store::StoreError::Busy.message())),
@@ -303,11 +339,15 @@ pub(crate) fn keeps(ui: &UiState, p: PartId) -> bool {
     ui.keeps_map(p)
 }
 
-/// KEEP MAP on Part `p` made `on`: MIX + PLUS on row 0, only when it
+/// KEEP MAP on Part `p` made `to`: MIX + PLUS on row 0, only when it
 /// differs, so a second ask changes nothing.
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.keep"))]
-pub(crate) fn keep(ui: &mut UiState, p: PartId, on: bool) {
+pub(crate) fn keep(ui: &mut UiState, p: PartId, to: crate::console::EdKeepMap) {
+    let on = match to {
+        crate::console::EdKeepMap::On => true,
+        crate::console::EdKeepMap::Off => false,
+    };
     if ui.keeps_map(p) != on {
         ui.keep_map(p);
     }
@@ -321,15 +361,15 @@ pub(crate) fn keep(ui: &mut UiState, p: PartId, on: bool) {
 static MAPS_ASKED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// `ed maps` in the UI pass: the listing asked of the next card work,
-/// once no map job waits (`false` until then: the act waits).
+/// once no map job waits (the act waits until then).
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ask_maps"))]
-pub(crate) fn ask_maps(ui: &UiState) -> bool {
+pub(crate) fn ask_maps(ui: &UiState) -> Pass {
     if ctl_job(ui).is_some() {
-        return false;
+        return Pass::Wait;
     }
     MAPS_ASKED.store(true, core::sync::atomic::Ordering::Relaxed);
-    true
+    Pass::Done
 }
 
 /// The door's `ctl_due`: the layers' card work (`ctl_due_in`), or the
@@ -379,38 +419,69 @@ pub(crate) enum LearnOn {
     Mixer,
 }
 
-/// `ed learn` in the UI pass: the box taken to page `def` of Part `p`'s
-/// (its own chain, or its mixer), slot `slot` focused and learn armed
-/// there, as MIX + SEQ arms on the focused cell; `None`, learn ended, as
-/// MIX + SEQ ends it. Never over pointing (MIX + SEQ does nothing then).
-/// A move waits behind a load or a card job (`false`), as `ed part`'s
-/// key does; a page the Part's chain no longer holds arms nothing.
+/// A cell's slot on its page: one of its six, A–F.
+#[cfg(feature = "midi-map")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CellSlot(u8);
+
+#[cfg(feature = "midi-map")]
+impl CellSlot {
+    /// F's.
+    const LAST: usize = 5;
+
+    /// Slot `i` of a page, as `value::find` counts it.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.cell_slot"))]
+    pub(crate) fn new(i: usize) -> CellSlot {
+        CellSlot(i.min(CellSlot::LAST) as u8)
+    }
+}
+
+/// The cell `ed learn` arms on: its Part, the chain its page is on, the
+/// page's def and the cell's slot there.
+#[cfg(feature = "midi-map")]
+#[derive(Clone, Copy)]
+pub(crate) struct LearnAt {
+    pub(crate) part: PartId,
+    pub(crate) on: LearnOn,
+    pub(crate) def: &'static super::block_def::BlockDef,
+    pub(crate) slot: CellSlot,
+}
+
+/// `ed learn` in the UI pass: the box taken to `at`'s page of its Part's
+/// (its own chain, or its mixer), its slot focused and learn armed there,
+/// as MIX + SEQ arms on the focused cell; `None`, learn ended, as MIX +
+/// SEQ ends it. Never over pointing (MIX + SEQ does nothing then). A
+/// move waits behind a load or a card job, as `ed part`'s key does; a
+/// page the Part's chain no longer holds arms nothing.
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.learn"))]
-pub(crate) fn learn(
-    ui: &mut UiState,
-    at: Option<(PartId, LearnOn, &'static super::block_def::BlockDef, usize)>,
-) -> bool {
+pub(crate) fn learn(ui: &mut UiState, at: Option<LearnAt>) -> Pass {
     use super::learn::Learn;
     use super::nav::{Location, PartChain};
     if let Learn::Pointing(_) = ui.learn {
-        return true;
+        return Pass::Done;
     }
-    let Some((p, on, def, slot)) = at else {
+    let Some(LearnAt {
+        part: p,
+        on,
+        def,
+        slot: CellSlot(slot),
+    }) = at
+    else {
         if let Learn::Armed { .. } | Learn::Sensing { .. } = ui.learn {
             ui.learn = Learn::Off;
         }
-        return true;
+        return Pass::Done;
     };
     if ui.src.loading() || ui.lib.busy() || ui.job.is_some() {
-        return false;
+        return Pass::Wait;
     }
     let chain = match on {
         LearnOn::Own => PartChain::of(&ui.project.part(p).sound).def(),
         LearnOn::Mixer => &super::block_registry::MIXER_CHANNEL_CHAIN,
     };
     let Some(page) = locate(chain, def.id) else {
-        return true;
+        return Pass::Done;
     };
     if ui.modal.take().is_some() {
         ui.closed();
@@ -420,12 +491,12 @@ pub(crate) fn learn(
         LearnOn::Own => Location::own_page(p, page),
         LearnOn::Mixer => Location::mixer_page(p, page),
     });
-    ui.focus.touch(def.id, slot);
+    ui.focus.touch(def.id, usize::from(slot));
     ui.learn = Learn::Armed {
         part: p,
         note: None,
     };
-    true
+    Pass::Done
 }
 
 /// The page of `chain` showing def `id`: `ChainDef2::locate`'s walk, here
@@ -469,12 +540,6 @@ pub(crate) fn learn_target(ui: &UiState) -> Option<crate::midi_map::Mappable> {
     ui.learn_target()
 }
 
-/// SETTINGS › MIDI CONFIG › SYNC: who drives ORBIT's transport (ADR 0080).
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.sync"))]
-pub(crate) fn sync(ui: &UiState) -> crate::orbit::clock::SyncMode {
-    ui.midi.sync
-}
-
 /// `ed set` of an ORBIT address, in the UI pass: a scene's param through
 /// `OrbitSong::edit` with a set to `v` (its write marks the ring touched
 /// where the runner keeps its own copy, ADR 0082), on `live` and its slot
@@ -495,7 +560,37 @@ pub(crate) fn orbit_set(ui: &mut UiState, a: ParamAddr, v: f32) {
             // SEGS shrunk under an armed segment drops the capture.
             ui.orbit.fit(&ui.project.orbit().live().chords);
         }
-        _ => {
+        // The tempo, the box's own block (F's turn); no other block is
+        // ORBIT's (`Taken::Orbit`).
+        BlockRef::Tempo
+        | BlockRef::Modal
+        | BlockRef::TapeEngine
+        | BlockRef::Va
+        | BlockRef::Algo
+        | BlockRef::AlgoOp(_)
+        | BlockRef::Filter
+        | BlockRef::VoiceFx
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch
+        | BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Part
+        | BlockRef::Theme
+        | BlockRef::Midi
+        | BlockRef::PartMix(_)
+        | BlockRef::Random
+        | BlockRef::Pad
+        | BlockRef::Kit
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => {
             ui.edit_to(part, a, v);
         }
     }
@@ -504,28 +599,31 @@ pub(crate) fn orbit_set(ui: &mut UiState, a: ParamAddr, v: f32) {
 
 /// One UI pass of an ORBIT command, through the box's own path for the
 /// gesture, checked again first (a stale witness writes nothing, and a
-/// refusal the box would toast is toasted). `true` once done; the
-/// transport waits until every command before it is applied, so it reads
-/// the runner's transport as it is.
+/// refusal the box would toast is toasted). The transport waits until
+/// every command before it is applied, so it reads the runner's transport
+/// as it is; under SYNC EXT too, as B6 (ADR 0080).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.orbit"))]
-pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> bool {
+pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> Pass {
     use super::settings::prompt;
     use crate::console::{OrbitCmd, OrbitNotNow};
-    use crate::project::{Confirmed, SceneAsk};
-    let confirmed = |s: crate::console::OrbitSeen| {
-        Confirmed::said(
-            SceneAsk::seen(s.slot, s.rev.get()),
-            chimera_engine::confirm::Said::editor_confirm(),
-        )
-    };
+    use crate::orbit::scene::{OrbitSong, Refused};
+    use crate::project::{Confirmed, SceneSlot};
+    // The editor's yes, only while the slot reads the rev it sent.
+    let confirmed =
+        |song: &OrbitSong, s: crate::console::OrbitSeen| -> Result<Confirmed<SceneSlot>, Refused> {
+            match crate::console::orbit_holds(song, s) {
+                Ok(held) => Ok(held.confirmed()),
+                Err(_) => Err(Refused::SlotChanged),
+            }
+        };
     if let OrbitCmd::Transport(t) = c {
         if !ui.orbit.idle() {
-            return false;
+            return Pass::Wait;
         }
         if crate::console::orbit_check(c, ui).is_ok() && ui.orbit.status.running != t.runs() {
             ui.orbit.play_stop();
         }
-        return true;
+        return Pass::Done;
     }
     let refused = match crate::console::orbit_check(c, ui) {
         Err(OrbitNotNow::SwitchPending) => Some(crate::orbit::scene::Refused::SwitchPending),
@@ -534,13 +632,13 @@ pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> bool {
         }
         // Dimmed on the box: nothing said.
         Err(OrbitNotNow::Unbuilt | OrbitNotNow::NotPlaying | OrbitNotNow::NothingToReload) => {
-            return true;
+            return Pass::Done;
         }
-        Err(OrbitNotNow::Synced) | Ok(()) => None,
+        Ok(()) => None,
     };
     if let Some(e) = refused {
         ui.error(Line::new(prompt::scene_refused(e)));
-        return true;
+        return Pass::Done;
     }
     let song = ui.project.orbit_mut();
     let done = match c {
@@ -560,15 +658,25 @@ pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> bool {
             }
             Err(e) => Err(e),
         },
-        OrbitCmd::SaveOver(s) => song
-            .overwrite_scene(confirmed(s))
-            .map(|()| ui.scene_saved(s.slot)),
-        OrbitCmd::Clear(s) => ui.relanding(|song| song.clear_scene(confirmed(s))),
-        OrbitCmd::Reload(s) => ui.relanding(|song| song.reload_scene(confirmed(s))),
-        OrbitCmd::Move(a, b) => song.swap_scenes(confirmed(a), confirmed(b)).map(|()| {
-            // The runner plays `live` as the slot it moved to.
-            ui.orbit.issue_scene(ui.project.orbit());
+        OrbitCmd::SaveOver(s) => match confirmed(song, s) {
+            Ok(yes) => song.overwrite_scene(yes).map(|()| ui.scene_saved(s.slot())),
+            Err(e) => Err(e),
+        },
+        OrbitCmd::Clear(s) => ui.relanding(|song| match confirmed(song, s) {
+            Ok(yes) => song.clear_scene(yes),
+            Err(e) => Err(e),
         }),
+        OrbitCmd::Reload(s) => ui.relanding(|song| match confirmed(song, s) {
+            Ok(yes) => song.reload_scene(yes),
+            Err(e) => Err(e),
+        }),
+        OrbitCmd::Move(a, b) => match (confirmed(song, a), confirmed(song, b)) {
+            (Ok(a), Ok(b)) => song.swap_scenes(a, b).map(|()| {
+                // The runner plays `live` as the slot it moved to.
+                ui.orbit.issue_scene(ui.project.orbit());
+            }),
+            (Err(e), Ok(_) | Err(_)) | (Ok(_), Err(e)) => Err(e),
+        },
         OrbitCmd::Chord(seg, d) => {
             song.edit(&mut |s| {
                 if let Some(at) = s.chords.degrees.get_mut(seg.index()) {
@@ -613,5 +721,5 @@ pub(crate) fn orbit(ui: &mut UiState, c: crate::console::OrbitCmd) -> bool {
     if let Err(e) = done {
         ui.error(Line::new(prompt::scene_refused(e)));
     }
-    true
+    Pass::Done
 }

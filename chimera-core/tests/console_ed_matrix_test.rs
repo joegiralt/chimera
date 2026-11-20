@@ -185,6 +185,50 @@ fn a_route_glides_a_fast_turn_a_pass_never_a_jump() {
     assert_eq!(amount(&mut f, "ENV2:FILTER.CUTOFF"), Some(15));
 }
 
+/// The review's probe (C1): with another act queued ahead, a second route
+/// on the same cell still takes the first's place, and the cell settles
+/// on the last amount asked.
+#[test]
+fn a_second_route_replaces_the_first_behind_another_act() {
+    let mut f = Fake::new();
+    assert_eq!(ask(&mut f, "ed projects\n"), "OK queued\n");
+    route(&mut f, "ENV2:FILTER.CUTOFF", "100");
+    route(&mut f, "ENV2:FILTER.CUTOFF", "-100");
+    // One act a cell: a lap of routes on it never fills the queue.
+    for to in ["90", "-90", "80", "-80", "70", "-70", "100", "-100"] {
+        route(&mut f, "ENV2:FILTER.CUTOFF", to);
+    }
+    settle(&mut f);
+    assert_eq!(amount(&mut f, "ENV2:FILTER.CUTOFF"), Some(-100));
+}
+
+/// A Sound loaded into the Part while a route glides (I1): the act was
+/// for the Sound that left, and the new one's cell is never stepped.
+#[test]
+fn a_sound_load_on_the_same_engine_drops_a_route_in_progress() {
+    use chimera_core::project::{PartFrom, PartSource, ReplaceGuard};
+    let mut f = Fake::new();
+    route(&mut f, "ENV2:FILTER.CUTOFF", "127");
+    apply(&mut f);
+    assert_eq!(amount(&mut f, "ENV2:FILTER.CUTOFF"), Some(10));
+    let was = chimera_core::ui::nav::PartChain::of(&f.ui.project().part(P1).sound);
+    let src = PartSource {
+        part: P1,
+        from: PartFrom::Init(EngineType::Algo),
+    };
+    let ask = ReplaceGuard::check(f.ui.project(), f.ui.template(), src).expect_err("edited");
+    let c = ask.into_pending().anyway(f.ui.project());
+    f.ui.project_mut().replace_part(c).expect("INIT loads");
+    f.ui.replaced_for_test(was);
+    assert_eq!(amount(&mut f, "ENV2:FILTER.CUTOFF"), None);
+    settle(&mut f);
+    assert_eq!(amount(&mut f, "ENV2:FILTER.CUTOFF"), None);
+    // The queue is free again: a new route is this Sound's.
+    route(&mut f, "ENV2:FILTER.CUTOFF", "5");
+    settle(&mut f);
+    assert_eq!(amount(&mut f, "ENV2:FILTER.CUTOFF"), Some(5));
+}
+
 #[test]
 fn a_registry_destination_is_primed_then_routed_and_full_writes_nothing() {
     let mut f = Fake::new();

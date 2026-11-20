@@ -20,7 +20,7 @@ use crate::dsp::algo::kinds::OpKind;
 use crate::project::Line;
 use crate::project::PartId;
 use crate::ui::UiState;
-use crate::ui::ed_cue::RouteAt;
+use crate::ui::ed_cue::{LoadMark, Pass, RouteAt};
 use crate::ui::page::ValFmt;
 use crate::ui::{ed_cue, held, kit_groups, view};
 use chimera_engine::params::EngineType;
@@ -122,11 +122,13 @@ pub const ACTS: usize = 8;
 enum Act {
     /// `ed route`: kept from pass to pass until the cell holds its amount
     /// (a step a pass, never a jump), or the box leaves the Part it was
-    /// taken for. `to` `None` removes the route.
+    /// taken for, or a Sound or a project is loaded under it (`mark`): the
+    /// act was that Sound's. `to` `None` removes the route.
     Route {
         taken: Taken,
         at: RouteAt,
         to: Option<i8>,
+        mark: LoadMark,
     },
     /// `ed projects`: kept until the card is free to list (BUSY).
     Projects,
@@ -298,20 +300,29 @@ impl EdState {
         self.acts().get(i).map(|a| unsafe { a.assume_init() })
     }
 
-    /// `ed route` queued: a route already queued on the same cell takes the
-    /// new amount, so a drag keeps one act.
+    /// `ed route` queued: a route already queued on the same cell,
+    /// wherever it is among the acts, takes the new amount (and the new
+    /// mark), so a drag keeps one act and a cell never has two pulling it
+    /// apart.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.push_route")
     )]
-    fn push_route(&mut self, taken: Taken, at: RouteAt, to: Option<i8>) -> Pushed {
-        let new = Act::Route { taken, at, to };
+    fn push_route(&mut self, taken: Taken, at: RouteAt, to: Option<i8>, mark: LoadMark) -> Pushed {
+        let new = Act::Route {
+            taken,
+            at,
+            to,
+            mark,
+        };
         let mut i = 0;
-        while let Some(Act::Route {
-            taken: t, at: a, ..
-        }) = self.act(i)
-        {
-            if t == taken && a == at {
+        while let Some(b) = self.act(i) {
+            if let Act::Route {
+                taken: t, at: a, ..
+            } = b
+                && t == taken
+                && a == at
+            {
                 if let Some(slot) = self.acts.get_mut(i) {
                     slot.write(new);
                 }
@@ -373,7 +384,8 @@ impl EdState {
     }
 
     /// Every act, oldest first, on the Part it was taken for while the box
-    /// still edits it; an unfinished route stays for the next pass.
+    /// still edits it; an unfinished route stays for the next pass, unless
+    /// its Sound was loaded over.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.apply_acts")
@@ -382,17 +394,27 @@ impl EdState {
         let (mut i, mut kept) = (0, 0);
         while let Some(a) = self.act(i) {
             i += 1;
-            let keep = match a {
-                Act::Route { taken, at, to } => {
-                    taken.lands(ui) == Some(ui.active_part) && !crate::ui::ed_cue::route(ui, at, to)
-                }
-                Act::Projects => !crate::ui::ed_cue::card(ui, None),
-                Act::Project(c) => !crate::ui::ed_cue::card(ui, Some(c)),
+            let pass = match a {
+                Act::Route {
+                    taken,
+                    at,
+                    to,
+                    mark,
+                } => match taken.lands(ui) {
+                    Some(p) if p == ui.active_part && ed_cue::load_mark(ui, p) == mark => {
+                        ed_cue::route(ui, at, to)
+                    }
+                    Some(_) | None => Pass::Done,
+                },
+                Act::Projects => ed_cue::card(ui, None),
+                Act::Project(c) => ed_cue::card(ui, Some(c)),
                 #[cfg(feature = "midi-map")]
-                Act::Map(m) => !super::map::apply(ui, m),
-                Act::Orbit(c) => !crate::ui::ed_cue::orbit(ui, c),
+                Act::Map(m) => super::map::apply(ui, m),
+                Act::Orbit(c) => ed_cue::orbit(ui, c),
             };
-            if keep && let Some(slot) = self.acts.get_mut(kept) {
+            if let Pass::Wait = pass
+                && let Some(slot) = self.acts.get_mut(kept)
+            {
                 slot.write(a);
                 kept += 1;
             }
@@ -670,7 +692,8 @@ pub(super) fn route(
         part: ui.active_part,
         engine,
     };
-    match q.push_route(taken, at, to) {
+    let mark = ed_cue::load_mark(ui, ui.active_part);
+    match q.push_route(taken, at, to, mark) {
         Pushed::Full => w.write_str(BUSY.get()),
         Pushed::Queued => w.write_str(QUEUED.get()),
     }

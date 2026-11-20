@@ -26,7 +26,7 @@ use crate::name::SoundName;
 use crate::params::FilterParams;
 use crate::project::PartId;
 use crate::ui::UiState;
-use crate::ui::ed_cue::{self, LearnOn};
+use crate::ui::ed_cue::{self, CellSlot, LearnAt, LearnOn, Pass};
 use crate::ui::learn::Learn;
 use crate::ui::midi::layer::{CtlJob, shadowed};
 use crate::ui::settings::midi_map::MapText;
@@ -378,6 +378,13 @@ fn num(w: &[u8]) -> Option<u32> {
 /// A row's place in its list: below `MAP_LEN`, the most either list holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowIx(u8);
+
+impl RowIx {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.map.row_index"))]
+    pub(crate) const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 const _: () = assert!(MAP_LEN <= u8::MAX as usize);
 
@@ -802,8 +809,10 @@ pub(super) enum MapAct {
     },
     /// `ed maps`.
     List,
-    /// `ed learn`: armed on this cell, or ended.
-    Learn(Option<EdAddr>),
+    /// `ed learn`: armed on this cell of this Part, or ended. The Part is
+    /// the one the answer checked it for: a box on another by the pass
+    /// arms nothing.
+    Learn(Option<(PartId, EdAddr)>),
 }
 
 /// Why the box wouldn't take an `ed map` now: each its own `ERR`.
@@ -931,7 +940,36 @@ fn addr_of(t: Mappable, p: PartId) -> Option<EdAddr> {
     let a = t.addr();
     match a.block {
         BlockRef::Part => EdAddr::new(EdBlock::Part(p, PartBlock::Mix), a.param),
-        _ => EdAddr::shown(a, Round::Shared),
+        BlockRef::Modal
+        | BlockRef::TapeEngine
+        | BlockRef::Va
+        | BlockRef::Algo
+        | BlockRef::AlgoOp(_)
+        | BlockRef::Filter
+        | BlockRef::VoiceFx
+        | BlockRef::Env(_)
+        | BlockRef::Lfo(_)
+        | BlockRef::Out
+        | BlockRef::Pitch
+        | BlockRef::Chorus
+        | BlockRef::Delay
+        | BlockRef::Reverb
+        | BlockRef::Tape
+        | BlockRef::Comp
+        | BlockRef::Theme
+        | BlockRef::Midi
+        | BlockRef::PartMix(_)
+        | BlockRef::OrbitChords
+        | BlockRef::OrbitRing(_)
+        | BlockRef::Tempo
+        | BlockRef::Random
+        | BlockRef::Pad
+        | BlockRef::Kit
+        | BlockRef::PadFilter
+        | BlockRef::PadAmp
+        | BlockRef::PadEnv
+        | BlockRef::PadLfo
+        | BlockRef::PadRoute(_) => EdAddr::shown(a, Round::Shared),
     }
 }
 
@@ -1150,7 +1188,7 @@ pub(super) fn learn_check(c: LearnCmd, ui: &UiState, listed: bool) -> Result<Map
         return Err(LearnNot::NotMappable(a));
     }
     match learn_cell(ui, a) {
-        Some(_) => Ok(MapAct::Learn(Some(a))),
+        Some(c) => Ok(MapAct::Learn(Some((c.part, a)))),
         None => Err(LearnNot::NoPage(a)),
     }
 }
@@ -1159,15 +1197,7 @@ pub(super) fn learn_check(c: LearnCmd, ui: &UiState, listed: bool) -> Result<Map
 /// or its mixer's) and the page's def and slot showing it; `None` for a
 /// cell no Part page shows (SETTINGS', a pad's).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.map.learn_cell"))]
-fn learn_cell(
-    ui: &UiState,
-    a: EdAddr,
-) -> Option<(
-    PartId,
-    LearnOn,
-    &'static crate::ui::block_def::BlockDef,
-    usize,
-)> {
+fn learn_cell(ui: &UiState, a: EdAddr) -> Option<LearnAt> {
     let (p, on) = match a.at() {
         EdBlock::Sound(_) => (ui.active_part, LearnOn::Own),
         EdBlock::Part(n, _) => (n, LearnOn::Mixer),
@@ -1175,14 +1205,19 @@ fn learn_cell(
         EdBlock::Pad(..) | EdBlock::Global(_) | EdBlock::Orbit(_) => return None,
     };
     let (def, slot, _) = super::value::find(ui, &ui.cell_own(), a)?;
-    Some((p, on, def, slot))
+    Some(LearnAt {
+        part: p,
+        on,
+        def,
+        slot: CellSlot::new(slot),
+    })
 }
 
-/// `a` in the UI pass, through MIDI MAP's own writes: `false` while it
-/// waits (a listing behind a map job, learn behind a load), else done.
-/// A row changed since it was taken writes nothing.
+/// `a` in the UI pass, through MIDI MAP's own writes: it waits (a listing
+/// behind a map job, learn behind a load), else is done. A row changed
+/// since it was taken writes nothing.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.map.apply"))]
-pub(super) fn apply(ui: &mut UiState, a: MapAct) -> bool {
+pub(super) fn apply(ui: &mut UiState, a: MapAct) -> Pass {
     match a {
         MapAct::Add { part, row } => {
             let mut m = own(ui, part);
@@ -1212,8 +1247,8 @@ pub(super) fn apply(ui: &mut UiState, a: MapAct) -> bool {
                         m.set(usize::from(i), to);
                         ed_cue::set_own(ui, part, m);
                     }
-                    EdRow::Map(RowIx(i)) => {
-                        ed_cue::layer_edit(ui, part, usize::from(i), b, to);
+                    EdRow::Map(i) => {
+                        ed_cue::layer_edit(ui, part, i, b, to);
                     }
                 }
             }
@@ -1237,7 +1272,7 @@ pub(super) fn apply(ui: &mut UiState, a: MapAct) -> bool {
                 ui.project_mut().set_controller(part, to);
             }
         }
-        MapAct::Keep { part, to } => ed_cue::keep(ui, part, to == KeepMap::On),
+        MapAct::Keep { part, to } => ed_cue::keep(ui, part, to),
         MapAct::Save { part, name } => {
             if let Some(n) = name.or(ui.project().controller(part)) {
                 ed_cue::ctl_ask(ui, CtlJob::Save(part, n));
@@ -1246,15 +1281,15 @@ pub(super) fn apply(ui: &mut UiState, a: MapAct) -> bool {
         MapAct::Rename { part, name } => ed_cue::ctl_ask(ui, CtlJob::Rename(part, name)),
         MapAct::List => return ed_cue::ask_maps(ui),
         MapAct::Learn(None) => return ed_cue::learn(ui, None),
-        MapAct::Learn(Some(a)) => {
+        MapAct::Learn(Some((part, a))) => {
             let cell = learn_cell(ui, a);
             return match cell {
-                Some(c) => ed_cue::learn(ui, Some(c)),
-                None => true,
+                Some(c) if c.part == part => ed_cue::learn(ui, Some(c)),
+                Some(_) | None => Pass::Done,
             };
         }
     }
-    true
+    Pass::Done
 }
 
 /// `m` without row `i`, learn order kept: DELETE's drop (`MidiMap::remove`),

@@ -226,13 +226,36 @@ impl<T> Said<T> {
     }
 }
 
+/// Proof that the browser editor's own confirm said yes to a `T` (ADR
+/// 0289): the one way to a `Said` that is no key's. The `ed` command path
+/// alone implements it (`chimera_core::console::ed`), on two tokens whose
+/// constructors are private to it: `orbit::Held`, made only when a scene
+/// command's slot still reads the rev the editor sent, and
+/// `project::Discard`, made only by parsing a load's `discard` word. A
+/// test holds the implementors to those two
+/// (`only_the_ed_path_proves_an_editors_yes`). Without a proof there is
+/// no yes:
+///
+/// ```compile_fail,E0061
+/// use chimera_engine::confirm::Said;
+/// use chimera_engine::project::SceneSlot;
+/// let _ = Said::<SceneSlot>::editor_confirm();
+/// ```
+///
+/// ```compile_fail,E0061
+/// use chimera_engine::confirm::Said;
+/// use chimera_engine::project::ProjectSource;
+/// let _ = Said::<ProjectSource>::editor_discard();
+/// ```
+pub trait EditorProof<T: Witnessed> {}
+
 impl Said<SceneSlot> {
     /// The browser editor's yes to a scene's SAVE OVER, CLEAR, RELOAD or
-    /// MOVE (ADR 0289): its own confirm dialog's, witnessed by the slot's
-    /// rev as `since` said it (`SceneAsk::seen`). Only `ed scene` makes
-    /// one.
+    /// MOVE (ADR 0289): its own confirm dialog's, proven by the slot's
+    /// rev as `since` said it, checked against the slot (`SceneAsk::seen`
+    /// carries the same rev). Only `ed scene` holds a proof.
     #[inline(always)]
-    pub fn editor_confirm() -> Self {
+    pub fn editor_confirm(_: &impl EditorProof<SceneSlot>) -> Self {
         Said::new()
     }
 }
@@ -240,9 +263,9 @@ impl Said<SceneSlot> {
 impl Said<ProjectSource> {
     /// The browser editor's `discard` (ADR 0289): its own confirm dialog's
     /// yes to a load over unsaved edits, as LOAD ANYWAY's pill is the
-    /// box's. Only `ed project load … discard` makes one.
+    /// box's. Only `ed project load … discard` holds a proof.
     #[inline(always)]
-    pub fn editor_discard() -> Self {
+    pub fn editor_discard(_: &impl EditorProof<ProjectSource>) -> Self {
         Said::new()
     }
 }

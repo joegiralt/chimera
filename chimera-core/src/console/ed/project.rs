@@ -45,12 +45,35 @@ impl EdName {
     }
 }
 
+/// The `discard` word of an `ed project load`, parsed: proof that the
+/// editor's own confirm said to drop the unsaved edits under that load
+/// (`EditorProof`), carrying the load's witness it was said with: the
+/// file's generation as the listing read it. Its field is this module's:
+/// only `ProjectCmd::parse` makes one.
+///
+/// ```compile_fail
+/// use chimera_core::console::OverEdits;
+/// let _ = OverEdits::Discard(Default::default());
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Discard(Generation);
+
+impl chimera_engine::confirm::EditorProof<crate::project::ProjectSource> for Discard {}
+
+impl Discard {
+    /// It was said of a load witnessed by `generation`.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.project.said_of"))]
+    pub fn said_of(&self, generation: Generation) -> bool {
+        self.0 == generation
+    }
+}
+
 /// A load over a project with unsaved edits: refused, or the editor's own
 /// confirm said to drop them (`discard`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverEdits {
     Refuse,
-    Discard,
+    Discard(Discard),
 }
 
 /// One project command, typed at the boundary.
@@ -98,18 +121,20 @@ impl ProjectCmd {
             };
             let id = n(words.next()).and_then(ProjectId::new);
             let generation = n(words.next()).map(Generation::new);
+            let (Some(id), Some(generation)) = (id, generation) else {
+                return Err(ProjectRefusal::Usage);
+            };
             let over = match words.next() {
                 None => OverEdits::Refuse,
-                Some(w) if w.eq_ignore_ascii_case(DISCARD.bytes()) => OverEdits::Discard,
+                Some(w) if w.eq_ignore_ascii_case(DISCARD.bytes()) => {
+                    OverEdits::Discard(Discard(generation))
+                }
                 Some(_) => return Err(ProjectRefusal::Usage),
             };
-            match (id, generation) {
-                (Some(id), Some(generation)) => ProjectCmd::Load {
-                    id,
-                    generation,
-                    over,
-                },
-                (Some(_) | None, Some(_) | None) => return Err(ProjectRefusal::Usage),
+            ProjectCmd::Load {
+                id,
+                generation,
+                over,
             }
         } else {
             return Err(ProjectRefusal::Usage);
@@ -167,7 +192,7 @@ pub fn check(c: ProjectCmd, ui: &UiState) -> Result<(), NotNow> {
             match (over, ui.project_status()) {
                 (OverEdits::Refuse, ProjectStatus::Modified) => Err(NotNow::Edited),
                 (OverEdits::Refuse, ProjectStatus::Pristine | ProjectStatus::Saved)
-                | (OverEdits::Discard, _) => Ok(()),
+                | (OverEdits::Discard(_), _) => Ok(()),
             }
         }
     }

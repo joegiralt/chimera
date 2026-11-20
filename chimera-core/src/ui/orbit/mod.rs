@@ -305,6 +305,12 @@ impl OrbitUi {
         }
     }
 
+    /// The load epoch of the project held: it moves when one is loaded.
+    #[inline(always)]
+    pub(in crate::ui) fn epoch(&self) -> u32 {
+        self.epoch
+    }
+
     /// A project was loaded at `epoch`, before its publish: views from
     /// before it are another project's, every command before it is void,
     /// and a capture armed in the last one is dropped. The runner takes

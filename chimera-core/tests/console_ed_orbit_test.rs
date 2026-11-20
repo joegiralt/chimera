@@ -82,8 +82,8 @@ fn orbit_lines(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn rev(f: &Fake, n: SceneIdx) -> u16 {
-    f.ui.project().orbit().slot_rev(n)
+fn rev(f: &Fake, n: SceneIdx) -> u32 {
+    f.ui.project().orbit().slot_rev(n).get()
 }
 
 // ---- describe ----
@@ -273,16 +273,26 @@ fn bpm_under_a_midi_clock_is_refused() {
 
 // ---- transport ----
 
-/// SYNC EXT: the DAW drives the transport (ADR 0080), and both refuse.
+/// SYNC EXT, the default: `play` and `stop` are B6's press, which is
+/// never refused (ADR 0080: the last word wins), so the editor starts
+/// ORBIT out of the box.
 #[test]
-fn transport_under_ext_refuses() {
+fn transport_under_ext_is_b6s_press() {
     let mut f = Fake::new();
-    for c in ["play", "stop"] {
-        assert_eq!(
-            ask(&mut f, &format!("ed orbit {c}\n")),
-            "ERR ed orbit: SYNC EXT, the DAW drives the transport\n"
-        );
-    }
+    f.ui.flush_orbit();
+    let head = f.ui.orbit().log().head();
+    ok(&mut f, "ed orbit play");
+    f.ui.flush_orbit();
+    let played = f.ui.orbit().log().head();
+    assert_ne!(played, head, "B6's press is in the log");
+    f.ui.set_orbit_view(&OrbitView {
+        running: true,
+        acked: played,
+        ..OrbitView::default()
+    });
+    ok(&mut f, "ed orbit stop");
+    f.ui.flush_orbit();
+    assert_ne!(f.ui.orbit().log().head(), played, "stop is a press");
     assert_eq!(
         ask(&mut f, "ed orbit toggle\n"),
         "ERR ed orbit takes play or stop\n"

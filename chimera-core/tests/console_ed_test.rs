@@ -1515,3 +1515,56 @@ fn writes_editor_part_fixture() {
     let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(on_disk == text, "BLESS=1 rewrites {}", path.display());
 }
+
+/// The review's I3: a yes that is no key's takes an `EditorProof`, and the
+/// only proofs in the workspace are `ed`'s two tokens, whose fields are
+/// private to the modules that parse and check them (`orbit::Held`, made
+/// by `holds`; `project::Discard`, made by the `discard` word).
+#[test]
+fn only_the_ed_path_proves_an_editors_yes() {
+    use std::path::Path;
+    fn walk(dir: &Path, out: &mut Vec<(String, String)>, root: &Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out, root);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let text = std::fs::read_to_string(&p).unwrap();
+                for l in text.lines().map(str::trim) {
+                    if l.starts_with("impl") && l.contains("EditorProof<") && l.contains(" for ") {
+                        let at = p.strip_prefix(root).unwrap().to_str().unwrap();
+                        out.push((at.to_string(), l.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let mut found = Vec::new();
+    for c in std::fs::read_dir(root).unwrap().flatten() {
+        let name = c.file_name();
+        if name.to_str().is_some_and(|n| n.starts_with("chimera-")) {
+            walk(&c.path().join("src"), &mut found, root);
+            walk(&c.path().join("tests"), &mut found, root);
+        }
+    }
+    found.sort();
+    let want = [
+        (
+            "chimera-core/src/console/ed/orbit.rs",
+            "impl chimera_engine::confirm::EditorProof<SceneSlot> for Held {}",
+        ),
+        (
+            "chimera-core/src/console/ed/project.rs",
+            "impl chimera_engine::confirm::EditorProof<crate::project::ProjectSource> for Discard {}",
+        ),
+    ];
+    let got: Vec<(&str, &str)> = found
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    assert_eq!(got, want);
+}

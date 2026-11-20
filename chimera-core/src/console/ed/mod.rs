@@ -37,7 +37,11 @@ pub use describe::{
 #[cfg(any(test, feature = "test-support"))]
 pub use edits::StoredRefusal;
 pub use edits::{EdState, Pushed, REFUSED as ED_REFUSED, SetRefusal};
-pub(crate) use orbit::{NotNow as OrbitNotNow, OrbitCmd, Seen as OrbitSeen, check as orbit_check};
+#[cfg(feature = "midi-map")]
+pub(crate) use map::{KeepMap, RowIx};
+pub(crate) use orbit::{
+    NotNow as OrbitNotNow, OrbitCmd, Seen as OrbitSeen, check as orbit_check, holds as orbit_holds,
+};
 pub use pages::schema_pages;
 pub use project::{EdName, OverEdits, ProjectCmd};
 pub use schema::{Round, Schema};

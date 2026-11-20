@@ -49,7 +49,7 @@ use chimera_hal::store::VolumeId;
 
 use crate::block::DiskCode;
 use crate::name::ProjectName;
-use crate::orbit::scene::{OrbitSong, SceneIdx};
+use crate::orbit::scene::{OrbitSong, SceneIdx, SlotRev};
 use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
@@ -442,9 +442,10 @@ answered!(OverwriteTarget: "SAVE OVER, CLEAR or OVERWRITE THAT ONE", DeleteTarge
 /// one, with what the slot was when the prompt opened:
 ///
 /// ```compile_fail,E0451
+/// use chimera_engine::orbit::scene::SlotRev;
 /// use chimera_engine::project::{Confirmed, SceneAsk, SceneSlot};
 /// fn forge(a: &SceneAsk) -> Confirmed<SceneSlot> {
-///     Confirmed { target: a.slot(), witness: 0 }
+///     Confirmed { target: a.slot(), witness: SlotRev::new(0) }
 /// }
 /// ```
 ///
@@ -484,14 +485,14 @@ impl SceneSlot {
 
 /// A slot written since refuses it: the slot's rev as the prompt saw it.
 impl Witnessed for SceneSlot {
-    type Witness = u16;
+    type Witness = SlotRev;
 }
 
 /// SAVE OVER's question: the slot, as it was when the prompt opened.
 #[derive(Debug)]
 pub struct SceneAsk {
     slot: SceneSlot,
-    seen: u16,
+    seen: SlotRev,
 }
 
 impl SceneAsk {
@@ -512,7 +513,7 @@ impl SceneAsk {
     /// Slot `n` as the browser editor saw it, at rev `seen` (`since`'s
     /// `slot` line, ADR 0289): its confirm dialog's question.
     #[inline(always)]
-    pub fn seen(n: SceneIdx, seen: u16) -> SceneAsk {
+    pub fn seen(n: SceneIdx, seen: SlotRev) -> SceneAsk {
         SceneAsk {
             slot: SceneSlot(n),
             seen,

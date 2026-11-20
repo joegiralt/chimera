@@ -18,10 +18,11 @@
 use core::fmt::{self, Write};
 
 use super::lit::{QUOTE, QUOTE_SHUT, lit, uint};
-use crate::orbit::clock::{ClockSource, SyncMode};
-use crate::orbit::scene::{OrbitSong, SCENES, Scene, SceneIdx};
+use crate::orbit::clock::ClockSource;
+use crate::orbit::scene::{OrbitSong, SCENES, Scene, SceneIdx, SlotRev};
 use crate::orbit::walk::Pool;
 use crate::orbit::{MAX_POOL, MAX_SEGS, MAX_STEPS, RINGS, RingIdx};
+use crate::project::{Confirmed, SceneAsk, SceneSlot};
 use crate::ui::UiState;
 use crate::ui::orbit::OrbitCell;
 use chimera_theory::{Degree, Interval, Note, Scale};
@@ -62,28 +63,38 @@ fn cell_token(c: OrbitCell) -> &'static str {
     }
 }
 
-/// A slot's rev as `since`'s `slot` line said it: the witness a command
-/// that writes the slot carries (`Confirmed<SceneSlot>`).
+/// A slot and its rev as `since`'s `slot` line said them: the witness a
+/// command that writes the slot carries. Its fields are this module's:
+/// only the parse makes one, from the wire's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SlotRev(u16);
+pub struct Seen {
+    slot: SceneIdx,
+    rev: SlotRev,
+}
 
-impl SlotRev {
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.rev_of"))]
-    pub fn of(song: &OrbitSong, n: SceneIdx) -> SlotRev {
-        SlotRev(song.slot_rev(n))
-    }
-
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.rev_get"))]
-    pub const fn get(self) -> u16 {
-        self.0
+impl Seen {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.seen_slot"))]
+    pub const fn slot(self) -> SceneIdx {
+        self.slot
     }
 }
 
-/// A slot and its rev, as the editor saw them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Seen {
-    pub slot: SceneIdx,
-    pub rev: SlotRev,
+/// Proof that a scene command's witness held: the slot read the rev the
+/// editor sent when `holds` looked. The editor's yes (`EditorProof`), and
+/// the only way from an `ed scene` line to a `Confirmed<SceneSlot>`; only
+/// `holds` makes one.
+pub struct Held(Seen);
+
+impl chimera_engine::confirm::EditorProof<SceneSlot> for Held {}
+
+impl Held {
+    /// The slot confirmed as the editor saw it: the rev `holds` checked
+    /// is the one the song's write checks again.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.confirmed"))]
+    pub fn confirmed(self) -> Confirmed<SceneSlot> {
+        let yes = chimera_engine::confirm::Said::editor_confirm(&self);
+        Confirmed::said(SceneAsk::seen(self.0.slot, self.0.rev), yes)
+    }
 }
 
 /// A segment of the progression, 1–8 on the wire.
@@ -363,7 +374,7 @@ fn ring(w: &[u8]) -> Option<RingIdx> {
 
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.rev"))]
 fn rev(w: &[u8]) -> Option<SlotRev> {
-    u16::try_from(number(w)?).ok().map(SlotRev)
+    Some(SlotRev::new(number(w)?))
 }
 
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.seen"))]
@@ -385,8 +396,6 @@ fn note(w: &[u8]) -> Option<Note> {
 pub enum NotNow {
     /// The build has no ORBIT.
     Unbuilt,
-    /// SYNC EXT: the DAW drives the transport (ADR 0080).
-    Synced,
     /// A switch waits to land: what lands stays what was queued.
     SwitchPending,
     /// The slot was written since the editor's `since` said its rev.
@@ -405,7 +414,6 @@ impl NotNow {
     pub fn write(self, w: &mut dyn Write) -> fmt::Result {
         w.write_str(match self {
             NotNow::Unbuilt => UNBUILT.get(),
-            NotNow::Synced => SYNCED.get(),
             NotNow::SwitchPending => SWITCH_PENDING.get(),
             NotNow::SlotChanged => SLOT_CHANGED.get(),
             NotNow::Saved => SAVED_ASKS.get(),
@@ -415,12 +423,21 @@ impl NotNow {
     }
 }
 
-/// `seen` still holds: its slot unwritten since.
+/// `s` still holds, proven: its slot unwritten since the editor read it.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.holds"))]
-pub fn holds(song: &OrbitSong, s: Seen) -> Result<(), NotNow> {
-    match SlotRev::of(song, s.slot) == s.rev {
-        true => Ok(()),
+pub fn holds(song: &OrbitSong, s: Seen) -> Result<Held, NotNow> {
+    match song.slot_rev(s.slot) == s.rev {
+        true => Ok(Held(s)),
         false => Err(NotNow::SlotChanged),
+    }
+}
+
+/// `holds`, the proof dropped: the answer's check.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.unmoved"))]
+fn unmoved(song: &OrbitSong, s: Seen) -> Result<(), NotNow> {
+    match holds(song, s) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
     }
 }
 
@@ -437,22 +454,21 @@ pub fn check(c: OrbitCmd, ui: &UiState) -> Result<(), NotNow> {
         None => r,
     };
     match c {
-        OrbitCmd::Transport(_) => match crate::ui::ed_cue::sync(ui) {
-            SyncMode::Ext => Err(NotNow::Synced),
-            SyncMode::Int => Ok(()),
-        },
         OrbitCmd::Save(n) => switching(match n != song.current() && song.saved().contains(n) {
             true => Err(NotNow::Saved),
             false => Ok(()),
         }),
-        OrbitCmd::SaveOver(s) => switching(holds(song, s)),
+        OrbitCmd::SaveOver(s) => switching(unmoved(song, s)),
         OrbitCmd::Clear(s) => switching(playing(song, s)),
         OrbitCmd::Reload(s) => switching(playing(song, s).and_then(|()| match song.edited() {
             true => Ok(()),
             false => Err(NotNow::NothingToReload),
         })),
-        OrbitCmd::Move(a, b) => switching(holds(song, a).and_then(|()| holds(song, b))),
-        OrbitCmd::Queue(_)
+        OrbitCmd::Move(a, b) => switching(unmoved(song, a).and_then(|()| unmoved(song, b))),
+        // B6 is never refused, whoever drives the transport (ADR 0080:
+        // under SYNC EXT a press still flips it, the last word wins).
+        OrbitCmd::Transport(_)
+        | OrbitCmd::Queue(_)
         | OrbitCmd::Chord(..)
         | OrbitCmd::Scale(_)
         | OrbitCmd::Step(..)
@@ -464,7 +480,7 @@ pub fn check(c: OrbitCmd, ui: &UiState) -> Result<(), NotNow> {
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.playing"))]
 fn playing(song: &OrbitSong, s: Seen) -> Result<(), NotNow> {
     match s.slot == song.current() {
-        true => holds(song, s),
+        true => unmoved(song, s),
         false => Err(NotNow::NotPlaying),
     }
 }
@@ -511,14 +527,14 @@ pub(super) struct SlotLine {
 impl SlotLine {
     pub(super) const NONE: SlotLine = SlotLine {
         saved: false,
-        rev: SlotRev(0),
+        rev: SlotRev::new(0),
     };
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.orbit.slot_now"))]
     pub(super) fn now(song: &OrbitSong, n: SceneIdx) -> SlotLine {
         SlotLine {
             saved: song.saved().contains(n),
-            rev: SlotRev::of(song, n),
+            rev: song.slot_rev(n),
         }
     }
 
@@ -535,7 +551,7 @@ impl SlotLine {
             false => NEUTRAL.get(),
         })?;
         w.write_str(REV.get())?;
-        uint(w, u32::from(self.rev.get()))?;
+        uint(w, self.rev.get())?;
         w.write_char('\n')
     }
 }
@@ -687,7 +703,6 @@ lit!(SCALE_USAGE = "ERR ed scale takes <mask 1-4095, bit 0 set>\n");
 lit!(STEP_USAGE = "ERR ed step takes <ring 1-5> <step 1-32> <note 0-127>\n");
 lit!(POOL_USAGE = "ERR ed pool takes <ring 1-5> <note 0-127>, 1-8 of them\n");
 lit!(UNBUILT = "ERR ed orbit is not in this build\n");
-lit!(SYNCED = "ERR ed orbit: SYNC EXT, the DAW drives the transport\n");
 lit!(SWITCH_PENDING = "ERR ed scene: a switch is pending\n");
 lit!(SLOT_CHANGED = "ERR ed scene: the slot changed since: ed since\n");
 lit!(SAVED_ASKS = "ERR ed scene save: a saved scene: over <rev>\n");

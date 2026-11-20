@@ -617,6 +617,39 @@ fn a_stale_load_witness_writes_nothing() {
     assert!(!r.f.ui.card_pending());
 }
 
+/// A project loaded while a route glides (I1): the act was for the
+/// project that left, and the loaded one's cell is never stepped.
+#[test]
+fn a_project_load_drops_a_route_in_progress() {
+    fn cutoff(r: &mut Rig) -> Option<i32> {
+        since(&mut r.f, 0)
+            .lines()
+            .find_map(|l| l.strip_prefix("route ENV2:FILTER.CUTOFF "))
+            .map(|l| l.split(' ').next().unwrap().parse().unwrap())
+    }
+    let mut r = Rig::new();
+    assert_eq!(r.ask("ed project saveas PLAIN\n"), "OK queued\n");
+    r.pass();
+    assert_eq!(r.ask("ed projects\n"), "OK queued\n");
+    r.pass();
+    let (id, g) = r.listed("PLAIN");
+    assert_eq!(r.ask("ed route ENV2:FILTER.CUTOFF 127\n"), "OK queued\n");
+    apply(&mut r.f);
+    assert_eq!(cutoff(&mut r), Some(10));
+    assert_eq!(
+        r.ask(&format!("ed project load {id} {g} discard\n")),
+        "OK queued\n"
+    );
+    // The route steps once more, the load is queued behind it and runs.
+    r.pass();
+    assert_eq!(cutoff(&mut r), None, "PLAIN has no route");
+    for _ in 0..30 {
+        r.pass();
+    }
+    assert_eq!(cutoff(&mut r), None);
+    assert_ne!(r.f.ui.project_status(), ProjectStatus::Modified);
+}
+
 /// The editor's fixture: `ed describe SETTINGS` as the default build
 /// describes it (ORBIT's SYNC, USB AUDIO and PUSH ENCODERS are features).
 #[cfg(all(feature = "orbit", feature = "usb-audio", feature = "push-encoders"))]

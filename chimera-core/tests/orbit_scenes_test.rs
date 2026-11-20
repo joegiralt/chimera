@@ -1716,3 +1716,17 @@ fn songs_differ_by_live_alone() {
     d.live_mut_for_test().chords.tonic = a.live().chords.tonic;
     assert_ne!(c, d, "the slot matches, live does not");
 }
+
+/// A slot's rev never comes round in a session: 65,536 writes later (a
+/// 16-bit rev's wrap) a confirmation from before them still refuses.
+#[test]
+fn a_confirmation_does_not_hold_again_after_65536_writes() {
+    let mut ui = in_orbit();
+    let n = ui.project().orbit().current();
+    let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), n);
+    let song = ui.project_mut().orbit_mut();
+    for _ in 0..65_536 {
+        song.edit(&mut |_| {});
+    }
+    assert!(!c.holds(song), "the rev wrapped onto the witness");
+}

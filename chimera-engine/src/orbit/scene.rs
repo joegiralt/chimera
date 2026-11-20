@@ -316,7 +316,9 @@ pub struct OrbitSong {
     pub bpm: Bpm,
     scenes: [Scene; SCENES],
     /// Moves on every write to its slot; run-time only, never saved.
-    slot_revs: [u16; SCENES],
+    /// 32 bits: no session writes a slot 4 billion times, so a witness
+    /// never meets its rev again (ADR 0289's review).
+    slot_revs: [u32; SCENES],
     /// The slots holding a scene, not the neutral one. Kept on each
     /// write, so no frame compares whole scenes.
     saved: SceneSet,
@@ -343,6 +345,25 @@ impl PartialEq for OrbitSong {
 }
 
 impl Eq for OrbitSong {}
+
+/// A slot's writes so far (`OrbitSong::slot_rev`): what a prompt, or the
+/// browser editor's `since`, saw of the slot, and a `Confirmed<SceneSlot>`'s
+/// witness. A count, so any number reads as one: a wrong one only refuses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotRev(u32);
+
+impl SlotRev {
+    /// The rev the browser editor sent back, a decimal on the wire.
+    #[inline(always)]
+    pub const fn new(n: u32) -> SlotRev {
+        SlotRev(n)
+    }
+
+    #[inline(always)]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
 
 /// NEW's slot `i`: the init scene first, the rest neutral.
 fn new_scene(i: usize) -> Scene {
@@ -435,11 +456,11 @@ impl OrbitSong {
         self.queued
     }
 
-    /// Slot `n`'s writes so far, wrapping: a `Confirmed<SceneSlot>`'s
-    /// witness, and what the browser editor reads to give one (ADR 0289).
+    /// Slot `n`'s writes so far: a `Confirmed<SceneSlot>`'s witness, and
+    /// what the browser editor reads to give one (ADR 0289).
     #[inline(always)]
-    pub fn slot_rev(&self, n: SceneIdx) -> u16 {
-        self.slot_revs[n.0 as usize]
+    pub fn slot_rev(&self, n: SceneIdx) -> SlotRev {
+        SlotRev(self.slot_revs[n.0 as usize])
     }
 
     /// SCENE turned to `s`: queued, to land on the loop; `live` stays the
