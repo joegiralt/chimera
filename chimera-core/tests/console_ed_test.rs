@@ -550,11 +550,17 @@ fn get_says_a_stored_value_that_is_no_number() {
         f.ui.project_mut().edit_part(P1).sound.params.filter.cutoff = v;
         let got = ask(&mut f, &format!("ed get {ed}\n"));
         let words: Vec<_> = got.lines().next().unwrap().split(' ').collect();
-        assert_eq!((words[0], words[1], words[3]), ("val", ed.to_string().as_str(), word), "{got}");
+        assert_eq!(
+            (words[0], words[1], words[3]),
+            ("val", ed.to_string().as_str(), word),
+            "{got}"
+        );
         assert_eq!(got.lines().nth(1), Some("OK"), "{got}");
         let (lines, _) = since(&mut f, 0);
         assert!(
-            lines.iter().any(|l| l.starts_with(&format!("val {ed} ")) && l.split(' ').nth(3) == Some(word)),
+            lines
+                .iter()
+                .any(|l| l.starts_with(&format!("val {ed} ")) && l.split(' ').nth(3) == Some(word)),
             "since: {word}"
         );
     }
@@ -674,7 +680,11 @@ fn get_then_set_is_bit_exact() {
                 assert_eq!(ask(&mut f, &format!("ed set {ed} {text}\n")), "OK queued\n");
                 apply(&mut f);
                 let now = stored_of(&mut f, a);
-                assert_eq!(now.to_bits(), was.to_bits(), "{ed}: {text} came back {now:e}");
+                assert_eq!(
+                    now.to_bits(),
+                    was.to_bits(),
+                    "{ed}: {text} came back {now:e}"
+                );
                 n += 1;
             }
         }

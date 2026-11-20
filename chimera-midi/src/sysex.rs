@@ -81,9 +81,7 @@ impl DumpWho {
 /// `F0 7D 43 48 01 <who> F7`, as its body between `F0` and `F7`.
 pub fn dump_request(body: &[u8]) -> Option<DumpWho> {
     match *body {
-        [a, b, c, DUMP_REQUEST, who] if [a, b, c] == CHIMERA => {
-            DumpWho::from_wire(U7::new(who)?)
-        }
+        [a, b, c, DUMP_REQUEST, who] if [a, b, c] == CHIMERA => DumpWho::from_wire(U7::new(who)?),
         _ => None,
     }
 }

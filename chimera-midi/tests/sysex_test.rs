@@ -254,7 +254,10 @@ fn a_dump_request_names_a_part_a_channel_or_the_edited_part() {
     let ask = |who| dump_ask(&[0xF0, 0x7D, 0x43, 0x48, 0x01, who, 0xF7]);
     for n in 0..16 {
         assert_eq!(ask(n), Some(DumpWho::Part(PartNo::new(n).unwrap())));
-        assert_eq!(ask(0x10 | n), Some(DumpWho::Channel(Channel::new(n).unwrap())));
+        assert_eq!(
+            ask(0x10 | n),
+            Some(DumpWho::Channel(Channel::new(n).unwrap()))
+        );
     }
     assert_eq!(ask(0x7F), Some(DumpWho::Editing));
     for who in 0x20..0x7F {

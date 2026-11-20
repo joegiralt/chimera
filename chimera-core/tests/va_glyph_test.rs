@@ -605,7 +605,10 @@ fn shape_draws_the_wave_it_makes() {
         settle(&mut ui);
         if !matches!(wave, 0 | 127) {
             assert_eq!(va(&ui).wave[0], v.wave[0], "{name}");
-            assert!(band(&render_ui(&ui), theme::WAVE_W) == b, "{name}: WAVE's picture");
+            assert!(
+                band(&render_ui(&ui), theme::WAVE_W) == b,
+                "{name}: WAVE's picture"
+            );
         }
     }
     let got: Vec<(&str, u64)> = got.iter().map(|(n, h)| (n.as_str(), *h)).collect();

@@ -1102,7 +1102,10 @@ fn a_note_turn_changes_only_its_chip() {
         let cw = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) / n - 4;
         let font = chip_font(cw).unwrap_or_else(|| panic!("{n} chips: no font"));
         for note in (12..=127).filter_map(Note::new) {
-            assert!(text_width(font, &note.to_string(), 0) <= cw - 2, "{n} chips, {note}");
+            assert!(
+                text_width(font, &note.to_string(), 0) <= cw - 2,
+                "{n} chips, {note}"
+            );
         }
     }
 
@@ -1110,8 +1113,9 @@ fn a_note_turn_changes_only_its_chip() {
     to_notes(&mut ui, 3);
     let r = ui.location().orbit().unwrap().ring().get() as usize;
     let notes = [48, 50, 52, 53, 55, 57, 59, 72].map(|n| Note::new(n).unwrap());
-    ui.project_mut().orbit_mut().live_mut_for_test().rings[r].ring.pool =
-        Pool::new(&notes).unwrap();
+    ui.project_mut().orbit_mut().live_mut_for_test().rings[r]
+        .ring
+        .pool = Pool::new(&notes).unwrap();
     feed(&mut ui, Input::turn(F, 9).and_held(Mix));
     assert_eq!(ui.orbit().chip, 7);
     let slot = (theme::VIZ_RIGHT - theme::VIZ_LEFT + 4) as f32 / 8.0;

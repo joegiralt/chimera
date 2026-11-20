@@ -84,7 +84,11 @@ impl Rig {
         let mut b = [0u8; OUT_RING_LEN];
         let n = self.din.pop_into(&mut b[..(self.credit / 1000) as usize]);
         // An idle UART banks no time.
-        self.credit = if n == 0 { 0 } else { self.credit - n as u32 * 1000 };
+        self.credit = if n == 0 {
+            0
+        } else {
+            self.credit - n as u32 * 1000
+        };
         self.wire.extend(&b[..n]);
     }
 
@@ -295,7 +299,10 @@ fn din_is_paced_and_a_turn_still_goes_at_once() {
     // Whole messages only: the wire still reads as NRPNs and one end.
     let (heard, end) = dump(&r.wire);
     assert_eq!(end, Some(0));
-    assert!(heard.len() > want(&r.ui, P[0]).len(), "the dump and the turn");
+    assert!(
+        heard.len() > want(&r.ui, P[0]).len(),
+        "the dump and the turn"
+    );
 }
 
 /// Asked on USB, answered on USB alone, a ring at a time.
@@ -327,7 +334,10 @@ fn the_request_names_its_part() {
     r.ui.project_mut().edit_part(P[2]).mix.channel = ch;
     r.ui.project_mut().edit_part(P[4]).mix.channel = ch;
     let free = Channel::new(13).unwrap();
-    assert!(P.iter().all(|&p| r.ui.project().part(p).mix.channel != free));
+    assert!(
+        P.iter()
+            .all(|&p| r.ui.project().part(p).mix.channel != free)
+    );
     for _ in 0..50 {
         r.pass(&[]);
     }
@@ -411,7 +421,11 @@ fn a_load_or_a_new_ask_starts_again() {
     let (heard, end) = dump(&r.wire);
     let want_va = want(&r.ui, P[0]);
     assert_eq!(end, Some(0));
-    assert_eq!(heard[heard.len() - want_va.len()..], want_va[..], "VA, whole, last");
+    assert_eq!(
+        heard[heard.len() - want_va.len()..],
+        want_va[..],
+        "VA, whole, last"
+    );
 
     screen::init_part_engine(&mut r.ui, P[1], EngineType::Modal);
     for _ in 0..50 {
