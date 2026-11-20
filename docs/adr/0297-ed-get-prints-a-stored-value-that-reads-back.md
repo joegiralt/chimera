@@ -1,6 +1,6 @@
 # 0297. `ed get` prints a stored value that reads back as itself, and the mirror draws a still
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20)
 - **Deciders:** firmware, the editor (#1035, found by `chimera-screen`'s `a_render_is_the_desktop_simulators`)
 
 ## Context
@@ -28,7 +28,7 @@ Core's float `Display` would print exactly, but it is 20 KB of bank 1 that `ed` 
 
 ## Consequences
 - A `val` line's stored word can be longer between steps (up to nine significant digits; under 1e-7, more: 46 decimals at the very most). `the_worst_drum_answer_fits_one_answer` now says its assumption outright: values on their params' steps (as its points always were); it gives 29,900 B of 32,000. An answer that outgrew the bound is refused whole (`ERR ed since too large`, ADR 0285), never cut.
-- The unit's own `ed set` reads a decimal by float arithmetic (`i + f / 10^k`), not correctly rounded: a value `ed get` printed, sent back as text, can land an ulp off. The mirror takes values as floats, so this doesn't reach it; making `decimal` exact is not done here.
+- The unit's own `ed set` reads a decimal by float arithmetic (`i + f / 10^k`), not correctly rounded: a value `ed get` printed, sent back as text, can land an ulp off. The mirror takes values as floats, so this doesn't reach it; making `decimal` exact is not done here (private issue #1038). A stored NaN or infinity prints saturated (private issue #1039).
 - The editor's screens of a Sound whose LFOs move a shown cell change once: to the still, from wherever the page's paint history had left them.
 - Flash: below.
 
