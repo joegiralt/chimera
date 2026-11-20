@@ -88,7 +88,9 @@ fn a_jittering_clock_never_moves_the_synced_delay() {
         }
         // Before the clock: the project's tempo.
         assert_eq!(seen[blocks(0.9)], (Tempo(120.0), (18_000.0, 0)));
-        let moves: Vec<usize> = (1..seen.len()).filter(|&b| seen[b].0 != seen[b - 1].0).collect();
+        let moves: Vec<usize> = (1..seen.len())
+            .filter(|&b| seen[b].0 != seen[b - 1].0)
+            .collect();
         assert!(moves.len() <= 1, "{bpm}: {moves:?}");
         // The one move over (a 20 ms crossfade, or a glide), the head
         // stays put.

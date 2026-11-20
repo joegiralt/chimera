@@ -118,7 +118,9 @@ fn periods_hz(x: &[f32]) -> Vec<f64> {
             at.push(i as f64 + f64::from(-w[0] / (w[1] - w[0])));
         }
     }
-    at.windows(2).map(|w| f64::from(FS) / (w[1] - w[0])).collect()
+    at.windows(2)
+        .map(|w| f64::from(FS) / (w[1] - w[0]))
+        .collect()
 }
 
 /// A note's length at `bpm` halved onto the line from rest, in samples,
@@ -389,10 +391,7 @@ const HZ: f32 = 440.0;
 /// A 440 Hz sine through one clean repeat, `at`'s settings and tempo a
 /// block; with the head's delay and its crossfade's samples left after
 /// each block.
-fn through(
-    secs: f32,
-    at: impl Fn(usize) -> (DelayParams, f32),
-) -> (Vec<f32>, Vec<(f32, u16)>) {
+fn through(secs: f32, at: impl Fn(usize) -> (DelayParams, f32)) -> (Vec<f32>, Vec<(f32, u16)>) {
     let mut d = Box::new(TapeDelay::new());
     let (mut out, mut heads) = (vec![], vec![]);
     let tone = sine(HZ, 0.5);
@@ -414,7 +413,13 @@ fn through(
 fn a_small_tempo_change_glides_within_two_percent() {
     let p = on(clean(), DelayNote::DEFAULT);
     let (up, down) = (blocks(1.0), blocks(2.0));
-    let bpm = move |b: usize| if (up..down).contains(&b) { 121.0 } else { 120.0 };
+    let bpm = move |b: usize| {
+        if (up..down).contains(&b) {
+            121.0
+        } else {
+            120.0
+        }
+    };
     let (out, heads) = through(3.0, |b| (p, bpm(b)));
     assert!(heads.iter().all(|h| h.1 == 0), "a crossfade ran");
 
@@ -429,8 +434,11 @@ fn a_small_tempo_change_glides_within_two_percent() {
     }
     // 250 ms at most at full speed, then the slow-in's few blocks.
     let land = blocks(GLIDE_MAX_S) + 40;
-    assert!(moved.iter().all(|&b| (up..up + land).contains(&b)
-        || (down..down + land).contains(&b)));
+    assert!(
+        moved
+            .iter()
+            .all(|&b| (up..up + land).contains(&b) || (down..down + land).contains(&b))
+    );
     let at_121 = NOTES[DelayNote::DEFAULT.index()].ms(Tempo(121.0)) * FS as f32 / 1000.0;
     assert_eq!(heads[up + land].0, at_121);
     assert_eq!(heads.last().unwrap().0, 18_000.0);
@@ -466,7 +474,11 @@ fn crossfades(what: &str, from: (DelayParams, f32), to: (DelayParams, f32)) {
     let at = blocks(1.0);
     let (out, heads) = through(2.0, |b| if b < at { from } else { to });
     let fade = usize::from(TIME_FADE) / BLOCK_SIZE;
-    assert_eq!(heads[at].1, TIME_FADE - BLOCK_SIZE as u16, "{what}: no fade");
+    assert_eq!(
+        heads[at].1,
+        TIME_FADE - BLOCK_SIZE as u16,
+        "{what}: no fade"
+    );
     assert_eq!(heads[at + fade - 1].1, 0, "{what}: the fade ran on");
     let slid = (1..heads.len())
         .filter(|&b| heads[b].0 != heads[b - 1].0)
@@ -574,8 +586,14 @@ fn the_free_time_and_the_note_are_kept_apart() {
     let mut p = DelayParams::default();
     assert_eq!((DelayParams::SYNC.0, DelayParams::NOTE.0), (12, 13));
     assert_eq!((p.sync(), p.note()), (DelaySync::Free, DelayNote::DEFAULT));
-    assert_eq!(find_spec(&DELAY_SPECS, DelayParams::SYNC).unwrap().ident, "SYNC");
-    assert_eq!(find_spec(&DELAY_SPECS, DelayParams::NOTE).unwrap().ident, "NOTE");
+    assert_eq!(
+        find_spec(&DELAY_SPECS, DelayParams::SYNC).unwrap().ident,
+        "SYNC"
+    );
+    assert_eq!(
+        find_spec(&DELAY_SPECS, DelayParams::NOTE).unwrap().ident,
+        "NOTE"
+    );
 
     p.set(DelayParams::TIME_MS, 122.0);
     p.set(DelayParams::SYNC, 1.0);
@@ -666,10 +684,18 @@ fn host_cost() {
     let cases: [(&str, DelayParams, &dyn Fn(usize) -> f32); 6] = [
         ("TAPE FREE", busy, &steady),
         ("TAPE SYNC", on(busy, DelayNote::DEFAULT), &steady),
-        ("TAPE SYNC, tempo moving", on(busy, DelayNote::DEFAULT), &moving),
+        (
+            "TAPE SYNC, tempo moving",
+            on(busy, DelayNote::DEFAULT),
+            &moving,
+        ),
         ("GRAIN FREE", grain(busy), &steady),
         ("GRAIN SYNC", on(grain(busy), DelayNote::DEFAULT), &steady),
-        ("GRAIN SYNC, tempo moving", on(grain(busy), DelayNote::DEFAULT), &moving),
+        (
+            "GRAIN SYNC, tempo moving",
+            on(grain(busy), DelayNote::DEFAULT),
+            &moving,
+        ),
     ];
     const BLOCKS: usize = 20_000;
     let input: Vec<[f32; BLOCK_SIZE]> = (0..64).map(plucks).collect();

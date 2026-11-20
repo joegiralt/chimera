@@ -10,7 +10,9 @@
 //! reverb's (`rev::sync`).
 
 use super::tape::span;
-use super::{DelayNote, DelayParams, DelaySync, Eased, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay};
+use super::{
+    DelayNote, DelayParams, DelaySync, Eased, MAX_DELAY_SAMPLES, TIME_FADE, Tap, TapeDelay,
+};
 use crate::dsp::clampf;
 use crate::dsp::rev::sync::{Division, FoldState, GATE_LENGTH, HYST, Tempo};
 use chimera_hal::BLOCK_SIZE;
@@ -119,11 +121,7 @@ pub fn tap(d: &mut TapeDelay, p: &DelayParams, tempo: Tempo, fs: u32) -> (Tap, C
         DelaySync::Free => d.fold = FoldState(0),
         DelaySync::Sync => {
             let ms = fit(NOTES[aim.note.index()].ms(tempo), &mut d.fold);
-            tap.base = clampf(
-                ms * fs as f32 / 1000.0,
-                1.0,
-                (MAX_DELAY_SAMPLES - 2) as f32,
-            );
+            tap.base = clampf(ms * fs as f32 / 1000.0, 1.0, (MAX_DELAY_SAMPLES - 2) as f32);
         }
     }
     let cause = if aim.sync == DelaySync::Sync && was == (aim, d.fold) {
@@ -141,12 +139,7 @@ pub fn tap(d: &mut TapeDelay, p: &DelayParams, tempo: Tempo, fs: u32) -> (Tap, C
 /// and slowing in; any other starts the 20 ms crossfade once the running
 /// one ends, as a TIME turn always has.
 #[inline(never)]
-pub fn aim(
-    d: &mut TapeDelay,
-    p: &DelayParams,
-    tempo: Tempo,
-    fs: u32,
-) -> (Tap, Option<Slide>) {
+pub fn aim(d: &mut TapeDelay, p: &DelayParams, tempo: Tempo, fs: u32) -> (Tap, Option<Slide>) {
     let (tap, cause) = tap(d, p, tempo, fs);
     if !d.primed {
         (d.time, d.primed) = (tap.base(), true);
@@ -185,7 +178,14 @@ pub fn aim(
         let from = d.speed;
         d.speed = 0.0;
         let lands = d.time + 0.5 * from * BLOCK_SIZE as f32;
-        return (tap, Some(Slide { from, to: 0.0, lands }));
+        return (
+            tap,
+            Some(Slide {
+                from,
+                to: 0.0,
+                lands,
+            }),
+        );
     }
     (d.next, d.fade) = (tap.base(), TIME_FADE);
     (tap, None)
@@ -299,7 +299,10 @@ mod tests {
     #[test]
     fn a_note_the_length_of_the_line_fits() {
         let d = NOTES[8];
-        assert_eq!((d.den, d.kind), (4, crate::dsp::rev::sync::DivKind::Triplet));
+        assert_eq!(
+            (d.den, d.kind),
+            (4, crate::dsp::rev::sync::DivKind::Triplet)
+        );
         let mut st = FoldState(0);
         let ms = fit(d.ms(Tempo(80.0)), &mut st);
         assert_eq!(st, FoldState(0));

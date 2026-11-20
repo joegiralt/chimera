@@ -114,7 +114,11 @@ fn mix_turn_on_time_flips_sync_and_is_hinted() {
     assert_eq!(ui.focus_hint_for_test(), flip);
     mix_turn(&mut ui, TIME, 3);
     assert_eq!(delay(&ui).sync(), DelaySync::Sync, "SYNC is the end");
-    assert_eq!(delay(&ui).note(), DelayNote::DEFAULT, "MIX + turn turns no note");
+    assert_eq!(
+        delay(&ui).note(),
+        DelayNote::DEFAULT,
+        "MIX + turn turns no note"
+    );
 
     mix_turn(&mut ui, TIME, -1);
     assert_eq!(delay(&ui), before, "back in FREE, as it was");
@@ -161,11 +165,18 @@ fn time_turns_a_note_a_detent() {
 
     mix_turn(&mut ui, TIME, -1);
     screen::settle(&mut ui);
-    assert_eq!(ui.cell_text_for_test(TIME_SLOT).as_str(), free_text.as_str());
+    assert_eq!(
+        ui.cell_text_for_test(TIME_SLOT).as_str(),
+        free_text.as_str()
+    );
     let ms = delay(&ui).time_ms;
     feed(&mut ui, Input::turn(TIME, -1));
     assert!(delay(&ui).time_ms < ms, "FREE turns the ms");
-    assert_eq!(delay(&ui).note().index(), DelayNote::COUNT - 1, "the note waits");
+    assert_eq!(
+        delay(&ui).note().index(),
+        DelayNote::COUNT - 1,
+        "the note waits"
+    );
 }
 
 /// A note the engine halves reads as it plays, marked: 1/4 at 90 BPM is
@@ -205,7 +216,10 @@ fn a_folded_note_reads_as_it_plays_and_redraws() {
     let band = theme::HEADER_BOTTOM..theme::FOCUS_BOTTOM;
     let cells = theme::FOCUS_BOTTOM..screen::H as i32;
     assert!(rows(&fb.px, band.clone()) != rows(&whole, band), "the band");
-    assert!(rows(&fb.px, cells.clone()) != rows(&whole, cells), "the cell");
+    assert!(
+        rows(&fb.px, cells.clone()) != rows(&whole, cells),
+        "the cell"
+    );
 
     publish_rev_clock(Tempo(1_200.0), FoldState(0), FoldState(-2));
     assert_eq!(note(DelayParams::NOTE), Some("DOUBLED TO FIT 10 MS"));

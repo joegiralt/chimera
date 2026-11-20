@@ -426,8 +426,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // S4 groups.
     let delay_sync = "    *(.text.*5delay4sync* .rodata.*5delay4sync*
       .text.*12chimera_core2ui10delay_sync* .rodata.*12chimera_core2ui10delay_sync*);\n";
-    let s4 =
-        format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}");
+    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"

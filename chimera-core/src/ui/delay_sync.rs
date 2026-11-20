@@ -19,7 +19,8 @@ use crate::ui::view::{DELAY_NOTE, DELAY_TIME, View};
 
 /// The words this module draws, named so they link into bank 2 with it
 /// (`.rodata.*delay_sync*`), not into bank 1's unnamed rodata.
-static WORDS: [u8; 90] = *b"MIX + TURNFREE / SYNCHALVED TO FIT 500 MSDOUBLED TO FIT 10 MSTIME TURNS NOTES OF THE TEMPO";
+static WORDS: [u8; 90] =
+    *b"MIX + TURNFREE / SYNCHALVED TO FIT 500 MSDOUBLED TO FIT 10 MSTIME TURNS NOTES OF THE TEMPO";
 
 /// `WORDS[at..at + len]`; checked at compile time (`WORDS` is UTF-8).
 const fn word_at(at: usize, len: usize) -> &'static str {

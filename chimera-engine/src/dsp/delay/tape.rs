@@ -8,8 +8,8 @@ use super::{
     read, to_line,
 };
 use crate::dsp::clampf;
-use crate::dsp::rev::sync::Tempo;
 use crate::dsp::ease::{at, step_of};
+use crate::dsp::rev::sync::Tempo;
 use chimera_hal::BLOCK_SIZE;
 
 /// The door's entry (`DelayDoor::run`): one block of the delay. GRAIN, or
