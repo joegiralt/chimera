@@ -235,41 +235,41 @@ bench-algo.
       closed door draws nothing.
 
 ## Measurements
-Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 c93eeab4 (tester-04
+Release builds, `CHIMERA_STAMP_CLEAN=1`, origin/0.4 09a9aa13 (tester-04
 merged) against this change merged with it, each set built in both trees.
 Each budget line is 0.4's plus exactly its set's measured change, never
 ADR 0198's slack:
 
 | Set | Bank 1 (B) | Bank 2 used (B) |
 |---|---:|---:|
-| default | +2,272 | +24,000 |
-| orbit | +2,560 | +23,968 |
-| bank2-gate | +2,240 | +24,032 |
-| orbit,usb-config-writer | +2,568 | |
-| fault-inject | +2,648 | |
-| bench-algo | +2,440 | |
+| default | +2,304 | +24,000 |
+| orbit | +2,624 | +24,032 |
+| bank2-gate | +2,328 | +24,000 |
+| orbit,usb-config-writer | +2,640 | |
+| fault-inject | +2,592 | |
+| bench-algo | +2,448 | |
 | bench-algo,master-tape | +2,472 | |
-| bench-routing | +2,560 | |
-| bench-memory | +2,680 | |
+| bench-routing | +2,584 | |
+| bench-memory | +2,712 | |
 | bench-stress | +2,552 | |
-| bench-orbit | +2,280 | |
-| bench-tape | +2,840 | |
-| filter-probes | +2,648 | |
+| bench-orbit | +2,224 | |
+| bench-tape | +2,864 | |
+| filter-probes | +2,600 | |
 
-- Bank 1 on ORBIT (905,400 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
+- Bank 1 on ORBIT (905,984 B; +1,880 before the merge, 144 B the bill's `StillCut` and its Part, the rest PRT ›
   EQ's band over tester-04's overview and meters and REV › DUCK's cell): the three settings' specs and
   `get`/`write`/`enum_*` arms (code, an exception to ADR 0198 as ADR
   0284's are), the names, the bills (`bill::first_voice`, `bill::wash`,
   admission's with the door open or closed), the stub's test and the
   return's ask in `FxBus`, the renderer's arm and the plan's painter.
-- Bank 2 on ORBIT: S4–S5 +23,968 B (`answer` 10.0 KB with the Parts'
+- Bank 2 on ORBIT: S4–S5 +24,032 B (`answer` 10.0 KB with the Parts'
   bands and the rules inlined, the return's pass 4.4 KB, the rate's
   making 2.3 KB, AMOUNT's table 1.5 KB, `ui::smart_eq`); total free
   465 KB. S0–S3 is untouched: 7,328 B free on ORBIT, none of it taken (under
   ADR 0251's 8 KB warning before this change).
 - RAM: ITCM +1,464 B (`PART_EQS`: seven members' filters, levels, cuts
   and dips, the return's listening filters, the rate's coefficients):
-  44,840 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
+  44,872 B used. `SMART_VIEW` 28 B in AXI. D2 unchanged: bench-algo, whose
   D2 a page id overflowed, links with tester-04's page 119 and no new id.
 
 ### CPU
