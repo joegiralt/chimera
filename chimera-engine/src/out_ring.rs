@@ -124,6 +124,14 @@ impl OutRing {
         self.dropped.store(0, Ordering::Relaxed);
     }
 
+    /// The bytes waiting. Either side; a moment's answer.
+    #[inline(always)]
+    pub fn held(&self) -> usize {
+        self.tail
+            .load(Ordering::Acquire)
+            .wrapping_sub(self.head.load(Ordering::Acquire)) as usize
+    }
+
     /// Nothing waits. Either side; a moment's answer.
     #[inline(always)]
     pub fn is_empty(&self) -> bool {

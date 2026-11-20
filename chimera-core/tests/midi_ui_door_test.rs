@@ -74,6 +74,8 @@ fn closed_drains_and_moves_nothing() {
         CtrlEvent::Ctl(ch, Ctl::Pressure(u7(0))),
         CtrlEvent::SensingLost,
         CtrlEvent::Identity { dev: u7(0x7F) },
+        // A dump request (ADR 0298): closed, never answered.
+        CtrlEvent::Dump(chimera_midi::sysex::DumpWho::Editing),
     ];
     let ring = OutRing::new();
     let mut sent = [0u8; 32];

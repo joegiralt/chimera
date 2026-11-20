@@ -230,3 +230,71 @@ mod mts {
         }
     }
 }
+
+// --- The parameter dump (#984) ---
+
+use chimera_midi::sysex::{DumpWho, PartNo, dump_end, dump_request};
+use chimera_midi::value::Channel;
+
+fn dump_ask(bytes: &[u8]) -> Option<DumpWho> {
+    let mut p = Parser::<16>::new();
+    let mut out = None;
+    for &b in bytes {
+        if let Some(Parsed::Event(Event::SysEx(s))) = p.push(b) {
+            out = dump_request(s);
+        }
+    }
+    out
+}
+
+/// `F0 7D 43 48 01 <who> F7`: a Part by number, the Part on a channel,
+/// or the one being edited.
+#[test]
+fn a_dump_request_names_a_part_a_channel_or_the_edited_part() {
+    let ask = |who| dump_ask(&[0xF0, 0x7D, 0x43, 0x48, 0x01, who, 0xF7]);
+    for n in 0..16 {
+        assert_eq!(ask(n), Some(DumpWho::Part(PartNo::new(n).unwrap())));
+        assert_eq!(ask(0x10 | n), Some(DumpWho::Channel(Channel::new(n).unwrap())));
+    }
+    assert_eq!(ask(0x7F), Some(DumpWho::Editing));
+    for who in 0x20..0x7F {
+        assert_eq!(ask(who), None, "{who:#x}");
+    }
+    // Every ask is its wire byte, and back.
+    for who in 0..=0x7F {
+        if let Some(w) = ask(who) {
+            assert_eq!(w.wire().get(), who);
+            assert_eq!(DumpWho::from_wire(w.wire()), Some(w));
+        }
+    }
+    assert_eq!(PartNo::new(16), None);
+}
+
+#[test]
+fn only_chimeras_own_request_is_one() {
+    for b in [
+        &[0xF0, 0x7D, 0x43, 0x48, 0x01, 0xF7][..],
+        &[0xF0, 0x7D, 0x43, 0x48, 0x01, 0x00, 0x00, 0xF7],
+        &[0xF0, 0x7D, 0x43, 0x48, 0x02, 0x00, 0xF7],
+        &[0xF0, 0x7D, 0x48, 0x43, 0x01, 0x00, 0xF7],
+        &[0xF0, 0x7E, 0x43, 0x48, 0x01, 0x00, 0xF7],
+        &[0xF0, 0x41, 0x43, 0x48, 0x01, 0x00, 0xF7],
+        &[0xF0, 0x7E, 0x7F, 6, 1, 0xF7],
+    ] {
+        assert_eq!(dump_ask(b), None, "{b:02X?}");
+    }
+}
+
+/// The head is the identity reply's own maker and family: `7D`, "CH".
+#[test]
+fn the_dumps_end_names_the_part_that_answered() {
+    let mut b = [0u8; 16];
+    let mut w = Writer::new(&mut b);
+    assert!(dump_end(PartNo::new(3).unwrap(), &mut w));
+    let n = w.len();
+    assert_eq!(&b[..n], [0xF0, 0x7D, 0x43, 0x48, 0x02, 0x03, 0xF7]);
+    let mut r = [0u8; 16];
+    let mut w = Writer::new(&mut r);
+    assert!(identity_reply(u7(0), &ID, &mut w));
+    assert_eq!(r[5..8], b[1..4], "maker and family as the reply gives them");
+}
