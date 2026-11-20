@@ -188,7 +188,8 @@ fn message(b: &mut [u8; MSG_MAX], lead: bool, st: u8, n: U14, d: DataValue) -> u
 pub fn data(project: &Project, p: PartId, a: ParamAddr) -> Option<DataValue> {
     let spec = a.spec()?;
     let v = super::midi::stored(project, p, a)?;
-    let index = || libm::roundf(v - spec.min).max(0.0) as u16;
+    // In the spec's steps (FDBK's tenths, ADR 0299), as `nrpn::steps` counts.
+    let index = || libm::roundf((v - spec.min) / spec.step).max(0.0) as u16;
     Some(match nrpn::law(a.block, spec) {
         ValueLaw::Place14 => {
             let x = libm::roundf(crate::dsp::clampf(spec.normalize(v), 0.0, 1.0) * 16383.0);

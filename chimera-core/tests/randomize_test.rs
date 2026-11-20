@@ -253,11 +253,18 @@ fn algo_bounds(s: &Sound, at: &str) {
             let r = ratio(op.coarse, op.fine);
             assert!([0.5, 1.0, 2.0].contains(&r), "{at}: carrier {i} at {r}");
             assert!(op.level >= 80, "{at}: carrier {i} level {}", op.level);
-            assert_eq!(op.feedback, 0, "{at}: carrier {i}");
+            assert_eq!(
+                op.feedback,
+                chimera_core::dsp::algo::params::Fdbk::OFF,
+                "{at}: carrier {i}"
+            );
         }
         assert!(op.ar >= 8, "{at}: op {i} AR {}", op.ar);
         assert!((1..=15).contains(&op.rr), "{at}");
-        assert!(op.feedback <= 4, "{at}");
+        assert!(
+            op.feedback <= chimera_core::dsp::algo::params::Fdbk::tx(4),
+            "{at}"
+        );
     }
     assert!(AlgoId::from_index(x.get()).is_some());
 }

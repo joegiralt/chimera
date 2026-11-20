@@ -105,7 +105,7 @@ suite =
             , test "a_wheel_notch_moves_at_least_one_unit_step" <|
                 \_ ->
                     Expect.all
-                        [ \_ -> Expect.within (Expect.Absolute 1.0e-9) (1 / 7) (Control.wheelNorm (param "OP_A.FDBK"))
+                        [ \_ -> Expect.within (Expect.Absolute 1.0e-9) (1 / 7) (Control.wheelNorm (param "OP_A.VEL"))
                         , \_ -> Expect.within (Expect.Absolute 1.0e-9) (1 / 64) (Control.wheelNorm (param "FILTER.CUTOFF"))
                         ]
                         ()

@@ -377,3 +377,173 @@ fn the_ratio_shows_on_the_three_tuning_cells_only() {
     let part = ParamAddr::new(BlockRef::Algo, AlgoParams::MORPH);
     assert_eq!(chimera_core::ui::view::ratio_note(part, &s), None);
 }
+
+// #990: FDBK in tenths.
+
+use chimera_core::dsp::algo::params::Fdbk;
+use chimera_core::ui::block_registry::ALGO_FEEDBACK;
+
+const FDBK: ParamId = AlgoOpParams::FEEDBACK;
+
+fn fdbk_spec() -> &'static chimera_core::block::ParamSpec {
+    ALGO_OP_SPECS.iter().find(|p| p.id == FDBK).unwrap()
+}
+
+/// #990: FDBK keeps the TX81Z's 0 to 7 and its place on the card and the
+/// NRPN chart, in 71 steps of a tenth.
+#[test]
+fn fdbk_runs_the_tx81zs_range_in_tenths() {
+    use chimera_core::nrpn;
+    use chimera_midi::law::ValueLaw;
+    let s = fdbk_spec();
+    assert_eq!(
+        (s.id, s.ident, s.min, s.max),
+        (ParamId(11), "FDBK", 0.0, 7.0)
+    );
+    assert_eq!((s.step, s.default), (Fdbk::STEP, 0.0));
+    assert_eq!(s.fmt, ValFmt::Tenths(70));
+    assert_eq!(nrpn::steps(s), 70);
+    assert!(matches!(
+        nrpn::law(BlockRef::AlgoOp(Op::A), s),
+        ValueLaw::Index7
+    ));
+    // Every other stepped param still counts whole numbers.
+    for b in BlockRef::ALL {
+        for p in b
+            .specs()
+            .iter()
+            .filter(|p| p.id != FDBK || !matches!(b, BlockRef::AlgoOp(_)))
+        {
+            if p.kind == chimera_core::block::ParamKind::Stepped {
+                assert_eq!(p.step, 1.0, "{b:?} {}", p.label);
+                assert_eq!(nrpn::steps(p), (p.max - p.min).round() as u16);
+            }
+        }
+    }
+}
+
+/// Each tenth is stored, read back as the number a text file writes for
+/// it, shown to one decimal, and one encoder tick from the next.
+#[test]
+fn each_tenth_of_fdbk_is_stored_shown_and_one_tick_apart() {
+    use chimera_core::addr::Blocks;
+    use chimera_core::ui::fmt::{FmtBuf, fmt_val};
+    let mut s = Sound::init(EngineType::Algo);
+    let spec = fdbk_spec();
+    for t in 0..=70u8 {
+        let text = format!("{}.{}", t / 10, t % 10);
+        let x: f32 = text.parse().unwrap();
+        let mut b = s.params.block_mut(BlockRef::AlgoOp(Op::C)).unwrap();
+        b.set(FDBK, x);
+        assert_eq!(b.get(FDBK).to_bits(), x.to_bits(), "{text}");
+        if t < 70 {
+            b.nudge(FDBK, 1);
+            assert_eq!(b.get(FDBK), Fdbk::tenths(t + 1).steps(), "{text} + a tick");
+            b.nudge(FDBK, -1);
+        }
+        let mut shown = FmtBuf::new();
+        fmt_val(&mut shown, spec.normalize(b.get(FDBK)), spec.fmt);
+        assert_eq!(shown.as_str(), text);
+        assert_eq!(s.params.algo.ops[2].feedback, Fdbk::tenths(t));
+    }
+    let mut b = s.params.block_mut(BlockRef::AlgoOp(Op::C)).unwrap();
+    for (v, want) in [
+        (-1.0, 0.0),
+        (9.0, 7.0),
+        (0.04, 0.0),
+        (0.06, 0.1),
+        (3.96, 4.0),
+    ] {
+        b.set(FDBK, v);
+        assert_eq!(b.get(FDBK), want, "{v}");
+    }
+}
+
+/// MIX + a turn steps the TX81Z's whole steps.
+#[test]
+fn a_snap_steps_fdbks_whole_numbers() {
+    use chimera_core::addr::Blocks;
+    let mut s = Sound::init(EngineType::Algo);
+    let mut b = s.params.block_mut(BlockRef::AlgoOp(Op::A)).unwrap();
+    for (from, d, to) in [
+        (0.0, 1, 1.0),
+        (0.3, 1, 1.0),
+        (1.0, 1, 2.0),
+        (6.5, 1, 7.0),
+        (7.0, 1, 7.0),
+        (1.0, -1, 0.0),
+        (2.4, -1, 2.0),
+        (0.0, -1, 0.0),
+    ] {
+        b.set(FDBK, from);
+        b.snap(FDBK, d);
+        assert_eq!(b.get(FDBK), to, "{from} {d:+}");
+    }
+}
+
+/// A Sound saved before holds a whole step: it loads as that step, plays
+/// the TX81Z's swing bit for bit, and saves as the bytes it was.
+#[test]
+fn an_old_sounds_fdbk_loads_and_plays_as_it_did() {
+    use chimera_core::dsp::algo::engine::AlgoLive;
+    use chimera_core::dsp::algo::tx::{FEEDBACK_CYCLES, feedback_cycles};
+    use chimera_core::storage::{MIGRATIONS, RecordBuf, TRANSLATIONS, decode_block, encode_block};
+    for n in 0..=7u8 {
+        // OP_B's block (code 4), FDBK (id 11) as 0.3 wrote it: a whole f32.
+        let mut payload = vec![4u8, 11];
+        payload.extend_from_slice(&f32::from(n).to_le_bytes());
+        let mut s = Sound::init(EngineType::Algo);
+        let lost = decode_block(&payload, MIGRATIONS, TRANSLATIONS, Some(&mut s.params)).unwrap();
+        assert_eq!(lost.count, 0);
+        assert_eq!(s.params.algo.ops[1].feedback, Fdbk::tx(n));
+        let live = AlgoLive::from_params(&s.params.algo);
+        assert_eq!(live.feedback[1].to_bits(), f32::from(n).to_bits());
+        assert_eq!(
+            feedback_cycles(live.feedback[1]).to_bits(),
+            FEEDBACK_CYCLES[usize::from(n)].to_bits()
+        );
+        let base = Sound::init(EngineType::Algo);
+        let mut out = RecordBuf::new();
+        let b = BlockRef::AlgoOp(Op::B);
+        let wrote = encode_block(
+            b,
+            &*s.params.block(b).unwrap(),
+            Some(&*base.params.block(b).unwrap()),
+            &mut out,
+        );
+        assert_eq!(wrote, usize::from(n != 0));
+        if n != 0 {
+            assert_eq!(out.as_slice(), &payload[..]);
+        }
+    }
+}
+
+/// A tick on FBK's page moves a tenth and the cell shows it.
+#[test]
+fn a_tick_on_the_page_is_a_tenth() {
+    let mut ui = ui();
+    to_osc_sub(&mut ui, &ALGO_FEEDBACK);
+    feed(&mut ui, Input::turn(EncoderId::A, 3));
+    settle(&mut ui);
+    let algo = &ui.project().part(PartId::ALL[0]).sound.params.algo;
+    assert_eq!(algo.ops[0].feedback, Fdbk::tenths(3));
+    assert!(first_cell_reads(&render_ui(&ui), "0.3"));
+}
+
+/// The knobs glide FDBK on its place, read from its byte of tenths.
+#[test]
+fn the_knobs_place_fdbk_by_its_tenths() {
+    use chimera_core::dsp::knobs::KNOBS;
+    let mut s = Sound::init(EngineType::Algo);
+    let k = KNOBS
+        .iter()
+        .find(|k| k.addr == op_addr(Op::D, FDBK))
+        .unwrap();
+    for t in 0..=70u8 {
+        s.params.algo.ops[3].feedback = Fdbk::tenths(t);
+        let want = k.spec.normalize(Fdbk::tenths(t).steps());
+        assert!((k.read(&s.params) - want).abs() <= 1e-6, "{t}");
+        let back = k.spec.denormalize(k.read(&s.params));
+        assert!((back - Fdbk::tenths(t).steps()).abs() <= 1e-5, "{t}");
+    }
+}

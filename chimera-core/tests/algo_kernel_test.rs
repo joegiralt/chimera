@@ -146,6 +146,44 @@ fn feedback_adds_harmonics_to_a_sine() {
     assert!(harmonics(FEEDBACK_CYCLES[4]) > 10.0 * harmonics(0.0));
 }
 
+/// #990 (ADR 0299): every tenth of FDBK, through the TX81Z's step 3, adds
+/// harmonics to the tenth before it (past 3.8 the sum over harmonics 2-8
+/// flattens: the energy moves above the eighth); the first tenth is grit,
+/// far under what step 1 was; and a whole step swings what the TX81Z's does, bit
+/// for bit.
+#[test]
+fn every_tenth_of_fdbk_adds_harmonics() {
+    use chimera_core::dsp::algo::params::Fdbk;
+    use chimera_core::dsp::algo::tx::feedback_cycles;
+    let plan = EvalPlan::build(&NONE, 1, &NONE, 1);
+    let harmonics = |t: u8| {
+        let mut ops = silent();
+        ops[0] = OpBlock {
+            feedback: feedback_cycles(Fdbk::tenths(t).steps()),
+            ..op(440.0, 1.0, WaveId::W1)
+        };
+        let out = render(&plan, ops, 100);
+        (2..=8)
+            .map(|h| goertzel(&out[1024..], 440.0 * h as f64))
+            .sum::<f64>()
+    };
+    let h: Vec<f64> = (0..=Fdbk::tx(3).get()).map(harmonics).collect();
+    for t in 1..h.len() {
+        assert!(h[t] > h[t - 1], "tenth {t}: {} after {}", h[t], h[t - 1]);
+    }
+    // The first tenth is grit: what it adds over none is under a fifth of
+    // what step 1 adds.
+    let (grit, step) = (h[1] - h[0], h[10] - h[0]);
+    assert!(grit > 0.0 && step > 5.0 * grit, "{grit} to {step}");
+    for n in 0..=Fdbk::TX_STEPS {
+        assert_eq!(
+            feedback_cycles(Fdbk::tx(n).steps()).to_bits(),
+            FEEDBACK_CYCLES[usize::from(n)].to_bits(),
+            "step {n}"
+        );
+    }
+}
+
 #[test]
 fn the_crossfade_ends_are_its_two_mips() {
     let plan = EvalPlan::build(&NONE, 1, &NONE, 1);

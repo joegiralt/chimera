@@ -52,6 +52,8 @@ enum Kind {
     F32,
     U8,
     I8,
+    /// An ALGO operator's FDBK: a byte of tenths, read in steps (`Fdbk`).
+    Tenths,
 }
 
 impl Knob {
@@ -62,7 +64,8 @@ impl Knob {
         self.place(self.value(p))
     }
 
-    /// Its value in `p`, as `get` gives it: straight from its field.
+    /// Its value in `p`, as `get` gives it (FDBK's in its tenths, which
+    /// `place` takes): straight from its field.
     #[inline]
     pub fn value(&self, p: &ParamSnapshot) -> f32 {
         let base = core::ptr::from_ref(p).cast::<u8>();
@@ -75,6 +78,9 @@ impl Knob {
                 Kind::F32 => f.cast::<f32>().read(),
                 Kind::U8 => f32::from(f.read()),
                 Kind::I8 => f32::from(f.cast::<i8>().read()),
+                // `Fdbk` is its byte (`repr(transparent)`), read as stored:
+                // `knobs` places it by its tenths.
+                Kind::Tenths => f32::from(f.read()),
             }
         }
     }
@@ -134,7 +140,7 @@ const fn plan(a: ParamAddr) -> (usize, Kind) {
             } else if id == AlgoOpParams::LEVEL.0 {
                 (offset_of!(AlgoOpParams, level), Kind::U8)
             } else if id == AlgoOpParams::FEEDBACK.0 {
-                (offset_of!(AlgoOpParams, feedback), Kind::U8)
+                (offset_of!(AlgoOpParams, feedback), Kind::Tenths)
             } else if id == AlgoOpParams::VELOCITY.0 {
                 (offset_of!(AlgoOpParams, velocity), Kind::U8)
             } else if id == AlgoOpParams::FRMT.0 {
@@ -311,14 +317,19 @@ const fn knobs() -> [Knob; KNOB_COUNT] {
                 let (addr, spec) = (ParamAddr::new(r, specs[i].id), &specs[i]);
                 let (at, kind) = plan(addr);
                 assert!(at <= u16::MAX as usize);
-                let span = spec.max - spec.min;
+                // The field's units to the spec's: FDBK's byte is tenths.
+                let per = match kind {
+                    Kind::Tenths => crate::dsp::algo::params::Fdbk::PER_STEP as f32,
+                    Kind::F32 | Kind::U8 | Kind::I8 => 1.0,
+                };
+                let span = (spec.max - spec.min) * per;
                 t[n] = Knob {
                     addr,
                     spec,
                     tau,
                     at: at as u16,
                     kind,
-                    lo: spec.min,
+                    lo: spec.min * per,
                     k: if span == 0.0 { 0.0 } else { 1.0 / span },
                     octaves: matches!(spec.scale, crate::block::Scale::Octaves),
                 };

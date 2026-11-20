@@ -188,7 +188,11 @@ pub fn tx_patch(alg: AlgoId) -> ParamSnapshot {
     ];
     for (i, (wave, coarse, level, feedback)) in ops.into_iter().enumerate() {
         let o = &mut p.algo.ops[i];
-        (o.coarse, o.level, o.feedback) = (coarse, level, feedback);
+        (o.coarse, o.level, o.feedback) = (
+            coarse,
+            level,
+            chimera_core::dsp::algo::params::Fdbk::tx(feedback),
+        );
         (o.d1r, o.d1l, o.d2r) = (6, 10, 2);
         p.algo.try_set_kind(i, OpKind::Table(wave)).unwrap();
     }

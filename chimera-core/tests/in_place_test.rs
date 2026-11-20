@@ -51,7 +51,11 @@ fn every_engine_and_every_effect() -> AudioShared {
     a.morph = 64;
     for i in 0..6 {
         let op = &mut a.ops[i];
-        (op.coarse, op.level, op.feedback) = ([4, 8, 10, 13, 16, 19][i], 99, 7);
+        (op.coarse, op.level, op.feedback) = (
+            [4, 8, 10, 13, 16, 19][i],
+            99,
+            chimera_core::dsp::algo::params::Fdbk::tx(7),
+        );
         let w = chimera_core::dsp::algo::waves::WaveId::from_index(i as u8).unwrap();
         a.try_set_kind(i, chimera_core::dsp::algo::kinds::OpKind::Table(w))
             .unwrap();

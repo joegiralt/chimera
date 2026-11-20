@@ -14,7 +14,7 @@ use super::{Amount, Randomize};
 use crate::block::DiskCode;
 use crate::dsp::algo::algorithms::{ALGO_COUNT, AlgoId};
 use crate::dsp::algo::kinds::OpKind;
-use crate::dsp::algo::params::AlgoParams;
+use crate::dsp::algo::params::{AlgoParams, Fdbk};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::waves::WaveId;
 use crate::dsp::modal::{ModalParams, ResonatorMode};
@@ -286,9 +286,9 @@ fn algo_tone(a: &mut AlgoParams, n: u8, g: &mut Rng) {
         if modulators & 1 << i != 0 && carriers & 1 << i == 0 {
             op.level = l as u8;
             op.velocity = v as u8;
-            op.feedback = f as u8;
+            op.feedback = Fdbk::tx(f as u8);
         } else {
-            op.feedback = 0;
+            op.feedback = Fdbk::OFF;
             op.velocity = 0;
         }
     }

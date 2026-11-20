@@ -83,7 +83,7 @@ fn random_params(rng: &mut Rng) -> ParamSnapshot {
         op.coarse = rng.u8(63);
         op.fine = rng.u8(15);
         op.level = rng.u8(99);
-        op.feedback = rng.u8(7);
+        op.feedback = chimera_core::dsp::algo::params::Fdbk::tx(rng.u8(7));
         op.ar = 20 + rng.u8(11);
         op.d1r = rng.u8(31);
         op.d1l = rng.u8(15);

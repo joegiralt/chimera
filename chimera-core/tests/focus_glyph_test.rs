@@ -1014,9 +1014,10 @@ fn glyph_level_page_drives_a_level_and_a_stepped_value() {
         assert_ne!(high.at(tick_x, tick_y(i, 8)), theme::BG, "tick {i}");
     }
 
-    // b: FDBK, 0..7, a tick per step; at 3 the handle sits on tick 3.
+    // b: FDBK, 0.0..7.0 in tenths, a tick per whole step; at 3.0 the
+    // handle sits on tick 3.
     feed(&mut ui, Input::turn(EncoderId::B, -127));
-    feed(&mut ui, Input::turn(EncoderId::B, 3));
+    feed(&mut ui, Input::turn(EncoderId::B, 30));
     settle(&mut ui);
     assert_eq!(ui.focused_slot(), 1);
     let b = render_ui(&ui);
