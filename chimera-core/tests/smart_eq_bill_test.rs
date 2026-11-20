@@ -124,3 +124,33 @@ fn a_full_pool_admits_fewer_voices_with_smart_eq_on() {
     assert_eq!(count(SmartEq::OFF), 4);
     assert_eq!(count(ON), 3);
 }
+
+#[test]
+fn a_cut_part_moved_to_front_keeps_the_cut_bill_until_its_cuts_let_go() {
+    // Part 2 (MID) plays the note Part 1 (FRONT) plays: cut. Made FRONT
+    // too, its bands run on at the full rate while the cut lets go, and
+    // its first voice carries CUT until then (`SmartBill::now`'s `still`).
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    let (plain, _) = bills(PartEq::FLAT, Role::Mid, SmartEq::OFF);
+    let mut rig = InstRig::with_budget(SampleBudget::for_cpu(u32::MAX));
+    rig.shared.parts[0].mix.role = Role::Front;
+    rig.shared.parts[1].mix.role = Role::Mid;
+    rig.shared.fx.comp.smart = SmartEq::new(Switch::On, Amount::from_f32(127.0));
+    rig.note_on(0, 36);
+    rig.note_on(1, 36);
+    let most = |rig: &InstRig| {
+        let slots = rig.inst.allocator().slots();
+        slots.iter().filter(|s| !s.is_free()).map(|s| s.cost()).max().unwrap()
+    };
+    rig.render(3_000);
+    assert_eq!(most(&rig).0, plain.0 + CUT.0);
+    rig.shared.parts[1].mix.role = Role::Front;
+    let mut blocks = 0;
+    while most(&rig).0 == plain.0 + CUT.0 {
+        rig.render(50);
+        blocks += 50;
+        assert!(blocks < 30_000, "the cut lets go");
+    }
+    assert!(blocks > 750, "billed as cut while it lets go: {blocks} blocks");
+    assert_eq!(most(&rig).0, plain.0 + LISTEN.0);
+}

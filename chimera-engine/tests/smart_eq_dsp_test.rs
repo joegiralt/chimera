@@ -1113,7 +1113,7 @@ fn no_gap_between_kicks_is_a_cliff() {
 fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
     use chimera_engine::part_eq::PartEq;
     use chimera_engine::part_eq::bill::{CUT, LISTEN, SmartBill, SmartLoad, first_voice};
-    use chimera_engine::part_eq::smart::StillCut;
+    use chimera_engine::part_eq::smart::{Bands, StillCut};
     // The pad, MID under a FRONT bass, is cut; then it is made FRONT too.
     // Its bands run on at the full rate until the cut is back: billed so.
     let gens = clash();
@@ -1147,7 +1147,7 @@ fn a_part_moved_to_front_is_billed_as_cut_until_its_cuts_let_go() {
     assert_eq!(st.cut(PAD, Band::Low), CutDb::ZERO);
     assert_eq!(bill(&st), LISTEN);
     // The bass, FRONT all along, was never held over.
-    assert!(!StillCut::of(&st).part(BASS));
+    assert_eq!(StillCut::of(&st).part(BASS), Bands::Listened);
 }
 
 /// A kit (Part 1, FRONT) playing `kit` over the sine bass, at DEEP: each
@@ -1243,4 +1243,31 @@ fn only_a_kick_is_an_onset() {
         let (_, on) = kit_over_bass(trem, 5.0);
         assert!(settled(&on) <= 1, "a {sub} Hz sub, tremolo {rate} Hz: {on:?}");
     }
+}
+
+#[test]
+fn a_return_moved_to_front_still_runs_cut_until_its_cuts_let_go() {
+    use chimera_engine::part_eq::smart::{Bands, StillCut};
+    // The return is never heard through its cut bands (`Hears`): it is
+    // its cuts not yet at rest that keep it billed as cut.
+    let lead = |n: usize| 0.5 * (2.0 * PI * 300.0 * n as f32 / FS as f32).sin();
+    let wash = |n: usize| 0.4 * (2.0 * PI * 330.0 * n as f32 / FS as f32).sin();
+    let mut st = PartEqs::REST.smart;
+    let mut k = 0;
+    let mut run = |st: &mut SmartState, role: Role, blocks: usize| {
+        for _ in 0..blocks {
+            washed(st, k * BLOCK_SIZE, (&lead, Role::Front, false), (Some(&wash), role));
+            k += 1;
+        }
+    };
+    run(&mut st, Role::Back, seconds(4.0));
+    assert!(st.wash_cut(Band::LowMid).get() > 2.0);
+    assert_eq!(StillCut::of(&st).wash(), Bands::Full);
+    run(&mut st, Role::Front, seconds(1.0));
+    assert!(st.wash_cut(Band::LowMid).get() > 0.5, "still letting go");
+    assert_eq!(StillCut::of(&st).wash(), Bands::Full);
+    run(&mut st, Role::Front, seconds(25.0));
+    assert_eq!(st.wash_cut(Band::LowMid), CutDb::ZERO);
+    assert_eq!(StillCut::of(&st).wash(), Bands::Listened);
+    assert_eq!(StillCut::of(&st).part(BASS), Bands::Listened);
 }

@@ -551,9 +551,13 @@ impl PartSmart {
         cuts: Cuts::Rest,
     };
 
-    /// Its bands run at the full rate: cutting, or not yet let go.
-    pub(crate) fn runs_full(&self) -> bool {
-        self.hears == Hears::Full || self.cuts == Cuts::Move
+    /// How its bands run: at the full rate while cutting or not yet let
+    /// go, else only listened to.
+    pub(crate) fn bands(&self) -> Bands {
+        match (self.hears, self.cuts) {
+            (Hears::Full, _) | (_, Cuts::Move) => Bands::Full,
+            (Hears::Thin, Cuts::Rest) => Bands::Listened,
+        }
     }
 
     /// The cuts the bands play: `cut`, LOW the deeper of its slow cut and
@@ -687,7 +691,6 @@ pub struct StillCut(u8);
 impl StillCut {
     pub const NONE: StillCut = StillCut(0);
     const WASH: u8 = 1 << MAX_PARTS;
-    const _FITS: () = assert!(MAX_PARTS < 8);
 
     /// As the last block left them (`dsp::smart::run`).
     pub fn of(st: &SmartState) -> StillCut {
@@ -699,23 +702,45 @@ impl StillCut {
     pub(crate) fn count(st: &SmartState) -> StillCut {
         let mut bits = 0u8;
         for p in PartId::ALL {
-            if st.part(p).runs_full() {
-                bits |= 1 << p.index();
+            match st.part(p).bands() {
+                Bands::Full => bits |= 1 << p.index(),
+                Bands::Listened => {}
             }
         }
-        if st.wash.cuts.runs_full() {
-            bits |= Self::WASH;
+        match st.wash.cuts.bands() {
+            Bands::Full => bits |= Self::WASH,
+            Bands::Listened => {}
         }
         StillCut(bits)
     }
 
-    pub const fn part(self, p: PartId) -> bool {
-        self.0 & (1 << p.index()) != 0
+    const fn bands(self, bit: u8) -> Bands {
+        if self.0 & bit != 0 {
+            Bands::Full
+        } else {
+            Bands::Listened
+        }
     }
 
-    pub const fn wash(self) -> bool {
-        self.0 & Self::WASH != 0
+    pub const fn part(self, p: PartId) -> Bands {
+        self.bands(1 << p.index())
     }
+
+    pub const fn wash(self) -> Bands {
+        self.bands(Self::WASH)
+    }
+}
+
+// A bit a Part and the return's, in a byte.
+const _: () = assert!(MAX_PARTS < 8);
+
+/// How a member's bands run, whatever its role says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bands {
+    /// At the full rate: cutting, or its cuts not yet let go.
+    Full,
+    /// Only listened to (decimated), or at rest.
+    Listened,
 }
 
 /// Every Part's SMART EQ and the reverb return's, in `PartEqs` (ITCM on

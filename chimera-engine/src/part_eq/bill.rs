@@ -6,7 +6,7 @@
 //! rounded up; ADR 0296 has the counts. Bank 1's: admission runs with the
 //! door open or closed (closed, the EQ plays flat and these over-bill).
 
-use super::smart::StillCut;
+use super::smart::{Bands, StillCut};
 use super::smart::{PartKind, Role, SmartEq, SmartState};
 use super::{PartEq, PartEqs};
 use crate::hw::Cost;
@@ -104,10 +104,9 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartBill, p: 
     };
     let smart = match (smart.load, role, smart.still.part(p)) {
         (SmartLoad::Rests, _, _) => Cost::ZERO,
-        (SmartLoad::Runs, Role::Front, false) => LISTEN,
-        (SmartLoad::Runs, Role::Front, true) | (SmartLoad::Runs, Role::Mid | Role::Back, _) => {
-            CUT + sides(SIDE)
-        }
+        (SmartLoad::Runs, Role::Front, Bands::Listened) => LISTEN,
+        (SmartLoad::Runs, Role::Front, Bands::Full)
+        | (SmartLoad::Runs, Role::Mid | Role::Back, _) => CUT + sides(SIDE),
     };
     tilt + smart
 }
@@ -118,8 +117,8 @@ pub fn first_voice(eq: PartEq, role: Role, kind: PartKind, smart: SmartBill, p: 
 pub fn wash(reverb: &crate::dsp::reverb::ReverbParams, smart: SmartBill) -> Cost {
     match (smart.load, reverb.is_on(), reverb.role, smart.still.wash()) {
         (SmartLoad::Rests, _, _, _) | (_, false, _, _) => Cost::ZERO,
-        (SmartLoad::Runs, true, Role::Front, false) => WASH_LISTEN,
-        (SmartLoad::Runs, true, Role::Front, true)
+        (SmartLoad::Runs, true, Role::Front, Bands::Listened) => WASH_LISTEN,
+        (SmartLoad::Runs, true, Role::Front, Bands::Full)
         | (SmartLoad::Runs, true, Role::Mid | Role::Back, _) => WASH_CUT,
     }
 }
