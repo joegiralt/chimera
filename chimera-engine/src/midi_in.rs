@@ -135,7 +135,7 @@ pub enum CtrlEvent {
     /// Reset All Controllers on this channel: expression back to 127 (ADR
     /// 0263). Its own event, so learn never hears it as a CC.
     Reset(Channel),
-    /// A parameter dump request (#984, ADR 0298): whose values it asks.
+    /// A parameter dump request (#984, ADR 0301): whose values it asks.
     Dump(DumpWho),
 }
 

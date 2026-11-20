@@ -1,4 +1,4 @@
-//! The parameter dump (#984, ADR 0298): a controller's request answered
+//! The parameter dump (#984, ADR 0301): a controller's request answered
 //! with the Part's Sound, each writable cell its engine reads as the NRPN
 //! PARAM OUT sends for it (ADR 0216's address and law, ADR 0258's bytes),
 //! on the Part's channel, out of the port that asked, then the end

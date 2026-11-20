@@ -263,7 +263,7 @@ pub struct MidiUi {
     echo: echo::EchoPlan,
     /// The hand's turns waiting to go out as NRPNs (ADR 0258).
     param_out: super::param_out::ParamOut,
-    /// The parameter dumps asked for (ADR 0298).
+    /// The parameter dumps asked for (ADR 0301).
     dump: super::param_dump::ParamDump,
     /// Each Part's controller layer (ADR 0226).
     pub(in crate::ui) ctl: layer::Layers,
@@ -539,7 +539,7 @@ impl UiState {
                 continue;
             }
             // A dump request asks only to read: taken busy or not, the
-            // Part it names resolved now, answered by `out` (ADR 0298).
+            // Part it names resolved now, answered by `out` (ADR 0301).
             if let HeardEv::Ctrl(port, CtrlEvent::Dump(who)) = e {
                 let (ui, project) = (self.cc.ui(), &self.project);
                 ui.dump.ask(port, who, project, at);

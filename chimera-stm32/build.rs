@@ -415,7 +415,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // The reverb's duck (ADR 0295): `rev::duck`, called from bank 2's
     // `Reverb::process`; an S4 group (S0-S3 is under 8 KB free).
     let duck = "    *(.text.*3rev4duck* .rodata.*3rev4duck*);\n";
-    // The parameter dump (ADR 0298): `ui::param_dump`, called from bank
+    // The parameter dump (ADR 0301): `ui::param_dump`, called from bank
     // 2's `ui::midi` (its `hear` and `out`); an S4 group.
     let dump =
         "    *(.text.*12chimera_core2ui10param_dump* .rodata.*12chimera_core2ui10param_dump*);\n";

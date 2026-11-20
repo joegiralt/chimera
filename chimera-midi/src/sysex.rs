@@ -23,7 +23,7 @@ pub fn request(s: SysEx<'_>, own: U7) -> Option<Request> {
 /// (`7D`, non-commercial) and family, "CH".
 pub const CHIMERA: [u8; 3] = [0x7D, 0x43, 0x48];
 
-/// A parameter dump request (#984, ADR 0298): Chimera's own message 1.
+/// A parameter dump request (#984, ADR 0301): Chimera's own message 1.
 const DUMP_REQUEST: u8 = 0x01;
 /// A dump's end: message 2.
 const DUMP_END: u8 = 0x02;

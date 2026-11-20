@@ -1,4 +1,4 @@
-//! The parameter dump (#984, ADR 0298): a controller asks with Chimera's
+//! The parameter dump (#984, ADR 0301): a controller asks with Chimera's
 //! own SysEx and reads the Sound's values back as the NRPNs PARAM OUT
 //! sends, on the Part's channel, out of the port that asked, paced by
 //! DIN's ring, then an end message. Nothing with ECHO off.
