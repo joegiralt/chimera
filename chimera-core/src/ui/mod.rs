@@ -3186,6 +3186,17 @@ impl UiState {
         renderer::Renderer::focus_hint(&self.frame(&perf, None, &scope))
     }
 
+    /// The focused cell's band label, as `render` draws it.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn focus_label_for_test(&self) -> crate::ui::fmt::FmtBuf {
+        let scope = [0.0; SCOPE_LEN];
+        let perf = PerfStats::zero();
+        let f = self.frame(&perf, None, &scope);
+        let v = view::view(f.def, f.focus, &f.ctx);
+        renderer::band_label(&f, &v)
+    }
+
     fn input(&mut self, controls: &impl Controls) {
         let pushes = self.step_pushes(controls);
         // Any encoder turn or button press retires the last prime-status

@@ -703,11 +703,11 @@ pub static ALGO_COARSE: BlockDef = group(45, "Coarse", "CRS", AlgoOpParams::COAR
 pub static ALGO_FINE: BlockDef = group(46, "Fine", "FIN", AlgoOpParams::FINE);
 pub static ALGO_DETUNE: BlockDef = group(47, "Detune", "DET", AlgoOpParams::DETUNE);
 pub static ALGO_VELOCITY: BlockDef = group(48, "Velocity", "VEL", AlgoOpParams::VELOCITY);
-pub static ALGO_AR: BlockDef = env_group(49, "Env AR", "AR", AlgoOpParams::AR);
-pub static ALGO_D1R: BlockDef = env_group(50, "Env D1R", "D1R", AlgoOpParams::D1R);
-pub static ALGO_D1L: BlockDef = env_group(51, "Env D1L", "D1L", AlgoOpParams::D1L);
-pub static ALGO_D2R: BlockDef = env_group(52, "Env D2R", "D2R", AlgoOpParams::D2R);
-pub static ALGO_RR: BlockDef = env_group(53, "Env RR", "RR", AlgoOpParams::RR);
+pub static ALGO_AR: BlockDef = env_group(49, "Attack Rate", "AR", AlgoOpParams::AR);
+pub static ALGO_D1R: BlockDef = env_group(50, "Decay 1 Rate", "D1R", AlgoOpParams::D1R);
+pub static ALGO_D1L: BlockDef = env_group(51, "Decay 1 Lvl", "D1L", AlgoOpParams::D1L);
+pub static ALGO_D2R: BlockDef = env_group(52, "Decay 2 Rate", "D2R", AlgoOpParams::D2R);
+pub static ALGO_RR: BlockDef = env_group(53, "Release Rate", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
 pub static ALGO_FEEDBACK: BlockDef = group(55, "Feedback", "FBK", AlgoOpParams::FEEDBACK);
 

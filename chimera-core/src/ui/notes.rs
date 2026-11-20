@@ -2,13 +2,17 @@
 //! its routes are the amp, AMP's BASE says why it is dimmed (ADR 0292),
 //! REV › DUCK's cells what they do (ADR 0295), AMP › STEREO's (ADR 0294). Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words
 //! through `UiDoor`'s `notes` entry, a cell's through `band_note`'s; bank
-//! 1 keeps the stub in `view`.
+//! 1 keeps the stub in `view`. ALGO's operator cells (ADR 0298): the
+//! envelope stages' names in the focus label.
 
 use crate::addr::{BlockRef, ParamAddr};
+use crate::block::ParamId;
+use crate::dsp::algo::params::AlgoOpParams;
 use crate::dsp::reverb::ReverbParams;
 use crate::modulation::{FixedCol, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
+use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
 
@@ -17,12 +21,27 @@ use crate::ui::mod_grid::{Col, MatrixState};
 pub enum Ask<'a> {
     /// `matrix`.
     Matrix(&'a MatrixState, &'a mut Option<Hint>),
+    /// `op_label`: the focus label of an operator's cell, into `label`.
+    OpLabel {
+        param: ParamId,
+        page: OpCells,
+        label: &'a mut FmtBuf,
+    },
+}
+
+/// The page an operator's cell is on: one parameter across OP1-OP6, the
+/// cells named by operator, or one operator's own, named by parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpCells {
+    Group,
+    Operator,
 }
 
 /// `UiDoor`'s entry.
 pub(crate) fn ask_in(a: Ask<'_>) {
     match a {
         Ask::Matrix(m, out) => *out = matrix(m),
+        Ask::OpLabel { param, page, label } => op_label(param, page, label),
     }
 }
 
@@ -38,12 +57,18 @@ enum W {
     DuckRelease,
     StereoPan,
     StereoWidth,
+    AttackRate,
+    Decay1Rate,
+    Decay1Level,
+    Decay2Rate,
+    ReleaseRate,
+    Feedback,
 }
 
 /// Each word with its text, in `W`'s order (checked below): one table, so
 /// a word and its text can't part. Read only at compile time: the bytes
 /// reach the build through `WORDS` alone.
-const TABLE: [(W, &str); 8] = [
+const TABLE: [(W, &str); 14] = [
     (W::Vca, "VCA:"),
     (W::Replaces, "ROUTES REPLACE CONTOUR"),
     (W::SumStarts, "SUM STARTS AT AMP BASE"),
@@ -52,6 +77,12 @@ const TABLE: [(W, &str); 8] = [
     (W::DuckRelease, "HOW FAST THE TAIL RETURNS"),
     (W::StereoPan, "PLACES EACH NOTE, ROUTABLE"),
     (W::StereoWidth, "0 MONO, 64 AS PANNED, 127 WIDE"),
+    (W::AttackRate, "ATTACK RATE"),
+    (W::Decay1Rate, "DECAY 1 RATE"),
+    (W::Decay1Level, "DECAY 1 LEVEL"),
+    (W::Decay2Rate, "DECAY 2 RATE"),
+    (W::ReleaseRate, "RELEASE RATE"),
+    (W::Feedback, "FEEDBACK"),
 ];
 
 // Row `i` is word `i`: `word` indexes the table by `W`.
@@ -132,6 +163,41 @@ pub static DUCK_RELEASE: &str = word(W::DuckRelease);
 pub static STEREO_PAN: &str = word(W::StereoPan);
 pub static STEREO_WIDTH: &str = word(W::StereoWidth);
 
+/// An operator param's name in full, where its page's cell can't say it:
+/// the TX81Z's envelope stages (#956, #987) and FDBK.
+static OP_NAMES: [(ParamId, &str); 6] = [
+    (AlgoOpParams::AR, word(W::AttackRate)),
+    (AlgoOpParams::D1R, word(W::Decay1Rate)),
+    (AlgoOpParams::D1L, word(W::Decay1Level)),
+    (AlgoOpParams::D2R, word(W::Decay2Rate)),
+    (AlgoOpParams::RR, word(W::ReleaseRate)),
+    (AlgoOpParams::FEEDBACK, word(W::Feedback)),
+];
+
+/// `param`'s name in full, if `OP_NAMES` has one.
+pub fn op_name(param: ParamId) -> Option<&'static str> {
+    OP_NAMES.iter().find(|n| n.0 == param).map(|n| n.1)
+}
+
+/// The focus label of an operator's cell where its own label can't say
+/// what it edits: an envelope page's cells read OP1-OP6, so the band
+/// names the stage (`ATTACK RATE`: the lit cell names the operator, and
+/// both don't fit beside the gauge); the operator's own page spells FDBK
+/// out. Nothing written: the cell's label stands (FBK's group page, whose
+/// header already says FEEDBACK, and every other param).
+pub fn op_label(param: ParamId, page: OpCells, label: &mut FmtBuf) {
+    use core::fmt::Write;
+    let Some(name) = op_name(param) else {
+        return;
+    };
+    match (page, param == AlgoOpParams::FEEDBACK) {
+        (OpCells::Group, true) => {}
+        (OpCells::Group, false) | (OpCells::Operator, true | false) => {
+            let _ = label.write_str(name);
+        }
+    }
+}
+
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
 /// engine's contour, or, with an ENV among them, they start at BASE.
@@ -179,7 +245,10 @@ mod tests {
         assert_eq!(DUCK_RELEASE, "HOW FAST THE TAIL RETURNS");
         assert_eq!(STEREO_PAN, "PLACES EACH NOTE, ROUTABLE");
         assert_eq!(STEREO_WIDTH, "0 MONO, 64 AS PANNED, 127 WIDE");
-        assert_eq!(WORDS.len(), 181);
+        assert_eq!(op_name(AlgoOpParams::D1L), Some("DECAY 1 LEVEL"));
+        assert_eq!(op_name(AlgoOpParams::FEEDBACK), Some("FEEDBACK"));
+        assert_eq!(op_name(AlgoOpParams::LEVEL), None);
+        assert_eq!(WORDS.len(), 181 + 68);
         assert_eq!(
             STEREO_WIDTH.as_ptr(),
             WORDS[151..].as_ptr(),

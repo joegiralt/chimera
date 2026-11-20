@@ -56,6 +56,39 @@ pub enum VizType {
     Pads,
 }
 
+impl VizType {
+    /// The operator whose own page this is the band of.
+    pub const fn op_page(self) -> Option<Op> {
+        match self {
+            VizType::OpPage(op) => Some(op),
+            VizType::None
+            | VizType::FilterResponse
+            | VizType::Adsr
+            | VizType::About
+            | VizType::EffectsFlow(_)
+            | VizType::MixerLevels
+            | VizType::CompressorCurve
+            | VizType::AudioStats
+            | VizType::Pool
+            | VizType::AlgoDiagram
+            | VizType::EnvSpeed
+            | VizType::Orbit
+            | VizType::OrbitRhythm
+            | VizType::OrbitVoice
+            | VizType::OrbitNotes
+            | VizType::OrbitChords
+            | VizType::OrbitCircle
+            | VizType::OrbitScenes
+            | VizType::OpEnv
+            | VizType::Strip
+            | VizType::Lfo(_)
+            | VizType::FxCurve
+            | VizType::Tuner
+            | VizType::Pads => None,
+        }
+    }
+}
+
 /// A node of the FX flow; the value is its index in `viz::effects_flow`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FxNode {

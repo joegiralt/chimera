@@ -1479,6 +1479,27 @@ pub fn band_label(f: &Frame, view: &View) -> FmtBuf {
         crate::ui::learn::label_line(s, view.label(), &mut label);
         return label;
     }
+    // An operator's cell: its name in full, bank 2's (ADR 0298).
+    if let Some(crate::addr::ParamAddr {
+        block: BlockRef::AlgoOp(_),
+        param,
+    }) = view.addr()
+    {
+        let page = match f.def.viz.op_page() {
+            Some(_) => crate::ui::notes::OpCells::Operator,
+            None => crate::ui::notes::OpCells::Group,
+        };
+        crate::bank2::ui_door(|u| {
+            u.notes(crate::ui::notes::Ask::OpLabel {
+                param,
+                page,
+                label: &mut label,
+            })
+        });
+        if !label.as_str().is_empty() {
+            return label;
+        }
+    }
     let _ = label.write_str(view.label());
     if let View::Route {
         route: crate::ui::filter_panel::RouteView::Jack(j),
