@@ -421,7 +421,14 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // 2's `ui::midi` (its `hear` and `out`); an S4 group.
     let dump =
         "    *(.text.*12chimera_core2ui10param_dump* .rodata.*12chimera_core2ui10param_dump*);\n";
-    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}");
+    // The delay's tempo sync (ADR 0302): `delay::sync`, the notes, the
+    // fit, the head's aim and its glide, called from bank 2's `tape::run`
+    // and `grain::run`; and `ui::delay_sync`, the note's text, MIX +
+    // turn and the band's words, called from `walk`, `feel` and `notes`.
+    // S4 groups.
+    let delay_sync = "    *(.text.*5delay4sync* .rodata.*5delay4sync*
+      .text.*12chimera_core2ui10delay_sync* .rodata.*12chimera_core2ui10delay_sync*);\n";
+    let s4 = format!("{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}");
     fs::write(
         out_dir.join("bank2.x"),
         r#"

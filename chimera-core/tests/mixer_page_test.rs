@@ -400,7 +400,7 @@ fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_and_grain_below() {
             at(D::SATURATION),
             None,
             None,
-            None,
+            at(D::SYNC),
             None
         ]
     );
@@ -411,7 +411,7 @@ fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_and_grain_below() {
             at(D::DENSITY),
             at(D::PITCH),
             at(D::TEXTURE),
-            None,
+            at(D::SYNC),
             None
         ]
     );
@@ -761,7 +761,8 @@ const FOCUS_BOTTOM: usize = chimera_core::ui::theme::FOCUS_BOTTOM as usize;
 
 /// Each delay TYPE's cells dim under the other and say why (review of
 /// #761, m11): DLY › GRAIN under TAPE, DLY › CHAR under GRAIN; DELAY's
-/// shared cells never.
+/// shared cells never, nor SYNC, both TYPEs', in cell E of either page
+/// (ADR 0302).
 #[test]
 fn delay_cells_dim_under_the_other_type() {
     use chimera_core::block::Block;
@@ -789,12 +790,17 @@ fn delay_cells_dim_under_the_other_type() {
         let ctx = base.on_delay(&d);
         for i in 0..6 {
             let v = view::view(dim, i, &ctx);
-            if let Some(a) = v.addr() {
+            if let Some(a) = v.addr().filter(|a| a.param != DelayParams::SYNC) {
                 assert!(view::is_dimmed(&v, &sound, &ctx), "{} {i}", dim.short);
                 assert_eq!(view::delay_note(a, &ctx), Some(why));
             }
             let v = view::view(live, i, &ctx);
             assert!(!view::is_dimmed(&v, &sound, &ctx) || v.addr().is_none());
+        }
+        for page in [dim, live] {
+            let v = view::view(page, 4, &ctx);
+            assert_eq!(v.addr().map(|a| a.param), Some(DelayParams::SYNC));
+            assert!(!view::is_dimmed(&v, &sound, &ctx), "{} SYNC", page.short);
         }
         for i in 0..6 {
             let v = view::view(&reg::DELAY, i, &ctx);

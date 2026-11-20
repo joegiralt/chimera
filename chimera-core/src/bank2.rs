@@ -612,6 +612,15 @@ pub(crate) mod feel {
         out
     }
 
+    /// Who took MIX + turn on `a`: bank 2 (the delay's TIME flips SYNC,
+    /// ADR 0302), or its spec, which the caller then snaps (closed,
+    /// always).
+    pub(crate) fn snap(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> Nudged {
+        let mut out = None;
+        ask(Ask::Snap(b, a, d, &mut out));
+        out.unwrap_or(Nudged::Spec)
+    }
+
     /// Who turned `a`: bank 2 (CLASSIC RATE), or its spec, which the
     /// caller then steps (closed, always).
     pub(crate) fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> Nudged {

@@ -373,6 +373,8 @@ check-door-placed elf:
     # So are 0.4's tester cells' words (ADR 0292), PRT's meters (ADR 0293)
     # and the reverb's duck (ADR 0295).
     grep -E ' [tT] .*(ui::notes::|part_peaks::kern::|ui::part_meter::|rev::duck::)' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "tester work outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So is the delay's tempo sync, engine and UI (ADR 0302).
+    grep -E ' [tT] .*(dsp::delay::sync::|ui::delay_sync::)' <<< "$syms" | awk '{ n++; a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "delay sync outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "delay sync: nothing linked" > "/dev/stderr"; exit bad || !n }'
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
     # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
     awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"

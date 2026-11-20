@@ -5673,6 +5673,19 @@
     },
     {
       "section": "Master FX",
+      "block": "DELAY",
+      "name": "NOTE",
+      "msb": 21,
+      "lsb": 13,
+      "nrpn": 2701,
+      "kind": "14bit",
+      "min": 0,
+      "max": 16383,
+      "screen": null,
+      "codes": null
+    },
+    {
+      "section": "Master FX",
       "block": "REVERB",
       "name": "TIME",
       "msb": 22,

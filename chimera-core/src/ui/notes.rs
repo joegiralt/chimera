@@ -553,6 +553,7 @@ pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
             let o = &s.params.algo.ops[op.index()];
             (o.d1r == 0 && o.d1l < 15).then_some(D1_HOLDS)
         }
+        (BlockRef::Delay, id) => crate::ui::delay_sync::word(id),
         _ => None,
     }
 }

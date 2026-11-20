@@ -28,6 +28,8 @@ pub enum Ask<'a> {
     Hint(&'a View, Words, Band, Pushes, &'a mut Option<Hint>),
     /// `nudge`.
     Nudge(&'a mut dyn Block, ParamAddr, Ticks, &'a mut Option<Nudged>),
+    /// `delay_sync::snap`.
+    Snap(&'a mut dyn Block, ParamAddr, Ticks, &'a mut Option<Nudged>),
 }
 
 /// `UiDoor`'s entry.
@@ -37,13 +39,15 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         Ask::List(c, taken, out) => *out = Some(list(c, taken)),
         Ask::Hint(v, w, band, push, out) => *out = Some(hint(v, w, band, push)),
         Ask::Nudge(b, a, d, out) => *out = Some(nudge(b, a, d)),
+        Ask::Snap(b, a, d, out) => *out = Some(crate::ui::delay_sync::snap(b, a, d)),
     }
 }
 
 /// How a turn on `v` accelerates: a pick from names (a choice, SOURCE,
-/// OP, PAD, ROUTE) as a list, the rest as a parameter.
+/// OP, PAD, ROUTE, the delay's note) as a list, the rest as a parameter.
 pub fn accel(v: &View) -> Accel {
     let names = matches!(v.fmt(), ValFmt::Names(_))
+        || v.addr() == Some(view::DELAY_NOTE)
         || v.addr()
             .and_then(|a| a.spec())
             .is_some_and(|s| s.kind == ParamKind::Enum);
@@ -159,6 +163,11 @@ pub enum Pushes {
 /// plain or mapped value cell hints them, and the SEQ fine turn in the
 /// push's own gesture.
 pub fn hint(v: &View, w: Words, band: Band, push: Pushes) -> Hint {
+    // The delay's TIME: MIX + turn flips SYNC (ADR 0302), beside learn's
+    // words or the fine turn.
+    if let Some(h) = crate::ui::delay_sync::hint(v, w) {
+        return h;
+    }
     let generic = matches!(w, Words::Plain | Words::Learn);
     if cfg!(feature = "push-encoders") && push == Pushes::On && generic && v.pushes() {
         return if takes(v, w) && band != Band::Other {
@@ -194,7 +203,7 @@ const fn word(at: usize, len: usize) -> &'static str {
 }
 
 /// SEQ held, a turn steps fine; unspaced, so learn's words fit beside.
-const FINE_TURN: Gesture<'static> = Gesture(word(0, 8), word(8, 4));
+pub(crate) const FINE_TURN: Gesture<'static> = Gesture(word(0, 8), word(8, 4));
 
 /// ALGO's FDBK (ADR 0299): MIX + a turn steps the TX81Z's whole numbers,
 /// SEQ + a turn its tenths one a detent.
@@ -254,11 +263,12 @@ pub fn nudge(b: &mut dyn Block, a: ParamAddr, d: Ticks) -> Nudged {
     }
 }
 
-/// Who turns a cell's ticks: the feel (CLASSIC RATE's semitone) or the
-/// cell's own spec.
+/// Who turns a cell's ticks: the feel (CLASSIC RATE's semitone, the
+/// delay's SYNC under MIX) or the cell's own spec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nudged {
     Rate,
+    Sync,
     Spec,
 }
 

@@ -150,10 +150,11 @@ them from MIX+B6, so they read PART 6 · MIX.
 | ![](mixer_out_p2.png) | SND | Part 1 sent to P2: the OUT warning |
 | ![](mixer_chr.png) | CHR | Chorus: TYPE (OFF, I, II, I+II, FLANGER, PHASER), RATE, DEPTH, MIX |
 | ![](mixer_fx_delay.png) | DLY | Delay: TYPE, TIME, FEEDBACK, TONE, REV send, MIX |
-| ![](mixer_fx_delay_char.png) | DLY › CHAR | TAPE's character: WOW turned, SATURATION |
+| ![](mixer_fx_delay_char.png) | DLY › CHAR | TAPE's character: WOW turned, SATURATION; SYNC in cell E |
 | ![](mixer_fx_delay_grain.png) | DLY | TYPE GRAIN |
-| ![](mixer_fx_delay_grain_page.png) | DLY › GRAIN | GRAIN's SIZE, DENSITY, PITCH at +12, TEXTURE |
+| ![](mixer_fx_delay_grain_page.png) | DLY › GRAIN | GRAIN's SIZE, DENSITY, PITCH at +12, TEXTURE; SYNC in cell E |
 | ![](mixer_fx_delay_grain_needs_update.png) | DLY | TYPE GRAIN while bank 2 needs an update: it plays TAPE |
+| ![](mixer_fx_delay_sync.png) | DLY | SYNC on: TIME reads its note, 1/8D, and the band hints MIX+TURN FREE beside learn |
 | ![](mixer_fx_reverb.png) | REV | Reverb, GRIT turned |
 | ![](mixer_master.png) | MST | Compressor curve, RATIO 4:1 |
 | ![](mixer_master_level.png) | MST › LVL | Master VOL and PAN |

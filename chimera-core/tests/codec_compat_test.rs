@@ -517,7 +517,7 @@ fn project_fixture_loads() {
     let d = p.perf().fx.delay;
     let dflt = chimera_core::dsp::delay::DelayParams::DEFAULT;
     assert_eq!(d.kind(), chimera_core::dsp::delay::DelayType::Tape);
-    assert_eq!(d.grain, dflt.grain);
+    assert_eq!(d.more, dflt.more);
 }
 
 #[test]

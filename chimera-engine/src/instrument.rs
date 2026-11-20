@@ -2762,7 +2762,7 @@ impl Instrument {
         for (m, c) in crate::meter::FILTER_CLIP.iter().zip(clip) {
             m.raise(c);
         }
-        crate::meter::publish_rev_clock(self.tempo, fx.reverb().fold());
+        crate::meter::publish_rev_clock(self.tempo, fx.reverb().fold(), fx.delay().fold());
 
         // Oscilloscope: every part's bus, before pan and level.
         scope.write(&scope_block);
