@@ -477,3 +477,26 @@ fn a_closed_bank2_labels_the_sem_filter() {
         assert_eq!(closed_text(kind, at(i), None), None, "{k:?}");
     }
 }
+
+/// Closed, every KEY plays FULL (ADR 0303): KEY's cell reads NEEDS UPDATE
+/// for any key but FULL, as the delay's TYPE does, never the stored key
+/// (#1057). FULL plays from bank 1, and reads FULL.
+#[test]
+fn a_closed_bank2_labels_a_key_that_plays_full() {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::bank2::closed_text;
+    use chimera_core::comp_key::CompKey;
+    use chimera_core::dsp::comp::CompParams;
+    let key = ParamAddr::new(BlockRef::Comp, CompParams::KEY);
+    let spec = key.spec().unwrap();
+    for k in CompKey::ALL {
+        let v = spec.normalize(f32::from(k.code()));
+        let want = match k {
+            CompKey::Full => None,
+            CompKey::Low | CompKey::High | CompKey::Hit | CompKey::Part(_) => Some("NEEDS UPDATE"),
+        };
+        assert_eq!(closed_text(key, v, Some(Bank2Status::Empty)), want, "{k:?}");
+        assert_eq!(closed_text(key, v, Some(open())), None, "{k:?} open");
+        assert_eq!(closed_text(key, v, None), None, "{k:?} without bank 2");
+    }
+}

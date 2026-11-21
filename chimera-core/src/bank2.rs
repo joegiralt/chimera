@@ -132,8 +132,9 @@ fn closed(bank2: Option<Bank2Status>) -> bool {
 /// and the FX TYPE FUZZ (ADR 0157), the filter TYPE SEM (ADR 0192), VA
 /// NOISE's KIND (ADR 0197, every KIND), the delay's TYPE and the chorus's
 /// MODE (ADR 0213, every value: both play from bank 2) and every ORBIT
-/// param (ADR 0208) and RANDOMIZE's cells (ADR 0232) read `NEEDS UPDATE`
-/// while their code can't play.
+/// param (ADR 0208), RANDOMIZE's cells (ADR 0232) and the compressor's
+/// KEY but FULL (ADR 0303, #1057) read `NEEDS UPDATE` while their code
+/// can't play.
 pub fn closed_text(
     addr: crate::addr::ParamAddr,
     v: f32,
@@ -178,6 +179,11 @@ pub fn closed_text(
                     .is_some_and(|k| k.in_bank2())
             })
     };
+    // Any KEY but FULL, which bank 1 plays (ADR 0303): FULL is code 0,
+    // so every other reads above 0 (#1057).
+    const _: () = assert!(crate::comp_key::CompKey::Full.code() == 0);
+    let key =
+        || addr == ParamAddr::new(BlockRef::Comp, crate::dsp::comp::CompParams::KEY) && v > 0.0;
     let orbit = || {
         cfg!(feature = "orbit")
             && matches!(
@@ -191,6 +197,7 @@ pub fn closed_text(
             || va_mode()
             || fx_type()
             || kind()
+            || key()
             || orbit()))
     .then_some(NEEDS_UPDATE)
 }
