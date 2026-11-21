@@ -121,7 +121,8 @@ use screen::*;
 // #985). New: algo_alg_loops (the chart's loops, #989), algo_fine_ratio (#986),
 // row_osc_ops, settings_personal_algo.
 // env_a, row_mod: HOLD's bottom reads 0.001 ms (#159). Every browser and
-// library list: a row's cost stops clear of MODAL (#640).
+// library list: a row's cost stops clear of MODAL (#640). mixer_master,
+// mixer_master_key: OUT clear of KEY's hint (#1066).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x6a6639f41cb3937f),
@@ -347,13 +348,13 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_sync", 0xf9941b61166b8fde),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master", 0x2c1caa95b850f464),
+    ("mixer_master", 0x8fdc1da08a61e440),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0x5c5b82ab2dbb8965),
     // KEY in MST's cell E, MAKEUP on LVL's C, the key under the curve
     // (ADR 0303).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_key", 0x05c86ee37859fd39),
+    ("mixer_master_key", 0x587fede5712909fd),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
@@ -401,11 +402,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xd56bc8774f6193e4),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x12b206f30ca45442),
+    ("mixer_master", 0xd0efbdb60b78b26e),
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0xa5a46e80ff7ebc77),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_key", 0xb048ca6dae9fc183),
+    ("mixer_master_key", 0x80217e6639d75847),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
