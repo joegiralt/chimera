@@ -1,6 +1,6 @@
 # 0307. Bug batch A: a console install restarts the unit, a key held from power-on waits for its release
 
-- **Status:** Accepted (2026-11-21)
+- **Status:** Proposed
 - **Deciders:** firmware (bug batch A: boot, SD card, USB, update and host tools; owner's rule of 2026-11-21, every known bug ships fixed in 0.4), for the owner's review
 
 ## Context
@@ -14,15 +14,15 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 ## Decision
 
 ### A console install that opens the door restarts the unit (#1064)
-- `Bank2Answer::restarts` (exhaustive over the answers): only `Open` restarts. `Usb::service` turns it into `Restart::Bank2(Bank2Opened)` once the answer (`OK bank2 open <version>`) is out and drained, as `sweep`'s restart; the UI loop syncs SYSTEM, as before any console restart, and resets. The boot it restarts into judges bank 2 open and lays USB out whole.
+- `Bank2Answer::restarts` (exhaustive over the answers): only `Open` restarts. Which restart an answer ends in is one pure table, `console::restart_after(dfu, sweep, install, sent)`: `dfu` first, then `sweep`'s request, each only once its answer is out; an install that opened the door even if its answer stalled, as its USB needs the boot either way. `Usb::service` maps it to its typed tokens (`Restart::Bank2(Bank2Opened)`), drains the answer and returns; the UI loop syncs SYSTEM, as before any console restart, and resets. The boot it restarts into judges bank 2 open and lays USB out whole.
+- Before anything is read or written, `console::install_guard(pending, unsaved)` refuses: card work pending is `ERR bank2: busy`, a Modified project `ERR bank2: unsaved changes, save first` (`Bank2Refusal::Unsaved`, `sweep`'s words: its restart would lose them too). The tool prints the refusal and exits 1.
 - The answer's words are unchanged. `chimera-usb.py` waits after any `OK bank2 open` for the unit to answer `status` again (`RESTART_WAIT_S`, 60 s; the post-flash wait's own loop, by USB id and serial), says `restarting` on stderr, and `update` reads its final `status` from that answer.
-- Unsaved project edits do not survive the restart. A console install is a host action taken under DON'T POWER OFF on a unit bank 2 is closed on (TAPE, the reverb, ORBIT silent), and the shipped `update` path installs at boot, where nothing is lost.
 
 ### A switch down at its first read waits for its release (#1000)
-- `chimera_hal::StartHold` beside each switch's `Debounce` in the SysTick read: `Unread` until the first tick; down then is `Held` and reads up, press and release alike, until the raw level and the settled one are both up; then `Free`, the settled level as before. A switch up at the first read is live from there, unchanged.
+- `chimera_hal::StartHold`, one bitmask beside the switches' `Debounce`s in the SysTick read: a switch down at the controls' first tick sets its bit and reads up, press and release alike, until the raw level and the settled one are both up, which clears it; a switch without its bit reads the settled level, as before.
 
 ### An abort carries the hold it judged (#766)
-- `CardBus::stuck` returns the `Hold` it judged (the stream hold's stamp), `held` the hold now, and `ask_abort(Hold)` stores it before the flag. `take_abort` is true only if the flag was set and the stamp is still the hold's: a re-take stamps anew, a burst's `renew` moves it, so neither is stopped by an abort judged before it.
+- `CardBus::stuck` returns the `Hold` it judged (the stream hold's stamp), `held` the hold now. `ask_abort(Hold)` re-reads the hold and asks only if it is still that one (false otherwise, and the UI's wait may judge again; it marks itself asked only on an ask); it stores the stamp before the flag. `take_abort` is true only if the flag was set and the stamp is still the hold's: a re-take stamps anew, a burst's `renew` moves it, so neither is stopped by an abort judged before it. A gate build's close asks of the hold as it is, read again up to four times.
 
 ### Tests reach DEMO in any profile (#354)
 - DEMO's rows are `cfg(any(debug_assertions, feature = "test-support"))`. No firmware enables `test-support`, so a release unit still has no DEMO row.
@@ -30,8 +30,8 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 ### Smaller decisions recorded here
 - **#315.** The console takes a line whose first word is `OK` or `ERR` (any case) for no request: an echoing tty's copy of an answer.
 - **#197.** `UiState::show_system_note`, after `boot_project`: a SYSTEM file this firmware can't read toasts its file error with the subject `SYSTEM` (`Subject::System`, e.g. `FILE IS CUT SHORT: SYSTEM`); no card, no file and card faults keep the project's note.
-- **#314.** With no `CHIMERA_USB`, the tool's port on Linux is the tty whose USB device has the console's id (`unit_ports`), `/dev/chimera` when none is listed; never a guessed `/dev/ttyACM0`.
-- **#1065.** The tool ends an answer on `OK <words>` as on `OK`, and prints the line.
+- **#314.** With no `CHIMERA_USB`, the tool's port on Linux is the udev rule's `/dev/chimera`; else the tty whose USB device has the console's id (`unit_ports`), one whose product string says Chimera before others with that id (a stock PreenFM3's); one found only by its id must answer `status` with Chimera's `firmware` line, or the tool stops and asks for `CHIMERA_USB`. Never a guessed `/dev/ttyACM0`.
+- **#1065.** The tool ends an answer on `OK <words>` as on `OK`, and prints the line. In `ls`'s answer a `<name> <size>` row is a row whatever its name (a file named `OK` or `ERR`): the protocol's grammar is unchanged.
 - **#943.** The class answers GET_DESCRIPTOR for the device, configuration and BOS by type at any index; USB audio counts a re-aim only for a packet whose held parity (DIEPCTL.EONUM) was not the next frame's, and leaves such a packet's DIEPCTL unwritten (the write would have set the parity it holds).
 - **#829.** `bank2::ui_door` answers on a host whether or not `tape` is linked: its table carries MAX VOICES, CHOKE, the feel and the band's words too.
 - **#379, #505, #637, #811, #830, #1018.** The Justfile reads built firmware from `CARGO_TARGET_DIR`; `check` compiles every fuzz crate, runs the whole page walks, and runs `exclusive_state_test` under `bank2`; `clippy` runs core and engine with `bank2,test-support` on all targets, where bank 1's TAPE DSP tests are `cfg(not(feature = "bank2"))`.
@@ -44,7 +44,7 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 - **#354, gate the tests to debug**: they would never run under `--release`, which is what the issue found missing. Rejected.
 
 ## Consequences
-- After a console install that opens bank 2 the unit restarts; anything that drives `bank2 install` waits for the console again (the tool does).
+- After a console install that opens bank 2 the unit restarts; anything that drives `bank2 install` waits for the console again (the tool does), and saves first.
 - Bank 1 grows by the fixes (#1064's restart, #1000's read, #197's note, #315's filter, #766's stamp, #943's re-aim); the measured lines in `tools/bank1-budget.txt` cite this ADR. Bank 2 moves within its 64 B.
 - Not decided here, listed for the owner: #544 and #547 (NEEDS UPDATE's copy), #569 (stream admission against the UI's card turn), #710 (the card's block count costs bank 1 about 1 KB), #943's runtime-closed-door and GET_LINE_CODING items.
 
