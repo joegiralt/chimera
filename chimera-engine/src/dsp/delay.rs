@@ -85,7 +85,9 @@ pub enum DelaySync {
 }
 
 impl DelaySync {
-    pub const NAMES: [&'static str; 2] = ["FREE", "SYNC"];
+    /// Both, by index: `NAMES`' order.
+    pub const ALL: [DelaySync; 2] = [DelaySync::Free, DelaySync::Sync];
+    pub const NAMES: [&'static str; Self::ALL.len()] = ["FREE", "SYNC"];
 
     /// The state at `v`, its index; NaN and out of range are held in it.
     pub const fn at(v: f32) -> Self {

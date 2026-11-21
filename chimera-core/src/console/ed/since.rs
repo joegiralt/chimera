@@ -21,6 +21,7 @@
 //! mapfile "<name>"
 //! mixer                                   MIXER, whole
 //! panel REVERB <TYPE>
+//! panel DELAY <FREE|SYNC>
 //! val PART3.LEVEL …
 //! orbit                                   ORBIT, whole
 //! song <playing|stopped> clock <INT|EXT> scene <n> queued <n|-> edited <yes|no>
@@ -71,7 +72,7 @@ use super::describe::{
     modal_variant, op_variant, reverb_variant, tape_variant,
 };
 use super::edits::Refusals;
-use super::lit::{PANEL, SOURCE, UNQUOTE, lit};
+use super::lit::{SOURCE, UNQUOTE, lit};
 use super::route::{self, Routes};
 use super::schema::Schema;
 use super::settings;
@@ -83,6 +84,7 @@ use crate::dsp::chorus::ChorusMode;
 use crate::dsp::delay::{DelaySync, DelayType};
 use crate::dsp::drum::types::{Kit, PadId};
 use crate::dsp::modulator::{EnvSlot, LfoSlot};
+use crate::dsp::rev::sync::FoldState;
 use crate::dsp::reverb::ReverbType;
 use crate::orbit::scene::{SCENES, SceneIdx};
 use crate::project::{PartId, PartStatus, ProjectStatus, part_status};
@@ -570,6 +572,21 @@ impl Sections {
     }
 }
 
+/// The context PART's texts read: `value::text_ctx` without what only a
+/// mixer cell reads. The delay's SYNC makes its TIME cell the note (ADR
+/// 0302), a MIXER page's, so its flip is `MixSeen`'s and no text of
+/// PART's moves. The other mixer fields stay as protocol 3 compared them.
+#[derive(Clone, Copy, PartialEq)]
+struct PartCtx(SlotCtx);
+
+impl PartCtx {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.part_ctx"))]
+    fn of(mut c: SlotCtx) -> PartCtx {
+        c.delay_sync = DelaySync::Free;
+        PartCtx(c)
+    }
+}
+
 /// What the Part looked like when last reported.
 #[derive(Clone, Copy)]
 struct Seen {
@@ -579,7 +596,7 @@ struct Seen {
     /// What the box's text reads beside the bits (`cell_text`), as
     /// `value::text_ctx` has it: the cells resolve against it, so a change
     /// moves texts under unchanged bits and the values are answered whole.
-    ctx: SlotCtx,
+    ctx: PartCtx,
     /// Bank 2 can't play: `closed_text` reads FILTER.KIND and VOICEFX.TYPE as
     /// NEEDS UPDATE then, so it moves those texts under unchanged bits.
     closed: bool,
@@ -598,17 +615,83 @@ struct MixSeen {
     closed: bool,
 }
 
-/// What the reverb's panel texts read beyond their own values, the box's
-/// `rev_text_key`: PRE-DLY's pull in HALL's plate zone and the clock a
-/// synced cell's note reads. A change answers the reverb's values again.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.rev_key"))]
-fn rev_key(ui: &UiState, own: &CellOwn) -> u64 {
-    let pre = crate::dsp::reverb::plate_pull(&ui.project().perf().fx.reverb).predelay;
-    // The tempo's bits and the fold: `meter::clock_word` would be bank 1's
-    // out of line, and the box's key is finer than either changes.
-    let (t, fold) = own.rev_clock;
-    let clock = t.0.to_bits() ^ u32::from(fold.0 as u8) << 24;
-    u64::from(pre.to_bits()) | u64::from(clock) << 32
+/// The tempo in quarters of a BPM, the grid it is published on
+/// (`meter::clock_word`): 16 bits hold every tempo the word does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct QuarterBpm(u16);
+
+/// What the synced cells' texts read beyond their own values, when last
+/// reported: the reverb's (the box's `rev_text_key`: PRE-DLY's pull in
+/// HALL's plate zone, the tempo and the reverb's fold a synced cell's
+/// note reads) and the delay's fold, which its note reads (ADR 0302,
+/// `delay_sync::note_text`). A change answers the block whose texts read
+/// what moved, `again`. 8 B, as the `u64` it replaces.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ClockSeen {
+    /// PRE-DLY's pull, its bits.
+    pre: u32,
+    tempo: QuarterBpm,
+    rev: FoldState,
+    delay: FoldState,
+}
+
+/// The buses whose values are answered again under unchanged bits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Again {
+    Reverb,
+    Delay,
+    Both,
+}
+
+impl Again {
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.again_has"))]
+    fn has(self, at: EdBlock) -> bool {
+        match (self, at) {
+            (Again::Reverb | Again::Both, EdBlock::Bus(BusBlock::Reverb))
+            | (Again::Delay | Again::Both, EdBlock::Bus(BusBlock::Delay)) => true,
+            (Again::Reverb | Again::Delay | Again::Both, _) => false,
+        }
+    }
+}
+
+impl ClockSeen {
+    /// Before any answer: the first is whole, and takes `now`.
+    const NONE: ClockSeen = ClockSeen {
+        pre: 0,
+        tempo: QuarterBpm(0),
+        rev: FoldState(0),
+        delay: FoldState(0),
+    };
+
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.clock_now"))]
+    fn now(ui: &UiState, own: &CellOwn) -> ClockSeen {
+        let pre = crate::dsp::reverb::plate_pull(&ui.project().perf().fx.reverb).predelay;
+        // The tempo sits on the grid already (`meter::rev_clock` reads it
+        // off the word): a cast, where `clock_word`'s round is bank 1's.
+        let (t, rev) = own.rev_clock;
+        ClockSeen {
+            pre: pre.to_bits(),
+            tempo: QuarterBpm((t.0 * 4.0) as u16),
+            rev,
+            delay: crate::meter::delay_fold(),
+        }
+    }
+
+    /// The buses whose texts moved since `self`, if any: the delay's note
+    /// reads its fold alone, the reverb's cells the rest.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.clock_again")
+    )]
+    fn again(self, now: ClockSeen) -> Option<Again> {
+        let rev = (self.pre, self.tempo, self.rev) != (now.pre, now.tempo, now.rev);
+        match (rev, self.delay != now.delay) {
+            (false, false) => None,
+            (true, false) => Some(Again::Reverb),
+            (false, true) => Some(Again::Delay),
+            (true, true) => Some(Again::Both),
+        }
+    }
 }
 
 /// PART's copy: protocol 3's.
@@ -669,7 +752,7 @@ struct MapSeen {
 /// MIXER's copy.
 struct MixerCopy {
     seen: Option<MixSeen>,
-    rev_key: u64,
+    clock: ClockSeen,
     last: [Bits; MIXER_SLOTS],
     described: Option<Described>,
 }
@@ -827,7 +910,7 @@ impl EdSince {
             orbit: None,
             mixer: MixerCopy {
                 seen: None,
-                rev_key: 0,
+                clock: ClockSeen::NONE,
                 last: [Bits(0); MIXER_SLOTS],
                 described: None,
             },
@@ -1074,20 +1157,22 @@ impl EdSince {
         let ctx = text_ctx(ui, own);
         let closed = ui.bank2().is_some_and(|b| !b.is_open());
         let now = panels(engine, &ctx, ui.project().kit(part));
+        let seen = PartCtx::of(ctx);
         let was = match known {
             Some(k) if same => k.panels,
             _ => [""; PANELS],
         };
         // The texts too: whole again if the cells' context moved, or a
         // panel did (a pad's machine labels its knobs).
-        let texts = known
-            .is_some_and(|k| same && k.ctx == ctx && k.closed == closed && same_panels(&now, &was));
+        let texts = known.is_some_and(|k| {
+            same && k.ctx == seen && k.closed == closed && same_panels(&now, &was)
+        });
         if let Pass::Commit = pass {
             self.part.seen = Some(Seen {
                 part,
                 engine,
                 panels: now,
-                ctx,
+                ctx: seen,
                 closed,
             });
         }
@@ -1103,11 +1188,7 @@ impl EdSince {
             if let (Some(n), Some(v)) = (now.get(i), was.get(i))
                 && n != v
             {
-                w.write_str(PANEL.get())?;
-                s.name().write(w)?;
-                w.write_char(' ')?;
-                describe::variant_token(n, w)?;
-                w.write_char('\n')?;
+                s.name().line(n, w)?;
             }
             i += 1;
         }
@@ -1252,24 +1333,19 @@ impl EdSince {
             closed: ui.bank2().is_some_and(|b| !b.is_open()),
         };
         let whole = owed || self.mixer.seen != Some(now);
-        let key = rev_key(ui, own);
-        let rev_moved = !whole && self.mixer.rev_key != key;
+        let clock = ClockSeen::now(ui, own);
+        let again = match whole {
+            true => None,
+            false => self.mixer.clock.again(clock),
+        };
         if let Pass::Commit = pass {
             self.mixer.seen = Some(now);
-            self.mixer.rev_key = key;
+            self.mixer.clock = clock;
         }
         if whole {
             w.write_str(MIXER.get())?;
-            w.write_str(PANEL.get())?;
-            PanelName::Reverb.write(w)?;
-            w.write_char(' ')?;
-            describe::variant_token(reverb_variant(now.rev), w)?;
-            w.write_char('\n')?;
-            w.write_str(PANEL.get())?;
-            PanelName::Delay.write(w)?;
-            w.write_char(' ')?;
-            describe::variant_token(describe::delay_variant(now.sync), w)?;
-            w.write_char('\n')?;
+            PanelName::Reverb.line(reverb_variant(now.rev), w)?;
+            PanelName::Delay.line(describe::delay_variant(now.sync), w)?;
         }
         let d = described_in(&mut self.mixer.described, Schema::Mixer);
         let copy = Copy {
@@ -1277,9 +1353,9 @@ impl EdSince {
             last: &mut self.mixer.last,
             described: d,
         };
-        match rev_moved {
-            false => values(ui, own, copy, !whole, pass, w)?,
-            true => values_but(ui, own, copy, EdBlock::Bus(BusBlock::Reverb), pass, w)?,
+        match again {
+            None => values(ui, own, copy, !whole, pass, w)?,
+            Some(a) => values_but(ui, own, copy, a, pass, w)?,
         }
         Ok(whole)
     }
@@ -1384,8 +1460,8 @@ fn values(
     walk(ui, own, c, |_, moved| moved || !same, pass, w)
 }
 
-/// As `values`, with every value of block `again` answered whatever its
-/// bits: its texts moved under them.
+/// As `values`, with every value of `again`'s blocks answered whatever
+/// its bits: its texts moved under them.
 #[cfg_attr(
     target_os = "none",
     unsafe(link_section = ".bank2_ed.since.values_but")
@@ -1394,11 +1470,11 @@ fn values_but(
     ui: &UiState,
     own: &CellOwn,
     c: Copy<'_>,
-    again: EdBlock,
+    again: Again,
     pass: Pass,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    walk(ui, own, c, |at, moved| moved || at == again, pass, w)
+    walk(ui, own, c, |at, moved| moved || again.has(at), pass, w)
 }
 
 /// Each listed value of `c`'s schema, answered where `say(block, moved)`.

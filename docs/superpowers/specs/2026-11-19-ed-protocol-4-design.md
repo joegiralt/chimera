@@ -134,7 +134,7 @@ Commands queue in a small fixed array beside the sets (`EdState::acts`, 8 entrie
 | PART | the followed Part's values, panels, `source` (as protocol 3) | another Part or engine, a text-context or panel change |
 | ROUTES | the followed Part's matrix | another Part or engine |
 | MAP | the followed Part's map rows, its controller map, learn | any change (map edits are rare) |
-| MIXER | `PART<n>`, `PART<n>_SND`, the buses, `panel REVERB` | a change in the mixer's text context (reverb TYPE, chorus MODE, delay TYPE, PLATE) |
+| MIXER | `PART<n>`, `PART<n>_SND`, the buses, `panel REVERB <TYPE>`, `panel DELAY <FREE\|SYNC>` | a change in the mixer's text context (reverb TYPE, chorus MODE, delay TYPE, the delay's SYNC, PLATE) |
 | ORBIT | the ORBIT blocks, the song line, the slots | a text-context change (the clock source) |
 | SETTINGS | THEME, MIDI, RANDOM, the project's and Parts' state, the listing | a text-context change (`clash`, `pages`) |
 

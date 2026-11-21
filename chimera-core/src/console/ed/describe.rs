@@ -91,7 +91,10 @@ pub fn fx_variant(t: FxType) -> &'static str {
     unsafe(link_section = ".bank2_ed.describe.delay_variant")
 )]
 pub fn delay_variant(s: DelaySync) -> &'static str {
-    DelaySync::NAMES.get(s as usize).copied().unwrap_or("-")
+    match s {
+        DelaySync::Free => DelaySync::NAMES[0],
+        DelaySync::Sync => DelaySync::NAMES[1],
+    }
 }
 
 /// A reverb TYPE's panel, by its option name.
@@ -484,6 +487,17 @@ pub(super) enum PanelName {
 }
 
 impl PanelName {
+    /// `panel <name> <variant>`, newline-ended: the one writer of the
+    /// line, `describe`'s and `since`'s.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.line"))]
+    pub(super) fn line(self, variant: &str, w: &mut dyn Write) -> fmt::Result {
+        w.write_str(PANEL.get())?;
+        self.write(w)?;
+        w.write_char(' ')?;
+        variant_token(variant, w)?;
+        w.write_char('\n')
+    }
+
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.describe.write.1")
@@ -599,11 +613,7 @@ impl Group {
         unsafe(link_section = ".bank2_ed.describe.write_head")
     )]
     fn write_head(self, name: PanelName, w: &mut dyn Write) -> fmt::Result {
-        w.write_str(PANEL.get())?;
-        name.write(w)?;
-        w.write_char(' ')?;
-        variant_token(self.variant(), w)?;
-        w.write_char('\n')
+        name.line(self.variant(), w)
     }
 
     /// Its panel's name on `def`, a page of round `r`; `None` for a pad's
@@ -757,8 +767,9 @@ fn group_at(mut i: usize) -> Option<Group> {
     DELAY_SYNCS.get(i).map(|&s| Group::Delay(s))
 }
 
-/// The delay's TIME cell's variants, in SYNC's option order.
-static DELAY_SYNCS: [DelaySync; 2] = [DelaySync::Free, DelaySync::Sync];
+/// The delay's TIME cell's variants, in SYNC's option order: the
+/// engine's list, in a static of this crate's so its bytes are bank 2's.
+static DELAY_SYNCS: [DelaySync; DelaySync::ALL.len()] = DelaySync::ALL;
 
 /// A `BlockRead` with no blocks: the context every param at its zero.
 struct NoBlocks;
