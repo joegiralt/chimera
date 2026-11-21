@@ -11,8 +11,8 @@ use chimera_core::project::test_support::{
     same, save_at, save_part_to,
 };
 use chimera_core::project::{
-    Differ, FreshFile, LoadLink, PartFrom, PartId, PartSource, PartStatus, Project, ProjectEntry,
-    ProjectFile, ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, SlotId, Subject,
+    Differ, FreshFile, LoadLink, PartFrom, PartId, PartSource, Project, ProjectEntry, ProjectFile,
+    ProjectNote, ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, SlotId, SoundStatus, Subject,
     TemplateCrc, delete_project, list_projects, load_project, new_project_id, project_crc,
     project_file, project_status, save_project, sound_status,
 };
@@ -634,7 +634,7 @@ fn saved_toast_skips_stale_parts() {
     assert!(stale.contains(PartId::ALL[1]));
     assert_eq!(
         sound_status(p.part(PartId::ALL[1]), p.pool()),
-        PartStatus::Stale(slot)
+        SoundStatus::Stale(slot)
     );
     assert_eq!(
         save_at(&mut card, &mut s, &mut p, 1),
@@ -680,7 +680,7 @@ fn a_tape_project_loads_its_tape_parts_as_tape() {
     for part in [PartId::ALL[0], PartId::ALL[1]] {
         let x = q.part(part);
         assert!(x.sound.bits_eq(&Sound::init(EngineType::Tape)), "{part:?}");
-        assert_eq!(sound_status(x, q.pool()), PartStatus::Clean, "{part:?}");
+        assert_eq!(sound_status(x, q.pool()), SoundStatus::Clean, "{part:?}");
     }
     assert_eq!(
         q.part(PartId::ALL[0]).origin(),

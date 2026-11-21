@@ -580,15 +580,15 @@ fn fuzz_seeds_hold_both_records() {
 #[cfg(feature = "bank2")]
 #[test]
 fn closed_door_keeps_parts_clean() {
-    use chimera_core::project::{PartId, PartStatus, sound_status};
+    use chimera_core::project::{PartId, SoundStatus, sound_status};
     let _g = open();
     let ui = Box::new(chimera_core::ui::UiState::new());
     let p = ui.project();
     let part = p.part(PartId::ALL[0]);
     assert!(!part.sound.map.is_empty());
-    assert_eq!(sound_status(part, p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(part, p.pool()), SoundStatus::Clean);
     chimera_core::bank2::DOOR_CELL.close();
-    assert_eq!(sound_status(part, p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(part, p.pool()), SoundStatus::Clean);
 }
 
 /// Closed, a Part's load that fails (an empty slot) leaves its Sound and
@@ -663,7 +663,7 @@ fn as_legacy(f: &[u8]) -> Vec<u8> {
 /// Parts both decode, then re-encode as `0x001F`.
 #[test]
 fn legacy_project_parts_load_clean() {
-    use chimera_core::project::{PartId, PartStatus, Project, sound_status};
+    use chimera_core::project::{PartId, Project, SoundStatus, sound_status};
     use common::codec_util::{decode_project, encode_project};
     let _g = open();
     let (p, _) = Project::boxed();
@@ -674,7 +674,7 @@ fn legacy_project_parts_load_clean() {
     for id in PartId::ALL {
         let part = q.part(id);
         assert!(!part.sound.map.is_empty(), "{id:?}");
-        assert_eq!(sound_status(part, q.pool()), PartStatus::Clean, "{id:?}");
+        assert_eq!(sound_status(part, q.pool()), SoundStatus::Clean, "{id:?}");
     }
 }
 
@@ -721,7 +721,7 @@ fn closed_door_project_slots_keep_the_record() {
 fn closed_door_stale_is_stale() {
     use chimera_core::project::test_support::save_part_to;
     use chimera_core::project::{
-        PartFrom, PartId, PartSource, PartStatus, Project, ReplaceGuard, SlotId, sound_status,
+        PartFrom, PartId, PartSource, Project, ReplaceGuard, SlotId, SoundStatus, sound_status,
     };
     let _g = open();
     chimera_core::bank2::DOOR_CELL.close();
@@ -735,10 +735,10 @@ fn closed_door_stale_is_stale() {
         p.replace_part(ReplaceGuard::check(&p, t, src).unwrap())
             .unwrap();
     }
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Clean);
     p.edit_part(b).sound.params.filter.cutoff *= 0.5;
     save_part_to(&mut p, b, s);
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Stale(s));
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Stale(s));
 }
 
 /// The library's row for `id` on `st`.
@@ -792,13 +792,15 @@ fn closed_door_library_keeps_the_record() {
     let chart: LibId = save_library_part(&mut Card::new(), &mut st, &p, a, name("CHART"), &ST)
         .out
         .unwrap()
+        .id()
         .into();
     let file = listed(&mut st, mapped);
-    read_library_sound(&mut Card::new(), &mut st, &mut p, file)
+    let c = ReplaceGuard::check(&p, t, LibraryPart { part: b, file }).unwrap();
+    let c = ReplaceGuard::kit(&p, t, c).unwrap();
+    let read = read_library_sound(&mut Card::new(), &mut st, &mut p, c)
         .out
         .unwrap();
-    let c = ReplaceGuard::check(&p, t, LibraryPart { part: b, file }).unwrap();
-    p.adopt(c, None).unwrap();
+    p.adopt(read, None).unwrap();
     let saved = encode_project(&p);
 
     chimera_core::bank2::DOOR_CELL.open_host();
@@ -808,7 +810,9 @@ fn closed_door_library_keeps_the_record() {
     let want = r.pool().get(SlotId::ALL[0]).unwrap().to_sound().map;
     assert!(!want.is_empty());
     let file = listed(&mut st, chart);
-    read_library_sound(&mut Card::new(), &mut st, &mut r, file)
+    let c = ReplaceGuard::check(&r, t, LibraryPart { part: a, file }).unwrap();
+    let c = ReplaceGuard::kit(&r, t, c).unwrap();
+    let _read = read_library_sound(&mut Card::new(), &mut st, &mut r, c)
         .out
         .unwrap();
     assert_eq!(scratch_of(&r).map, want);
@@ -845,11 +849,12 @@ fn closed_door_library_load_does_not_dedupe_over_a_map() {
     chimera_core::bank2::DOOR_CELL.close();
     let (mut p, t) = Project::boxed();
     let file = listed(&mut st, id);
-    read_library_sound(&mut Card::new(), &mut st, &mut p, file)
+    let c = ReplaceGuard::check(&p, t, LibraryPart { part: b, file }).unwrap();
+    let c = ReplaceGuard::kit(&p, t, c).unwrap();
+    let read = read_library_sound(&mut Card::new(), &mut st, &mut p, c)
         .out
         .unwrap();
-    let c = ReplaceGuard::check(&p, t, LibraryPart { part: b, file }).unwrap();
-    p.adopt(c, None).unwrap();
+    p.adopt(read, None).unwrap();
     let saved = encode_project(&p);
 
     chimera_core::bank2::DOOR_CELL.open_host();

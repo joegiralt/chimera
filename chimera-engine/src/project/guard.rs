@@ -54,8 +54,8 @@ use crate::storage::{Crc32, Generation, ProjectId, sound_crc};
 
 use super::marks::status_at;
 use super::{
-    KitDoor, LibraryPart, Origin, PartFrom, PartSource, PartStatus, Project, ProjectEntry,
-    ProjectFile, ProjectStatus, TemplateCrc, part_status, project_crc, project_status,
+    KitDoor, LibraryPart, Origin, PartFrom, PartSource, Project, ProjectEntry, ProjectFile,
+    ProjectStatus, SoundStatus, TemplateCrc, project_crc, project_status, sound_status,
 };
 use crate::confirm::Said;
 
@@ -66,6 +66,9 @@ pub enum Prompt {
     SavePartFirst,
     /// SAVE THEN LOAD / LOAD ANYWAY / CANCEL.
     SaveProjectFirst,
+    /// REPLACE / CANCEL: a library load of a DRUM Sound over a kit in no
+    /// library file (ADR 0305). No save first: a slot holds no kit.
+    KitUnsaved,
 }
 
 mod sealed {
@@ -73,6 +76,7 @@ mod sealed {
     impl Sealed for super::PartSource {}
     impl Sealed for super::ProjectSource {}
     impl Sealed for super::LibraryPart {}
+    impl Sealed for super::LibraryKit {}
     impl Sealed for super::OverwriteTarget {}
     impl Sealed for super::DeleteTarget {}
     impl Sealed for super::SceneSlot {}
@@ -105,18 +109,19 @@ impl Witnessed for PartSource {
     type Witness = u32;
 }
 
-/// An `Edited` Part asks, its Sound's edits or its kit's (ADR 0305); a
-/// `Clean` or `Stale` one doesn't.
+/// A Part whose Sound is `Edited` asks; a `Clean` or `Stale` one
+/// doesn't. Its kit is not weighed: a slot or INIT load, a reload and a
+/// program change leave the kit on the Part (ADR 0265, 0305).
 impl Target for PartSource {
     #[optimize(size)]
     fn at_risk(&self, p: &Project, _: TemplateCrc) -> Option<Prompt> {
-        (part_status(p, self.part) == PartStatus::Edited).then_some(Prompt::SavePartFirst)
+        (sound_status(p.part(self.part), p.pool()) == SoundStatus::Edited)
+            .then_some(Prompt::SavePartFirst)
     }
 
     /// The Part's `sound_crc`, its Origin and, for a slot, the slot's
-    /// generation now, then its kit as seen (ADR 0305): `part_status`
-    /// reads only these and the slot's contents, which move its
-    /// generation.
+    /// generation now: `sound_status` reads only these and the slot's
+    /// contents, which move its generation.
     #[optimize(size)]
     fn witness(&self, p: &Project) -> u32 {
         let part = p.part(self.part);
@@ -135,7 +140,6 @@ impl Target for PartSource {
             }
             Origin::Init(e) => c.update(&[1, e.disk_code()]),
         }
-        c.update(&KitDoor::seen(p, self.part).witness().to_le_bytes());
         c.finish()
     }
 }
@@ -155,7 +159,9 @@ impl Witnessed for LibraryPart {
     type Witness = u32;
 }
 
-/// `PartSource`'s: the file is checked by the load, not the guard.
+/// A library load's first question, the Sound's, as `PartSource`'s: the
+/// file is checked by the load, not the guard. Its confirmation loads
+/// nothing: the kit's question is next (`ReplaceGuard::kit`).
 impl Target for LibraryPart {
     #[optimize(size)]
     fn at_risk(&self, p: &Project, t: TemplateCrc) -> Option<Prompt> {
@@ -165,6 +171,74 @@ impl Target for LibraryPart {
     #[optimize(size)]
     fn witness(&self, p: &Project) -> u32 {
         self.as_part().witness(p)
+    }
+}
+
+/// A library load whose Sound question is settled: the kit's turn (ADR
+/// 0305). A DRUM Sound's load replaces the Part's kit, the one thing
+/// that does, so only here is the kit weighed. Made only by
+/// `ReplaceGuard::kit`, from the Sound's confirmation:
+///
+/// ```compile_fail,E0451
+/// use chimera_engine::project::{LibraryKit, LibraryPart};
+/// fn forge(lib: LibraryPart) -> LibraryKit {
+///     LibraryKit { lib, sound: 0 }
+/// }
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LibraryKit {
+    lib: LibraryPart,
+    /// The Part's witness as the Sound's question confirmed it.
+    sound: u32,
+}
+
+impl LibraryKit {
+    #[optimize(size)]
+    pub fn part(&self) -> super::PartId {
+        self.lib.part
+    }
+
+    #[optimize(size)]
+    pub fn file(&self) -> super::LibFile {
+        self.lib.file
+    }
+}
+
+impl Witnessed for LibraryKit {
+    type Witness = u32;
+}
+
+/// The Part's kit is at risk when the file may be a DRUM Sound's (its
+/// listed engine DRUM, or unknown) and the kit is neither the default
+/// nor one the library holds: whatever engine the Part plays now (a kit
+/// kept through a switch away from DRUM counts) and whatever loaded it.
+impl Target for LibraryKit {
+    #[optimize(size)]
+    fn at_risk(&self, p: &Project, _: TemplateCrc) -> Option<Prompt> {
+        let drum = matches!(
+            self.lib.file.engine,
+            None | Some(crate::params::EngineType::Drum)
+        );
+        (drum && KitDoor::seen(p, self.lib.part).unsaved()).then_some(Prompt::KitUnsaved)
+    }
+
+    /// The Part's own witness now, then its kit as seen: its place and
+    /// CRC, in every engine state.
+    #[optimize(size)]
+    fn witness(&self, p: &Project) -> u32 {
+        let mut c = Crc32::new();
+        c.update(&self.lib.as_part().witness(p).to_le_bytes());
+        c.update(&KitDoor::seen(p, self.lib.part).bytes());
+        c.finish()
+    }
+}
+
+impl Confirmed<LibraryKit> {
+    /// The Part and its kit still what both questions confirmed: the
+    /// kit's (`holds`), and the Sound's before it.
+    #[optimize(size)]
+    pub fn still(&self, p: &Project) -> bool {
+        self.holds(p) && self.target.lib.as_part().witness(p) == self.target.sound
     }
 }
 
@@ -300,6 +374,24 @@ impl<R: Target> Pending<R> {
 pub struct ReplaceGuard;
 
 impl ReplaceGuard {
+    /// A library load's second question, after its Sound's: the kit's.
+    #[optimize(size)]
+    pub fn kit(
+        p: &Project,
+        t: TemplateCrc,
+        c: Confirmed<LibraryPart>,
+    ) -> Result<Confirmed<LibraryKit>, NeedsConfirm<LibraryKit>> {
+        let lib = c.target;
+        Self::check(
+            p,
+            t,
+            LibraryKit {
+                lib,
+                sound: c.witness,
+            },
+        )
+    }
+
     #[optimize(size)]
     pub fn check<R: Target>(
         p: &Project,

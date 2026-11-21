@@ -11,7 +11,7 @@ mod screen;
 
 use chimera_core::bank2::{Bank2Status, DOOR_CELL};
 use chimera_core::midi_map::{MidiMap, default_for};
-use chimera_core::project::{PartId, PartStatus, ProjectStatus, sound_status};
+use chimera_core::project::{PartId, ProjectStatus, SoundStatus, sound_status};
 use chimera_core::storage::Card;
 use chimera_hal::testkit::MemStore;
 
@@ -45,7 +45,7 @@ fn new_is_built_after_the_install_opens() {
         assert!(charts.contains(&p.sound.map), "{id:?}: the default chart");
         assert_eq!(
             sound_status(p, ui.project().pool()),
-            PartStatus::Clean,
+            SoundStatus::Clean,
             "{id:?}"
         );
     }

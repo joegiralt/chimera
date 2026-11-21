@@ -27,8 +27,8 @@ use super::{
     Confirmed, DeleteTarget, FreshFile, Line, LoadLink, LoadOutcome, Origin, OverwriteTarget,
     PartFrom, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectFile, ProjectNote,
     ProjectSource, ProjectStatus, ReplaceGuard, SaveTo, SlotId, Subject, TemplateCrc,
-    clear_project, delete_project, list_projects, load_project, new_project_id, project_crc,
-    project_file, project_status, save_project, sound_status,
+    clear_project, delete_project, list_projects, load_project, new_project_id, part_status,
+    project_crc, project_file, project_status, save_project,
 };
 
 /// `Project::save_part_to`, which only a Part action reaches outside tests.
@@ -250,11 +250,8 @@ pub fn same(a: &Project, b: &Project) {
             ) => assert_eq!((s1, c1), (s2, c2), "Part {n} origin"),
             (o1, o2) => assert_eq!(o1, o2, "Part {n} origin"),
         }
-        assert_eq!(
-            sound_status(x, a.pool()),
-            sound_status(y, b.pool()),
-            "Part {n} status"
-        );
+        let id = PartId::ALL[n];
+        assert_eq!(part_status(a, id), part_status(b, id), "Part {n} status");
     }
     assert_eq!(a.perf().fx, b.perf().fx, "FX");
     assert_eq!(a.orbit(), b.orbit(), "ORBIT");

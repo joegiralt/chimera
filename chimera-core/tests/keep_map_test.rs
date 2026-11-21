@@ -12,7 +12,7 @@ use chimera_core::midi_in::CcEvent;
 use chimera_core::midi_map::{Input, Mappable, MidiMap};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
-use chimera_core::project::{PartFrom, PartId, PartSource, PartStatus, SlotId, sound_status};
+use chimera_core::project::{PartFrom, PartId, PartSource, SlotId, SoundStatus, sound_status};
 use chimera_core::ui::UiState;
 use chimera_core::ui::hint::{self, Gesture};
 use chimera_core::ui::theme;
@@ -87,7 +87,7 @@ fn map(ui: &UiState) -> MidiMap {
     ui.project().part(P1).sound.map
 }
 
-fn status(ui: &UiState) -> PartStatus {
+fn status(ui: &UiState) -> SoundStatus {
     sound_status(ui.project().part(P1), ui.project().pool())
 }
 
@@ -118,7 +118,7 @@ fn kept_rows_survive_loads_and_ask_nothing() {
         load(&mut ui, s);
         assert!(ui.prompt_words_for_test().is_none(), "{s:?} asked");
         assert_eq!(map(&ui), rows(), "{s:?}");
-        assert_eq!(status(&ui), PartStatus::Clean, "{s:?}");
+        assert_eq!(status(&ui), SoundStatus::Clean, "{s:?}");
     }
     // INIT too.
     ui.load_for_test(PartSource {
@@ -128,7 +128,7 @@ fn kept_rows_survive_loads_and_ask_nothing() {
     pass(&mut ui);
     assert!(ui.prompt_words_for_test().is_none());
     assert_eq!(map(&ui), rows());
-    assert_eq!(status(&ui), PartStatus::Clean);
+    assert_eq!(status(&ui), SoundStatus::Clean);
 }
 
 /// Only the kept rows are forgiven: a real edit still asks.
@@ -140,7 +140,7 @@ fn an_edit_still_asks() {
     load(&mut ui, VA);
     ui.project_mut().edit_part(P1).sound.params.filter.cutoff *= 0.5;
     pass(&mut ui);
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     ui.load_for_test(PartSource {
         part: P1,
         from: PartFrom::Slot(MODAL),
@@ -163,7 +163,7 @@ fn an_edited_landing_stays_edited() {
     ui.project_mut().edit_part(P1).sound.params.filter.cutoff *= 0.5;
     pass(&mut ui);
     assert_eq!(map(&ui), rows());
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     ui.load_for_test(PartSource {
         part: P1,
         from: PartFrom::Slot(MODAL),
@@ -178,12 +178,12 @@ fn a_kept_part_still_reads_stale() {
     to_map(&mut ui);
     keep(&mut ui);
     load(&mut ui, VA);
-    assert_eq!(status(&ui), PartStatus::Clean);
+    assert_eq!(status(&ui), SoundStatus::Clean);
     ui.project_mut()
         .pool_store(VA, &Sound::init(EngineType::Algo))
         .unwrap();
     pass(&mut ui);
-    assert_eq!(status(&ui), PartStatus::Stale(VA));
+    assert_eq!(status(&ui), SoundStatus::Stale(VA));
 }
 
 /// MIX + PLUS again lets go: the Part holds rows its Sound doesn't, so it
@@ -197,7 +197,7 @@ fn off_again_the_part_is_edited() {
     to_map(&mut ui);
     keep(&mut ui);
     assert_eq!(kept_word(&ui), "OFF");
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     assert_eq!(map(&ui), rows());
 }
 
@@ -217,7 +217,7 @@ fn rows_learned_while_kept_ask_once() {
     .unwrap();
     ui.project_mut().edit_part(P1).sound.map = m;
     pass(&mut ui);
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     assert!(ui.ask_replace_for_test(PartSource {
         part: P1,
         from: PartFrom::Slot(MODAL),
@@ -229,7 +229,7 @@ fn rows_learned_while_kept_ask_once() {
     assert!(!ui.prompt_open());
     pass(&mut ui);
     assert_eq!(map(&ui), m);
-    assert_eq!(status(&ui), PartStatus::Clean);
+    assert_eq!(status(&ui), SoundStatus::Clean);
 }
 
 /// A project load forgets every keep.
@@ -309,16 +309,16 @@ fn a_program_change_back_to_an_edit_stays_edited() {
         pass(ui);
     };
     pc(&mut ui, VA);
-    assert_eq!(status(&ui), PartStatus::Clean);
+    assert_eq!(status(&ui), SoundStatus::Clean);
     ui.project_mut().edit_part(P1).sound.params.filter.cutoff *= 0.5;
     let edited = ui.project().part(P1).sound.params.filter.cutoff;
     pass(&mut ui);
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     pc(&mut ui, MODAL);
-    assert_eq!(status(&ui), PartStatus::Clean, "MODAL, kept rows: Clean");
+    assert_eq!(status(&ui), SoundStatus::Clean, "MODAL, kept rows: Clean");
     assert_eq!(map(&ui), rows());
     pc(&mut ui, VA);
     assert_eq!(ui.project().part(P1).sound.params.filter.cutoff, edited);
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     assert_eq!(map(&ui), rows());
 }

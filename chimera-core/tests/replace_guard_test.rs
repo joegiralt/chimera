@@ -10,8 +10,8 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
-    PartActionKind, PartFrom, PartId, PartSource, PartStatus, Project, ProjectSource, Prompt,
-    ReplaceError, ReplaceGuard, SlotId, part_actions, sound_status,
+    PartActionKind, PartFrom, PartId, PartSource, Project, ProjectSource, Prompt, ReplaceError,
+    ReplaceGuard, SlotId, SoundStatus, part_actions, sound_status,
 };
 use chimera_core::storage::ProjectId;
 use chimera_hal::store::{Store, VolumeId};
@@ -52,7 +52,7 @@ fn part_replace_prompts_only_when_edited() {
     }
     edit(&mut p, b);
     save_part_to(&mut p, b, s);
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Stale(s));
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Stale(s));
     let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[5])).unwrap();
     assert_eq!(c.target(), slot(a, SlotId::ALL[5]));
     p.replace_part(c).unwrap();
@@ -133,7 +133,7 @@ fn each_answer_does_what_it_says() {
     let edited = p.part(a).sound.clone();
     let _ = ReplaceGuard::check(&p, t, r).unwrap_err().into_pending();
     assert!(p.part(a).sound.bits_eq(&edited));
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Edited);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Edited);
 }
 
 /// Review Focus 4: confirmed while Clean, edited before the replace.
@@ -141,14 +141,14 @@ fn each_answer_does_what_it_says() {
 fn confirmed_then_edited_is_refused() {
     let (mut p, t) = Project::boxed();
     let a = PartId::ALL[1];
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Clean);
     let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[3])).unwrap();
     edit(&mut p, a);
     let edited = p.part(a).sound.clone();
     assert!(!c.holds(&p));
     assert_eq!(p.replace_part(c), Err(ReplaceError::Changed));
     assert!(p.part(a).sound.bits_eq(&edited));
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Edited);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Edited);
 }
 
 /// REPLACE confirms the edit as it was: a further edit needs asking again.
@@ -215,7 +215,7 @@ fn a_confirmation_from_before_a_load_is_refused() {
     let bits = p.part(a).sound.clone();
     decode(&encode(&q), &mut p).unwrap();
     assert!(p.part(a).sound.bits_eq(&bits));
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Edited);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Edited);
     assert_eq!(
         ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[5]))
             .unwrap_err()
@@ -241,11 +241,11 @@ fn a_confirmation_is_refused_once_its_slot_moves() {
     edit(&mut p, a);
     edit(&mut p, b);
     save_part_to(&mut p, b, s);
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Clean);
     let c = ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[0])).unwrap();
     edit(&mut p, b);
     save_part_to(&mut p, b, s);
-    assert_eq!(sound_status(p.part(a), p.pool()), PartStatus::Edited);
+    assert_eq!(sound_status(p.part(a), p.pool()), SoundStatus::Edited);
     assert!(ReplaceGuard::check(&p, t, slot(a, SlotId::ALL[0])).is_err());
     let bits = p.part(a).sound.clone();
     assert!(!c.holds(&p));

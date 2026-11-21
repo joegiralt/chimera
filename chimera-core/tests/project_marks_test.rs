@@ -11,7 +11,7 @@ use chimera_core::preset::Sound;
 use chimera_core::project::test_support::save_part_to;
 use chimera_core::project::{
     ActionRefused, Origin, PartActionKind, PartActions, PartFrom, PartId, PartSet, PartSource,
-    PartStatus, Project, ProjectStatus, SlotId, part_actions, project_crc, project_status,
+    Project, ProjectStatus, SlotId, SoundStatus, part_actions, project_crc, project_status,
     sound_status,
 };
 use chimera_core::storage::sound_crc;
@@ -31,7 +31,7 @@ fn init(part: PartId, e: EngineType) -> PartSource {
     }
 }
 
-fn status(p: &Project, part: PartId) -> PartStatus {
+fn status(p: &Project, part: PartId) -> SoundStatus {
     sound_status(p.part(part), p.pool())
 }
 
@@ -54,12 +54,12 @@ fn edit_back_to_the_slot_is_clean() {
     let (mut p, t) = Project::boxed();
     let a = PartId::ALL[0];
     load(&mut p, t, src(a, SlotId::ALL[0])).unwrap();
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
     let was = p.part(a).sound.params.filter.cutoff;
     p.edit_part(a).sound.params.filter.cutoff = was * 0.5;
-    assert_eq!(status(&p, a), PartStatus::Edited);
+    assert_eq!(status(&p, a), SoundStatus::Edited);
     p.edit_part(a).sound.params.filter.cutoff = was;
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
 }
 
 #[test]
@@ -77,9 +77,9 @@ fn save_over_a_slot_stales_the_other_unedited_users() {
         .find(|x| x.kind() == PartActionKind::OverSlot(s))
         .unwrap();
     assert_eq!(p.apply_part_action(over), Ok(PartSet::EMPTY.with(b)));
-    assert_eq!(status(&p, a), PartStatus::Clean);
-    assert_eq!(status(&p, b), PartStatus::Stale(s));
-    assert_eq!(status(&p, c), PartStatus::Edited);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
+    assert_eq!(status(&p, b), SoundStatus::Stale(s));
+    assert_eq!(status(&p, c), SoundStatus::Edited);
     assert!(
         p.pool()
             .get(s)
@@ -124,7 +124,7 @@ fn new_slot_saves_to_the_free_slot_and_cleans_the_part() {
             .to_sound()
             .bits_eq(&p.part(a).sound)
     );
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
     match p.part(a).origin() {
         Origin::Slot { slot, crc, .. } => {
             assert_eq!((slot, crc), (free, sound_crc(&p.part(a).sound)));
@@ -152,7 +152,7 @@ fn revert_is_bit_exact() {
             .sound
             .bits_eq(&p.pool().get(s).unwrap().to_sound())
     );
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
     // A revert copies the Sound; the mix isn't the slot's.
     assert_ne!(p.part(a).mix, mix);
     assert_eq!(p.part(a).mix.pan, 0.25);
@@ -167,11 +167,11 @@ fn update_brings_a_stale_part_to_its_slot() {
     load(&mut p, t, src(b, s)).unwrap();
     edit(&mut p, a, 0.5);
     save_part_to(&mut p, a, s);
-    assert_eq!(status(&p, b), PartStatus::Stale(s));
+    assert_eq!(status(&p, b), SoundStatus::Stale(s));
     let update = part_actions(&p, b).iter().next().unwrap();
     assert_eq!(update.kind(), PartActionKind::Revert(s));
     assert_eq!(p.apply_part_action(update), Ok(PartSet::EMPTY));
-    assert_eq!(status(&p, b), PartStatus::Clean);
+    assert_eq!(status(&p, b), SoundStatus::Clean);
     assert!(p.part(b).sound.bits_eq(&p.part(a).sound));
 }
 
@@ -179,15 +179,15 @@ fn update_brings_a_stale_part_to_its_slot() {
 fn init_origin_never_stale() {
     let (mut p, t) = Project::boxed();
     let a = PartId::ALL[1];
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
     // The INIT slot changes under it.
     p.pool_store(SlotId::ALL[FACTORY_LEN], &factory_sound(0).unwrap())
         .unwrap();
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
     edit(&mut p, a, 0.5);
-    assert_eq!(status(&p, a), PartStatus::Edited);
+    assert_eq!(status(&p, a), SoundStatus::Edited);
     load_anyway(&mut p, t, init(a, EngineType::Modal)).unwrap();
-    assert_eq!(status(&p, a), PartStatus::Clean);
+    assert_eq!(status(&p, a), SoundStatus::Clean);
 }
 
 /// Review Focus 2: an edited Part, saved with its project and reloaded,
@@ -202,7 +202,7 @@ fn edited_part_never_stale_after_reload() {
     edit(&mut p, a, 0.5);
     let (mut q, tq) = Project::boxed();
     decode(&encode(&p), &mut q).unwrap();
-    assert_eq!(status(&q, a), PartStatus::Edited);
+    assert_eq!(status(&q, a), SoundStatus::Edited);
     match q.part(a).origin() {
         Origin::Slot { slot, crc, .. } => {
             assert_eq!(slot, s);
@@ -214,7 +214,7 @@ fn edited_part_never_stale_after_reload() {
     load(&mut q, tq, src(b, s)).unwrap();
     edit(&mut q, b, 0.25);
     assert_eq!(save_part_to(&mut q, b, s), PartSet::EMPTY);
-    assert_eq!(status(&q, a), PartStatus::Edited);
+    assert_eq!(status(&q, a), SoundStatus::Edited);
     assert_eq!(
         kinds(part_actions(&q, a)),
         [
@@ -234,11 +234,11 @@ fn stale_reloads_as_edited() {
     load(&mut p, t, src(b, s)).unwrap();
     edit(&mut p, b, 0.5);
     assert_eq!(save_part_to(&mut p, b, s), PartSet::EMPTY.with(a));
-    assert_eq!(status(&p, a), PartStatus::Stale(s));
+    assert_eq!(status(&p, a), SoundStatus::Stale(s));
     let (mut q, _) = Project::boxed();
     decode(&encode(&p), &mut q).unwrap();
-    assert_eq!(status(&q, a), PartStatus::Edited);
-    assert_eq!(status(&q, b), PartStatus::Clean);
+    assert_eq!(status(&q, a), SoundStatus::Edited);
+    assert_eq!(status(&q, b), SoundStatus::Clean);
     assert!(q.part(a).sound.bits_eq(&p.part(a).sound));
 }
 
@@ -303,11 +303,11 @@ fn actions_offer_only_what_applies() {
     edit(&mut p, edited_init, 0.5);
 
     let rows = [
-        (clean_init, PartStatus::Clean),
-        (clean_slot, PartStatus::Clean),
-        (edited_slot, PartStatus::Edited),
-        (edited_init, PartStatus::Edited),
-        (stale, PartStatus::Stale(s)),
+        (clean_init, SoundStatus::Clean),
+        (clean_slot, SoundStatus::Clean),
+        (edited_slot, SoundStatus::Edited),
+        (edited_init, SoundStatus::Edited),
+        (stale, SoundStatus::Stale(s)),
     ];
     for (part, want) in rows {
         assert_eq!(status(&p, part), want, "Part {}", part.index());
@@ -423,7 +423,7 @@ fn an_action_from_before_a_load_is_gone() {
     assert!(matches!(new.kind(), PartActionKind::NewSlot(_)));
     decode(&encode(&q), &mut p).unwrap();
     assert_eq!(p.part(a).origin(), Origin::Init(EngineType::Modal));
-    assert_eq!(status(&p, a), PartStatus::Edited);
+    assert_eq!(status(&p, a), SoundStatus::Edited);
     let crc = project_crc(&p);
     assert_eq!(p.apply_part_action(new), Err(ActionRefused::Gone));
     assert_eq!(project_crc(&p), crc);
@@ -459,7 +459,7 @@ fn marks_compare_encodings() {
             dense(&mut s, r);
         }
         p.pool_store(slot, &s).unwrap();
-        if status(&p, part) == PartStatus::Clean {
+        if status(&p, part) == SoundStatus::Clean {
             load(&mut p, t, src(part, slot)).unwrap();
         } else {
             load_anyway(&mut p, t, src(part, slot)).unwrap();
@@ -491,7 +491,7 @@ fn marks_compare_encodings() {
         let eq = p.part(part).sound.bits_eq(&held);
         clean += usize::from(eq);
         assert_eq!(
-            status(&p, part) == PartStatus::Clean,
+            status(&p, part) == SoundStatus::Clean,
             eq,
             "pair {i}: seed {r:#x}"
         );

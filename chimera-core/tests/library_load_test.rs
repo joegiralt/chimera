@@ -16,9 +16,10 @@ use chimera_core::preset::Sound;
 use chimera_core::project::arena::Cost;
 use chimera_core::project::test_support::{scratch_of, set_free_to};
 use chimera_core::project::{
-    Absence, AdoptError, Adopted, Confirmed, LibFile, LibNote, LibPage, LibRead, LibraryPart,
-    PageAt, PartId, PartStatus, Project, ReplaceError, ReplaceGuard, Shelf, SourceNeed, SourceRef,
-    Staged, TemplateCrc, list_library, read_library_sound, save_library_sound, sound_status,
+    Absence, AdoptError, Adopted, Confirmed, LibFile, LibNote, LibPage, LibRead, LibraryKit,
+    LibraryPart, PageAt, PartId, Project, ReadPart, ReplaceError, ReplaceGuard, Shelf, SoundStatus,
+    SourceNeed, SourceRef, Staged, TemplateCrc, list_library, read_library_sound,
+    save_library_sound, sound_status,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, HEADER_LEN, Header, LibId, RecordTag,
@@ -99,21 +100,38 @@ fn saved_bytes(bytes: Vec<u8>) -> (Box<Project>, MemStore, LibFile, u32) {
     (Project::boxed().0, st, file, bytes.len() as u32)
 }
 
-fn read(st: &mut MemStore, p: &mut Project, file: LibFile) -> Result<LibRead, LibNote> {
-    read_library_sound(&mut Card::new(), st, p, file).out
+thread_local! {
+    /// The last `read`'s `ReadPart`, for `adopt`: a read is adopted once.
+    static LAST: std::cell::RefCell<Option<ReadPart>> = const { std::cell::RefCell::new(None) };
 }
 
-/// The guard on a Clean Part, no prompt.
-fn confirmed(p: &Project, part: PartId, file: LibFile) -> Confirmed<LibraryPart> {
-    ReplaceGuard::check(p, template(), LibraryPart { part, file }).unwrap()
+/// `file` read for Part 1, confirmed as the Part is now; what it said.
+fn read(st: &mut MemStore, p: &mut Project, file: LibFile) -> Result<LibRead, LibNote> {
+    let go = confirmed(p, P1, file);
+    let r = read_library_sound(&mut Card::new(), st, p, go).out?;
+    let said = r.read();
+    LAST.with(|l| *l.borrow_mut() = Some(r));
+    Ok(said)
+}
+
+/// The last `read`, adopted.
+fn adopt(p: &mut Project, staged: Option<Staged>) -> Result<Adopted, AdoptError> {
+    let r = LAST.with(|l| l.borrow_mut().take()).expect("a read");
+    p.adopt(r, staged)
+}
+
+/// Both guards on a Clean Part with a kept kit, no prompt.
+fn confirmed(p: &Project, part: PartId, file: LibFile) -> Confirmed<LibraryKit> {
+    let c = ReplaceGuard::check(p, template(), LibraryPart { part, file }).unwrap();
+    ReplaceGuard::kit(p, template(), c).unwrap()
 }
 
 fn adopt_twice(s: Sound) -> (Adopted, Adopted) {
     let (mut p, mut st, file) = saved(s);
     read(&mut st, &mut p, file).unwrap();
-    let first = p.adopt(confirmed(&p, P1, file), None).unwrap();
+    let first = adopt(&mut p, None).unwrap();
     read(&mut st, &mut p, file).unwrap();
-    let second = p.adopt(confirmed(&p, P1, file), None).unwrap();
+    let second = adopt(&mut p, None).unwrap();
     (first, second)
 }
 
@@ -284,9 +302,9 @@ fn adopt_stores_the_slot_and_the_part_reads_clean() {
     let (mut p, mut st, file) = saved(sound(0));
     read(&mut st, &mut p, file).unwrap();
     let loads = p.part(P1).loads();
-    let a = p.adopt(confirmed(&p, P1, file), None).unwrap();
+    let a = adopt(&mut p, None).unwrap();
     assert!(!a.deduped);
-    assert_eq!(sound_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(P1), p.pool()), SoundStatus::Clean);
     assert!(p.pool().get(a.slot).unwrap().matches(&sound(0)));
     assert_ne!(p.part(P1).loads(), loads);
 }
@@ -316,7 +334,7 @@ fn over_budget_changes_nothing() {
     let (mut p, mut st, file) = saved_with_full_arena(sound(0));
     read(&mut st, &mut p, file).unwrap();
     let (rev, used, n) = (p.rev(), p.pool().used(), p.pool().sound_count());
-    let e = p.adopt(confirmed(&p, P1, file), None).unwrap_err();
+    let e = adopt(&mut p, None).unwrap_err();
     assert!(matches!(e, AdoptError::Full(Some(f)) if f.needs.bytes() > f.free.bytes()));
     assert_eq!(
         (p.rev(), p.pool().used(), p.pool().sound_count()),
@@ -337,13 +355,11 @@ fn a_full_source_table_refuses_up_front() {
 fn a_moved_witness_leaves_no_source_and_no_slot() {
     let (mut p, mut st, file) = tape_library();
     let r = read(&mut st, &mut p, file).unwrap();
-    let c = confirmed(&p, P1, file);
     stage_source(&mut p, &mut st, r.source.unwrap());
     let (srcs, snds) = (p.pool().source_count(), p.pool().sound_count());
     p.edit_part(P1).sound.params.out.volume = 0.1;
     assert_eq!(
-        p.adopt(c, Some(Staged::Read(r.source.unwrap())))
-            .unwrap_err(),
+        adopt(&mut p, Some(Staged::Read(r.source.unwrap()))).unwrap_err(),
         AdoptError::Changed
     );
     assert_eq!(
@@ -362,10 +378,9 @@ fn a_staged_source_commits_with_the_slot() {
     let r = read(&mut st, &mut p, file).unwrap();
     let need = r.source.unwrap();
     assert!(need.on_card && need.held > 0);
-    let c = confirmed(&p, P1, file);
     stage_source(&mut p, &mut st, need);
     let srcs = p.pool().source_count();
-    p.adopt(c, Some(Staged::Read(need))).unwrap();
+    adopt(&mut p, Some(Staged::Read(need))).unwrap();
     let id = p.pool().find_source(need.r).unwrap();
     assert_eq!(p.pool().absence(id), None);
     assert_eq!(p.pool().source(id).unwrap().held as usize, need.held);
@@ -384,9 +399,7 @@ fn a_missing_source_costs_nothing_and_loads_absent() {
         .pool()
         .needs(p.pool().first_free().unwrap(), scratch_of(&p));
     set_free_to(&mut p, exact);
-    let a = p
-        .adopt(confirmed(&p, P1, file), Some(Staged::Missing(need.r)))
-        .unwrap();
+    let a = adopt(&mut p, Some(Staged::Missing(need.r))).unwrap();
     let id = p.pool().find_source(need.r).unwrap();
     assert_eq!(p.pool().absence(id), Some(Absence::NotOnCard));
     assert!(!a.deduped);
@@ -472,7 +485,7 @@ fn a_translated_file_bigger_than_its_estimate_refuses_cleanly() {
     );
     set_free_to(&mut p, estimate);
     assert!(matches!(
-        p.adopt(confirmed(&p, P1, file), None),
+        adopt(&mut p, None),
         Err(AdoptError::Full(Some(_)))
     ));
 }
@@ -513,9 +526,7 @@ fn a_staged_sources_cost_over_budget_changes_nothing() {
         .needs(p.pool().first_free().unwrap(), scratch_of(&p));
     set_free_to(&mut p, exact);
     let before = counts(&p);
-    let e = p
-        .adopt(confirmed(&p, P1, file), Some(Staged::Read(need)))
-        .unwrap_err();
+    let e = adopt(&mut p, Some(Staged::Read(need))).unwrap_err();
     assert!(matches!(e, AdoptError::Full(Some(f)) if f.needs.bytes() > f.free.bytes()));
     assert_eq!(counts(&p), before);
 }
@@ -527,8 +538,7 @@ fn a_missing_source_with_every_source_slot_taken_changes_nothing() {
     let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
     let before = counts(&p);
     assert_eq!(
-        p.adopt(confirmed(&p, P1, file), Some(Staged::Missing(need.r)))
-            .unwrap_err(),
+        adopt(&mut p, Some(Staged::Missing(need.r))).unwrap_err(),
         AdoptError::Full(None)
     );
     assert_eq!(counts(&p), before);
@@ -546,8 +556,7 @@ fn a_damaged_src_loads_absent_as_missing() {
     .unwrap();
     let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
     assert!(need.on_card && need.held == 0 && !need.readable());
-    p.adopt(confirmed(&p, P1, file), Some(Staged::Read(need)))
-        .unwrap();
+    adopt(&mut p, Some(Staged::Read(need))).unwrap();
     let id = p.pool().find_source(h.sref).unwrap();
     assert_eq!(p.pool().absence(id), Some(Absence::Missing));
 }
@@ -556,8 +565,7 @@ fn a_damaged_src_loads_absent_as_missing() {
 fn a_read_not_on_the_card_stores_absent_never_empty() {
     let (mut p, mut st, file) = tape_library_without_src();
     let need = read(&mut st, &mut p, file).unwrap().source.unwrap();
-    p.adopt(confirmed(&p, P1, file), Some(Staged::Read(need)))
-        .unwrap();
+    adopt(&mut p, Some(Staged::Read(need))).unwrap();
     let id = p.pool().find_source(need.r).unwrap();
     assert_eq!(p.pool().absence(id), Some(Absence::NotOnCard));
 }

@@ -27,7 +27,7 @@ use chimera_core::project::{PartFrom, PartId, PartSource, Project, SlotId};
 use chimera_core::storage::{FileError, RecordTag};
 use chimera_midi::value::U7;
 use common::codec_util::{decode_project_lossy, fix_crc, record_offsets};
-use common::project::{decode, encode, load, load_anyway};
+use common::project::{decode, encode, load};
 
 const KIT_TAG: u16 = 0x0024;
 const KIT_SOUND_TAG: u16 = 0x0025;
@@ -727,8 +727,7 @@ fn engine_switch_keeps_pad_sounds() {
     let drum = p.part(a).sound.params.clone();
     assert_ne!(PadFilter::of(&drum.filter), *want.filter());
     assert_eq!(played_on_pad3(&mut w, p.kit(a), &drum), *want.filter());
-    // The kit is edited: the replace asks (ADR 0305), and is answered.
-    load_anyway(&mut p, t, init(EngineType::Va)).unwrap();
+    load(&mut p, t, init(EngineType::Va)).unwrap();
     let va = p.part(a).sound.params.clone();
     assert_ne!(PadFilter::of(&va.filter), *want.filter());
     assert_eq!(

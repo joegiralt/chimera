@@ -7,44 +7,87 @@ use crate::storage::sound_crc;
 
 use super::arena::Cost;
 use super::pool::entry_len;
-use super::{KitDoor, TemplateCrc, project_crc};
+use super::{KitDoor, KitState, TemplateCrc, project_crc};
 use super::{Origin, Part, PartFrom, PartId, PartSet, PartSource, Pool, PoolFull, Project, SlotId};
 
-/// A Part against its slot: `Edited` is `*`, `Stale` is `◦`.
+/// A Part's Sound against its slot: `Edited` is `*`, `Stale` is `◦`.
+/// What a slot can answer weighs this: a replace from a slot or INIT, a
+/// save, a revert, a program change. A slot holds no kit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PartStatus {
+pub enum SoundStatus {
     Clean,
     Edited,
     /// As loaded, but the slot moved on under it.
     Stale(SlotId),
 }
 
-/// A Part's status: its Sound's (`sound_status`), and `Edited` too
-/// while it plays DRUM on a kit edited since its mark (ADR 0305): the
-/// Part's `*`, and what a replace asks about.
-#[optimize(size)]
-pub fn part_status(p: &Project, id: PartId) -> PartStatus {
-    match sound_status(p.part(id), &p.pool) {
-        PartStatus::Edited => PartStatus::Edited,
-        _ if KitDoor::seen(p, id).edited() => PartStatus::Edited,
-        s => s,
+/// What of a Part is edited.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Edits {
+    /// Its Sound, against its slot.
+    Sound,
+    /// Its kit, in play and in no library file (ADR 0305).
+    Kit,
+    Both,
+}
+
+/// A Part whole: its Sound's status and its kit's. Made only by `of`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartStatus {
+    Clean,
+    Edited(Edits),
+    /// The Sound as loaded, its slot moved on, the kit kept.
+    Stale(SlotId),
+}
+
+impl PartStatus {
+    /// The one place a Part's status is made: every pair has its answer.
+    #[optimize(size)]
+    pub fn of(sound: SoundStatus, kit: KitState) -> PartStatus {
+        match (sound, kit) {
+            (SoundStatus::Clean, KitState::Kept) => PartStatus::Clean,
+            (SoundStatus::Stale(s), KitState::Kept) => PartStatus::Stale(s),
+            (SoundStatus::Edited, KitState::Kept) => PartStatus::Edited(Edits::Sound),
+            (SoundStatus::Clean | SoundStatus::Stale(_), KitState::Edited) => {
+                PartStatus::Edited(Edits::Kit)
+            }
+            (SoundStatus::Edited, KitState::Edited) => PartStatus::Edited(Edits::Both),
+        }
     }
 }
 
-/// A Part's Sound against its slot: what a save to a slot, a revert and
-/// a program change weigh. A slot holds no kit.
+/// Part `id`'s kit for its status: `Edited` only in play, on a DRUM
+/// Part.
 #[optimize(size)]
-pub fn sound_status(part: &Part, pool: &Pool) -> PartStatus {
+pub fn kit_state(p: &Project, id: PartId) -> KitState {
+    let drum = p.part(id).sound.engine() == crate::params::EngineType::Drum;
+    if drum && KitDoor::seen(p, id).unsaved() {
+        KitState::Edited
+    } else {
+        KitState::Kept
+    }
+}
+
+/// A Part's whole status (ADR 0305). No guard reads it: a replace from a
+/// slot weighs `sound_status`, a library load `LibraryKit`'s own risk.
+#[optimize(size)]
+pub fn part_status(p: &Project, id: PartId) -> PartStatus {
+    PartStatus::of(sound_status(p.part(id), &p.pool), kit_state(p, id))
+}
+
+/// A Part's Sound against its slot.
+#[optimize(size)]
+pub fn sound_status(part: &Part, pool: &Pool) -> SoundStatus {
     let s = slot_status(part, pool);
     // KEEP MAP's rows over a load are no edit (ADR 0253); a slot moved on
     // since the load still reads Stale.
     #[cfg(feature = "controller-maps")]
-    if s == PartStatus::Edited && part.map_kept == Some(sound_crc(&part.sound)) {
+    if s == SoundStatus::Edited && part.map_kept == Some(sound_crc(&part.sound)) {
         return match part.origin {
             Origin::Slot {
                 slot, generation, ..
-            } if pool.generation(slot) != generation => PartStatus::Stale(slot),
-            _ => PartStatus::Clean,
+            } if pool.generation(slot) != generation => SoundStatus::Stale(slot),
+            _ => SoundStatus::Clean,
         };
     }
     s
@@ -52,10 +95,10 @@ pub fn sound_status(part: &Part, pool: &Pool) -> PartStatus {
 
 /// `sound_status` but for KEEP MAP.
 #[optimize(size)]
-fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
+fn slot_status(part: &Part, pool: &Pool) -> SoundStatus {
     let (slot, generation, crc) = match part.origin {
-        Origin::Init(e) if is_init(&part.sound, e) => return PartStatus::Clean,
-        Origin::Init(_) => return PartStatus::Edited,
+        Origin::Init(e) if is_init(&part.sound, e) => return SoundStatus::Clean,
+        Origin::Init(_) => return SoundStatus::Edited,
         Origin::Slot {
             slot,
             generation,
@@ -63,11 +106,11 @@ fn slot_status(part: &Part, pool: &Pool) -> PartStatus {
         } => (slot, generation, crc),
     };
     if pool.get(slot).is_some_and(|s| s.matches(&part.sound)) {
-        PartStatus::Clean
+        SoundStatus::Clean
     } else if pool.generation(slot) == generation || sound_crc(&part.sound) != crc {
-        PartStatus::Edited
+        SoundStatus::Edited
     } else {
-        PartStatus::Stale(slot)
+        SoundStatus::Stale(slot)
     }
 }
 
@@ -213,7 +256,7 @@ pub struct PartAction {
     part: PartId,
     kind: PartActionKind,
     origin: Origin,
-    status: PartStatus,
+    status: SoundStatus,
     crc: u32,
 }
 
@@ -227,7 +270,7 @@ impl PartAction {
 /// At most three, in menu order, with what they were weighed by.
 pub struct PartActions {
     items: [Option<PartAction>; 3],
-    status: PartStatus,
+    status: SoundStatus,
     save_needs: Cost,
 }
 
@@ -239,7 +282,7 @@ impl PartActions {
 
     /// The Part's status as they were offered against it.
     #[optimize(size)]
-    pub fn status(&self) -> PartStatus {
+    pub fn status(&self) -> SoundStatus {
         self.status
     }
 
@@ -269,7 +312,7 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
         .map(PartActionKind::NewSlot);
     let filled = |s: SlotId| p.pool.get(s).is_some().then_some(PartActionKind::Revert(s));
     let (kinds, save_needs) = match (status, x.origin) {
-        (PartStatus::Edited, Origin::Slot { slot, .. }) => {
+        (SoundStatus::Edited, Origin::Slot { slot, .. }) => {
             let over = p.pool.needs_len(slot, len);
             let kinds = [
                 p.pool.fits(over).then_some(PartActionKind::OverSlot(slot)),
@@ -278,8 +321,8 @@ pub fn part_actions(p: &Project, part: PartId) -> PartActions {
             ];
             (kinds, over)
         }
-        (PartStatus::Stale(s), _) => ([filled(s), free, None], new_needs),
-        (PartStatus::Clean | PartStatus::Edited, _) => ([free, None, None], new_needs),
+        (SoundStatus::Stale(s), _) => ([filled(s), free, None], new_needs),
+        (SoundStatus::Clean | SoundStatus::Edited, _) => ([free, None, None], new_needs),
     };
     PartActions {
         items: kinds.map(|k| {

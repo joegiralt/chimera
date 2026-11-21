@@ -93,7 +93,7 @@ impl Kits {
         selected: [PadId::ALL[0]; MAX_PARTS],
         lights: [PadLights::DARK; MAX_PARTS],
         hold: [FollowHold::FREE; MAX_PARTS],
-        marks: [KitMark::Init; MAX_PARTS],
+        marks: [KitMark::NONE; MAX_PARTS],
     };
 
     /// Every kit `Kit::DEFAULT`, built a kit at a time: no whole `Kits`
@@ -113,7 +113,7 @@ impl Kits {
             addr_of_mut!((*p).selected).write([PadId::ALL[0]; MAX_PARTS]);
             addr_of_mut!((*p).lights).write([PadLights::DARK; MAX_PARTS]);
             addr_of_mut!((*p).hold).write([FollowHold::FREE; MAX_PARTS]);
-            addr_of_mut!((*p).marks).write([KitMark::Init; MAX_PARTS]);
+            addr_of_mut!((*p).marks).write([KitMark::NONE; MAX_PARTS]);
             slot.assume_init_mut()
         }
     }
@@ -218,7 +218,7 @@ impl Kits {
     #[optimize(size)]
     pub fn reset(&mut self) {
         self.kits.iter_mut().for_each(Kit::reset);
-        self.marks = [KitMark::Init; MAX_PARTS];
+        self.marks = [KitMark::NONE; MAX_PARTS];
         self.selected = [PadId::ALL[0]; MAX_PARTS];
         self.lights = [PadLights::DARK; MAX_PARTS];
         self.hold = [FollowHold::FREE; MAX_PARTS];

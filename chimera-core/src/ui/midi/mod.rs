@@ -48,7 +48,7 @@ use crate::nrpn::{self, NrpnAddr};
 use crate::part::{MAX_BEND, PartParams};
 use crate::project::{Line, Loads, PartId, Project};
 #[cfg(feature = "midi-map")]
-use crate::project::{PartStatus, sound_status};
+use crate::project::{SoundStatus, sound_status};
 use ramp::{Ramp, bin, budget};
 use resolve::{Action, BindRuntime, resolve};
 
@@ -1116,7 +1116,7 @@ impl UiState {
             // (a program change's recall copy) keeps its `*` and its
             // prompt.
             let x = self.project.part(p);
-            let clean = sound_status(x, self.project.pool()) == PartStatus::Clean;
+            let clean = sound_status(x, self.project.pool()) == SoundStatus::Clean;
             self.set_map(p, kept);
             self.project.set_map_kept(p, clean);
         } else if m.keep {

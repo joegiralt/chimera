@@ -14,7 +14,7 @@ use chimera_core::dsp::filter::FilterKind;
 use chimera_core::midi_in::{Cc, CcEvent};
 use chimera_core::midi_map::{MAP_LEN, Mappable};
 use chimera_core::params::FilterParams;
-use chimera_core::project::{PartId, PartStatus, sound_status};
+use chimera_core::project::{PartId, SoundStatus, sound_status};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_registry::{FILTER, FILTER_JACKS};
 use chimera_core::ui::learn::{Learn, LearnNote};
@@ -159,7 +159,7 @@ fn learn_maps_first_cc() {
     }
     assert_eq!(stored(&ui, CUTOFF), was);
     let p = ui.project();
-    assert_eq!(sound_status(p.part(P1), p.pool()), PartStatus::Edited, "*");
+    assert_eq!(sound_status(p.part(P1), p.pool()), SoundStatus::Edited, "*");
     // MIX + SEQ ends sensing; the next CC moves it.
     mix_seq(&mut ui);
     assert_eq!(ui.learn(), Learn::Off);

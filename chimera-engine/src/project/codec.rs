@@ -166,6 +166,70 @@ pub(super) fn get_kit_sound(b: &[u8]) -> Option<(PadId, PadSound, bool)> {
     Some((PadId::new(i)?, s, s.to_bytes() != raw))
 }
 
+/// What a kit's records said so far, for a project's Part and a library
+/// file alike (ADR 0305): one `Kit`, one `KitSound` a pad.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct KitRead {
+    kit: bool,
+    pads: PadSet,
+}
+
+impl KitRead {
+    pub(super) const NONE: KitRead = KitRead {
+        kit: false,
+        pads: PadSet::EMPTY,
+    };
+
+    /// A `Kit` record, onto `kit` if given; whether a save would write
+    /// other bytes. A second is `Corrupt`, the wrong length `Bounds`.
+    #[inline(always)]
+    pub(super) fn kit(&mut self, p: &[u8], kit: Option<&mut Kit>) -> Result<bool, FileError> {
+        if core::mem::replace(&mut self.kit, true) {
+            return Err(FileError::Corrupt);
+        }
+        get_kit(p, kit).ok_or(FileError::Bounds)
+    }
+
+    /// A `KitSound` record, onto its pad of `kit` if given; whether a
+    /// save would write other bytes. A pad's second is `Corrupt`, the
+    /// wrong length or no such pad `Bounds`.
+    #[inline(always)]
+    pub(super) fn sound(&mut self, p: &[u8], kit: Option<&mut Kit>) -> Result<bool, FileError> {
+        let (pad, sound, lossy) = get_kit_sound(p).ok_or(FileError::Bounds)?;
+        if self.pads.contains(pad) {
+            return Err(FileError::Corrupt);
+        }
+        self.pads = self.pads.with(pad);
+        if let Some(k) = kit {
+            *k.pad_mut(pad).sound_mut() = sound;
+        }
+        Ok(lossy)
+    }
+
+    /// A `Kit` record was read.
+    #[inline(always)]
+    pub(super) fn has_kit(&self) -> bool {
+        self.kit
+    }
+
+    /// The pads whose own `KitSound` was read.
+    #[inline(always)]
+    pub(super) fn pads(&self) -> PadSet {
+        self.pads
+    }
+}
+
+/// A kit with no sound for a pad, on a DRUM Sound `s` (slice 1's): each
+/// such pad takes the Sound's FILTER and AMP, so it sounds as it did
+/// (ADR 0269). `own`: the pads whose `KitSound` was read, which win.
+#[inline(always)]
+pub(super) fn fill_pad_sounds(kit: &mut Kit, own: PadSet, s: &crate::params::ParamSnapshot) {
+    let sound = PadSound::from_sound(s);
+    for p in PadId::ALL.into_iter().filter(|&p| !own.contains(p)) {
+        *kit.pad_mut(p).sound_mut() = sound;
+    }
+}
+
 const ORIGIN_SLOT: u8 = 0;
 const ORIGIN_INIT: u8 = 1;
 
@@ -549,8 +613,7 @@ pub struct ProjectCheck {
     /// `KitSound` was.
     mix: bool,
     origin: bool,
-    kit: bool,
-    kit_sounds: PadSet,
+    kit: KitRead,
     origins: [ReadOrigin; MAX_PARTS],
     /// The open Part's pre-ADR-0123 sends (PART ids 5-7), for its Sound.
     old_sends: Option<[SendLevel; FX_SENDS]>,
@@ -589,8 +652,7 @@ impl ProjectCheck {
             fx_blocks: 0,
             mix: false,
             origin: false,
-            kit: false,
-            kit_sounds: PadSet::EMPTY,
+            kit: KitRead::NONE,
             origins: [ReadOrigin::Missing; MAX_PARTS],
             lossy: false,
             over: false,
@@ -709,23 +771,13 @@ impl ProjectCheck {
                 Ok(())
             }
             (ReadTag::Known(RecordTag::Kit), Context::Part(n)) => {
-                if core::mem::replace(&mut self.kit, true) {
-                    return Err(FileError::Corrupt);
-                }
                 let kit = target.map(|t| t.kits.kit_mut(n));
-                self.lossy |= get_kit(p, kit).ok_or(FileError::Bounds)?;
+                self.lossy |= self.kit.kit(p, kit)?;
                 Ok(())
             }
             (ReadTag::Known(RecordTag::KitSound), Context::Part(n)) => {
-                let (pad, sound, lossy) = get_kit_sound(p).ok_or(FileError::Bounds)?;
-                if self.kit_sounds.contains(pad) {
-                    return Err(FileError::Corrupt);
-                }
-                self.kit_sounds = self.kit_sounds.with(pad);
-                self.lossy |= lossy;
-                if let Some(t) = target {
-                    *t.kits.kit_mut(n).pad_mut(pad).sound_mut() = sound;
-                }
+                let kit = target.map(|t| t.kits.kit_mut(n));
+                self.lossy |= self.kit.sound(p, kit)?;
                 Ok(())
             }
             (ReadTag::Known(RecordTag::Controller), Context::Part(n)) => {
@@ -780,9 +832,8 @@ impl ProjectCheck {
         (self.dropped_slots, self.dropped_sources) = (0, 0);
         (self.to_read, self.to_stream) = (SourceSet::EMPTY, SourceSet::EMPTY);
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
-        (self.fx, self.fx_blocks, self.mix, self.origin, self.kit) =
-            (false, 0, false, false, false);
-        self.kit_sounds = PadSet::EMPTY;
+        (self.fx, self.fx_blocks, self.mix, self.origin) = (false, 0, false, false);
+        self.kit = KitRead::NONE;
         self.origins = [ReadOrigin::Missing; MAX_PARTS];
         self.old_sends = None;
         (self.lossy, self.over) = (false, false);
@@ -915,8 +966,8 @@ impl ProjectCheck {
                 // A file from before kits has none: the default.
                 t.kits.kit_mut(n).reset();
             }
-            (self.mix, self.origin, self.kit) = (false, false, false);
-            self.kit_sounds = PadSet::EMPTY;
+            (self.mix, self.origin) = (false, false);
+            self.kit = KitRead::NONE;
             self.old_sends = None;
             self.context = Context::Part(n);
         }
@@ -1010,23 +1061,11 @@ impl ProjectCheck {
                 {
                     part.sound.params.out.sends = s;
                 }
-                // A kit with no pad sounds on a DRUM Part (slice 1's): each
-                // such pad takes the Sound's FILTER and AMP, so it sounds as
-                // it did (ADR 0269). Here, the Sound finished; a pad's own
-                // `KitSound` wins.
+                // Here, the Sound finished (ADR 0269).
                 let s = &part.sound.params;
-                if self.kit && s.engine() == EngineType::Drum {
-                    let sound = PadSound::from_sound(s);
-                    let kit = t.kits.kit_mut(n);
-                    for p in PadId::ALL
-                        .into_iter()
-                        .filter(|&p| !self.kit_sounds.contains(p))
-                    {
-                        *kit.pad_mut(p).sound_mut() = sound;
-                    }
+                if self.kit.has_kit() && s.engine() == EngineType::Drum {
+                    fill_pad_sounds(t.kits.kit_mut(n), self.kit.pads(), s);
                 }
-                // The kit as loaded is the Part's mark (ADR 0305).
-                super::KitDoor::settle(t, n);
                 Ok(())
             }
             Context::None | Context::Fx | Context::Orbit => Ok(()),

@@ -23,23 +23,25 @@ pub mod test_support;
 
 pub use codec::{ProjectCheck, ProjectDecoder, encode_new_project, encode_project, project_crc};
 pub use guard::{
-    Confirmed, DeleteTarget, NeedsConfirm, OverwriteTarget, Pending, ProjectSource, Prompt,
-    ReplaceGuard, SceneAsk, SceneSlot, Seen, Target, Witnessed,
+    Confirmed, DeleteTarget, LibraryKit, NeedsConfirm, OverwriteTarget, Pending, ProjectSource,
+    Prompt, ReplaceGuard, SceneAsk, SceneSlot, Seen, Target, Witnessed,
 };
 pub(crate) use ids::bounded_index;
 pub use ids::{PartId, PartSet, SlotId};
 #[cfg(feature = "bank2")]
 pub use kit_library::kit_door_ok;
-pub use kit_library::{KitDoor, KitMark, KitSeen};
+pub use kit_library::{
+    FileKit, KitCrc, KitDoor, KitFound, KitMark, KitPut, KitScan, KitSeen, KitState, ReadKit,
+};
 pub use kits::{FollowHold, Kits, PadLights};
 pub use library::{
     AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
-    PageAt, Shelf, SourceNeed, Staged, list_library, peek_note, read_library_sound,
-    save_library_part, save_library_sound,
+    PageAt, PartSave, ReadPart, SavedPart, Shelf, SourceNeed, Staged, list_library, peek_note,
+    read_library_sound, save_library_part, save_library_sound,
 };
 pub use marks::{
-    ActionRefused, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus, StatusCache,
-    part_actions, part_status, project_status, sound_status,
+    ActionRefused, Edits, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus,
+    SoundStatus, StatusCache, kit_state, part_actions, part_status, project_status, sound_status,
 };
 pub use note::{Differ, LINE_LEN, Line, ProjectNote, Subject};
 pub use parts::{Loads, Origin, Part, PartEdit, PartRead, Performance, part_block, part_block_mut};
@@ -352,16 +354,6 @@ impl Project {
         self.perf.parts[p.index()].expression = v;
     }
 
-    /// Part `p`'s Sound saved to the library as it sounds: its shifts are
-    /// its own values now, so CC 64 is the Sound as saved (ADR 0263), and
-    /// a DRUM Part's kit, which the file holds, is its mark (ADR 0305).
-    #[optimize(size)]
-    pub fn library_saved(&mut self, p: PartId) {
-        self.bump();
-        self.perf.parts[p.index()].env = [0; 2];
-        KitDoor::saved(self, p);
-    }
-
     /// Part `p`'s CC 73 (`which` 0) or 72 (1) offset applied (ADR 0263).
     #[optimize(size)]
     pub fn set_env_offset(&mut self, p: PartId, which: usize, v: i8) {
@@ -459,7 +451,7 @@ impl Project {
         };
         Ok(others
             .iter()
-            .filter(|&o| o != p && sound_status(self.part(o), &self.pool) == PartStatus::Stale(s))
+            .filter(|&o| o != p && sound_status(self.part(o), &self.pool) == SoundStatus::Stale(s))
             .fold(PartSet::EMPTY, PartSet::with))
     }
 

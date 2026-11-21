@@ -4,7 +4,7 @@
 mod screen;
 
 use chimera_core::params::EngineType;
-use chimera_core::project::{PartId, PartStatus, sound_status};
+use chimera_core::project::{PartId, SoundStatus, sound_status};
 use chimera_core::ui::UiState;
 use chimera_core::ui::block_def::ChainDef2;
 use chimera_core::ui::block_def::Move;
@@ -359,9 +359,9 @@ fn mix_edit_in_the_browser_saves_the_sound() {
     assert!(ui.location().browse().is_some());
     ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
     let status = |ui: &UiState| sound_status(ui.project().part(p), ui.project().pool());
-    assert_eq!(status(&ui), PartStatus::Edited);
+    assert_eq!(status(&ui), SoundStatus::Edited);
     feed(&mut ui, Input::chord(ButtonId::Mix, ButtonId::Edit));
-    assert_eq!(status(&ui), PartStatus::Clean, "saved");
+    assert_eq!(status(&ui), SoundStatus::Clean, "saved");
     assert_eq!(
         ui.location().browse().map(|b| b.0),
         Some(p),

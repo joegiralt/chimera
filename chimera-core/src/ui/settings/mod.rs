@@ -26,8 +26,8 @@ use chimera_hal::Controls;
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
-    FreshFile, LibraryPart, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry,
-    ProjectSource, SceneAsk, SlotId, Subject, Unused,
+    FreshFile, LibraryKit, LibraryPart, PartAction, PartId, PartSet, PartSource, Pending, Project,
+    ProjectEntry, ProjectSource, SceneAsk, SlotId, Subject, Unused,
 };
 use crate::ui::browser::Browse;
 use crate::ui::hold::Presses;
@@ -38,10 +38,11 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu,
-    LibraryAnswer, Load, LoadAnswer, LoadLibrary, NameExists, NameExistsAnswer, PromptView,
-    PurgeAnswer, PurgeSources, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace,
-    ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer, panel,
+    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, KitAnswer,
+    KitUnsaved, LibraryAnswer, Load, LoadAnswer, LoadLibrary, NameExists, NameExistsAnswer,
+    PromptView, PurgeAnswer, PurgeSources, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer,
+    Replace, ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver,
+    SaveSceneOverAnswer, panel,
 };
 use replace::{LibraryAsk, PartAsk, ProjectAsk, ReloadAsk, Reply};
 
@@ -62,6 +63,8 @@ pub(crate) enum Ask {
     ReloadPart(ReloadAsk, SlotId),
     /// A library Sound into an Edited Part.
     LoadLibrary(LibraryAsk),
+    /// A library load's second question: its kit (ADR 0305).
+    KitUnsaved(Pending<LibraryKit>, Choice<KitAnswer>),
     /// A save over a slot `first` and `more` also play; UPDATE applies
     /// `reverts`, as offered when it opened.
     UpdateStale {
@@ -139,6 +142,7 @@ ask_kinds! {
     ReplacePart => "replace_part",
     ReloadPart => "reload_part",
     LoadLibrary => "load_library",
+    KitUnsaved => "kit_unsaved",
     UpdateStale => "update_stale",
     ClearSlot => "clear_slot",
     LoadProject => "load",
@@ -168,6 +172,7 @@ pub(crate) enum Answered {
     ReplacePart(Reply<PartSource, ReplaceAnswer>, ReplaceTo),
     ReloadPart(Reply<PartSource, ReloadAnswer>, SlotId),
     LoadLibrary(Reply<LibraryPart, LibraryAnswer>),
+    KitUnsaved(Pending<LibraryKit>, Answer<KitAnswer>),
     UpdateStale(Reverts, Answer<AlsoUsesAnswer>),
     ClearSlot(SlotId, Answer<ClearAnswer>),
     LoadProject {
@@ -261,6 +266,13 @@ impl Ask {
                 choice,
                 f,
             ),
+            Ask::KitUnsaved(n, c) => panel(
+                &KitUnsaved {
+                    part: n.source().part(),
+                },
+                c,
+                f,
+            ),
             Ask::ClearSlot(slot, c) => panel(&ClearSlot { slot: *slot }, c, f),
             Ask::LoadProject {
                 ask, to, current, ..
@@ -322,6 +334,7 @@ impl Ask {
             Ask::ReplacePart(..) => AskKind::ReplacePart,
             Ask::ReloadPart(..) => AskKind::ReloadPart,
             Ask::LoadLibrary(_) => AskKind::LoadLibrary,
+            Ask::KitUnsaved(..) => AskKind::KitUnsaved,
             Ask::UpdateStale { .. } => AskKind::UpdateStale,
             Ask::ClearSlot(..) => AskKind::ClearSlot,
             Ask::LoadProject { .. } => AskKind::LoadProject,
@@ -391,6 +404,10 @@ impl Ask {
                     reverts,
                     choice,
                 }),
+            },
+            Ask::KitUnsaved(n, mut choice) => match choice.input(delta, p) {
+                Some(a) => Got(Answered::KitUnsaved(n, a)),
+                None => Open(Ask::KitUnsaved(n, choice)),
             },
             Ask::ClearSlot(slot, mut choice) => match choice.input(delta, p) {
                 Some(a) => Got(Answered::ClearSlot(slot, a)),
