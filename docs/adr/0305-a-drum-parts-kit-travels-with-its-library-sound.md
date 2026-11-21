@@ -1,6 +1,6 @@
 # 0305. A DRUM Part's kit travels with its library Sound, and only a library load weighs it
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** the owner's reviews of PR #1058 (2026-11-21: the design correction below is their ruling), firmware
 
 ## Context
