@@ -131,7 +131,7 @@ KEY is what the compressor listens to. It never changes what the compressor play
 - HIT: the mix weighted as loudness is heard (the K curve of ITU-R BS.1770), so every hit pushes it about alike.
 - PART 1 to PART 6: that Part alone, heard after its EQ and before its LEVEL. Its fader never changes the pump, and a Part turned all the way down still pumps the rest.
 
-Under PART n the key Part itself plays through unducked, on whichever output pair it is on, and MAKEUP lifts the rest but not it. Its reverb and delay returns duck with the mix: the kick stays whole and its room pumps. A key Part that stops playing lets the compressor release. A kit on one Part keys as the whole kit: for its kick alone, use LOW. The KEY in use is named under the curve, and while KEY's cell is touched the line over the curve says what the choice does. While bank 2 needs an update, every KEY plays as FULL.
+Under PART n the key Part itself plays through unducked, on whichever output pair it is on, and MAKEUP lifts the rest but not it. Its reverb and delay returns duck with the mix: the kick stays whole and its room pumps. A key Part that stops playing lets the compressor release. A kit on one Part keys as the whole kit: for its kick alone, use LOW. The KEY in use is named under the curve, and while KEY's cell is touched the line over the curve says what the choice does. While bank 2 needs an update, every KEY plays as FULL, and the name under the curve reads FULL.
 
 Which to reach for:
 
