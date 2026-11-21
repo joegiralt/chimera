@@ -216,16 +216,9 @@ pub struct Renderer {
     /// the short way across 11 and 0 (`animation::nearest`).
     pub orbit_cursor: AnimatedValue,
     /// The params a glyph reads that its page has no cell for, each
-    /// eased in a lane of its own (#284): a CC on one moves the glyph
-    /// over frames, as a turn does.
-    outside: [(Option<ParamAddr>, AnimatedValue); OUTSIDE],
-    /// The params the last draw's glyphs asked `eased_set` for and found
-    /// no cell for: the lanes `ease_outside` keeps.
-    asked: core::cell::Cell<[Option<ParamAddr>; OUTSIDE]>,
+    /// eased in a lane of its own (#284), bank 2's (`notes::Lanes`).
+    pub lanes: crate::ui::notes::Lanes,
 }
-
-/// Lanes for a glyph's params off its page: TAPE's machine reads the most.
-const OUTSIDE: usize = TAPE_GLYPH_PARAMS.len() + 1;
 
 impl Default for Renderer {
     fn default() -> Self {
@@ -240,25 +233,7 @@ impl Renderer {
             set: [AnimatedValue::new(0.5).with_speed(KNOB_SPEED); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
             orbit_cursor: AnimatedValue::new(0.0),
-            outside: [(None, AnimatedValue::new(0.0)); OUTSIDE],
-            asked: core::cell::Cell::new([None; OUTSIDE]),
-        }
-    }
-
-    /// One frame of the lanes off the page: each param the last draw
-    /// asked for eases to `stored`'s value, a new one starts there.
-    pub fn ease_outside(&mut self, stored: impl Fn(ParamAddr) -> f32) {
-        let asked = self.asked.replace([None; OUTSIDE]);
-        for ((at, lane), want) in self.outside.iter_mut().zip(asked) {
-            match want {
-                Some(a) if *at == Some(a) => {
-                    lane.set_target(stored(a));
-                    lane.update();
-                }
-                Some(a) => *lane = AnimatedValue::new(stored(a)).with_speed(KNOB_SPEED),
-                None => {}
-            }
-            *at = want;
+            lanes: crate::ui::notes::Lanes::EMPTY,
         }
     }
 
@@ -1306,27 +1281,32 @@ impl Renderer {
 
     /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
     /// where the page has a slot for one, else in its lane off the page
-    /// (`ease_outside`; stored until it has one); never `anim` or anything
-    /// modulated, so the glyph only ever moves by its own animation.
+    /// (`off_page`); never `anim` or anything modulated, so the glyph only
+    /// ever moves by its own animation.
     fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
         let stored = stored_set(&Stored(f), addrs);
-        let mut asked = self.asked.get();
-        let out = core::array::from_fn(|i| {
-            let a = addrs[i];
-            match (0..f.def.params.len()).find(|&s| slot_addr(f.def, s, &f.ctx) == Some(a)) {
-                Some(s) => self.set[s].current(),
-                None => {
-                    if let Some(free) = asked.iter_mut().find(|w| w.is_none_or(|w| w == a)) {
-                        *free = Some(a);
-                    }
-                    self.outside
-                        .iter()
-                        .find(|(at, _)| *at == Some(a))
-                        .map_or(stored[i], |(_, lane)| lane.current())
-                }
-            }
+        core::array::from_fn(|i| {
+            (0..f.def.params.len())
+                .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
+                .map_or_else(
+                    || self.off_page(addrs[i], stored[i]),
+                    |s| self.set[s].current(),
+                )
+        })
+    }
+
+    /// `at`'s value in its lane off the page, `stored` until it has one
+    /// or with bank 2 closed (#284).
+    #[inline(never)]
+    fn off_page(&self, at: ParamAddr, stored: f32) -> f32 {
+        let mut out = stored;
+        crate::bank2::ui_door(|u| {
+            u.notes(crate::ui::notes::Ask::Lane {
+                lanes: &self.lanes,
+                at,
+                out: &mut out,
+            })
         });
-        self.asked.set(asked);
         out
     }
 

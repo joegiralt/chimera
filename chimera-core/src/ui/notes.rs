@@ -23,15 +23,19 @@ use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
 use crate::project::Line;
+use crate::project::{PartId, Performance};
 use crate::ui::alg_layout::AlgLayout;
+use crate::ui::animation::{AnimatedValue, KNOB_SPEED};
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, SlotBinding};
 use crate::ui::block_registry as reg;
 use crate::ui::fmt::{FmtBuf, fixed};
+use crate::ui::glyph::TAPE_GLYPH_PARAMS;
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
 use crate::ui::renderer::Frame;
 use crate::ui::tape_strip::Paint;
 use crate::ui::theme;
+use core::cell::Cell;
 use embedded_graphics::pixelcolor::Rgb565;
 
 /// What bank 1 asks through `UiDoor`'s one `notes` entry, each with its
@@ -68,6 +72,20 @@ pub enum Ask<'a> {
     },
     /// `key`: KEY's hint on the frame's status line.
     Key(&'a Frame<'a>, &'a mut Option<Hint>),
+    /// `Lanes::ease`: a UI pass of the lanes off the page, from the edited
+    /// Part `part`'s stored values and the FX's.
+    Ease {
+        lanes: &'a mut Lanes,
+        perf: &'a Performance,
+        part: PartId,
+    },
+    /// `Lanes::get`: `at`'s value in its lane, into `out` (its stored
+    /// value) once it has one; asked for, so the next pass keeps one.
+    Lane {
+        lanes: &'a Lanes,
+        at: ParamAddr,
+        out: &'a mut f32,
+    },
     /// `stage`: an ENV A stage cell's bar under the TIME or LEVEL routes
     /// it primes (#149); `None` for any other cell, or none routed.
     Stage {
@@ -113,6 +131,67 @@ pub(crate) fn ask_in(a: Ask<'_>) {
             sources,
             out,
         } => *out = stage(addr, value, sound, sources),
+        Ask::Ease { lanes, perf, part } => {
+            let p = &perf.parts()[part.index()];
+            lanes.ease(|a| {
+                crate::project::part_block(&p.sound, &p.mix, &perf.fx, a.block)
+                    .map_or(0.0, |b| b.normalized(a.param))
+            });
+        }
+        Ask::Lane { lanes, at, out } => {
+            if let Some(v) = lanes.get(at) {
+                *out = v;
+            }
+        }
+    }
+}
+
+/// Lanes for a glyph's params off its page: TAPE's machine reads the most.
+const LANES: usize = TAPE_GLYPH_PARAMS.len() + 1;
+
+/// The params a glyph reads that its page has no cell for, each eased in
+/// a lane of its own (#284): a CC on one moves the glyph over frames, as
+/// a turn does, and the band redraws as it eases (#365).
+pub struct Lanes {
+    at: [Option<ParamAddr>; LANES],
+    lane: [AnimatedValue; LANES],
+    /// The params the last draw asked for: the lanes the next pass keeps.
+    asked: Cell<[Option<ParamAddr>; LANES]>,
+}
+
+impl Lanes {
+    pub const EMPTY: Lanes = Lanes {
+        at: [None; LANES],
+        lane: [AnimatedValue::new(0.0); LANES],
+        asked: Cell::new([None; LANES]),
+    };
+
+    /// `at`'s eased value, if it has a lane; asked for either way.
+    fn get(&self, at: ParamAddr) -> Option<f32> {
+        let mut asked = self.asked.get();
+        if let Some(free) = asked.iter_mut().find(|w| w.is_none_or(|w| w == at)) {
+            *free = Some(at);
+        }
+        self.asked.set(asked);
+        let i = self.at.iter().position(|&a| a == Some(at))?;
+        Some(self.lane[i].current())
+    }
+
+    /// A UI pass: each param the last draw asked for eases to `stored`'s
+    /// value; a new one starts there.
+    fn ease(&mut self, stored: impl Fn(ParamAddr) -> f32) {
+        let asked = self.asked.replace([None; LANES]);
+        for ((at, lane), want) in self.at.iter_mut().zip(&mut self.lane).zip(asked) {
+            match want {
+                Some(a) if *at == Some(a) => {
+                    lane.set_target(stored(a));
+                    lane.update();
+                }
+                Some(a) => *lane = AnimatedValue::new(stored(a)).with_speed(KNOB_SPEED),
+                None => {}
+            }
+            *at = want;
+        }
     }
 }
 

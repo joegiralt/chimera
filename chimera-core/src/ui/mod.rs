@@ -3812,14 +3812,13 @@ impl UiState {
             a.update();
         }
         // A glyph's params off the page ease too (#284).
-        {
-            let perf = self.project.perf();
-            let p = &perf.parts()[self.active_part.index()];
-            self.renderer.ease_outside(|a| {
-                crate::project::part_block(&p.sound, &p.mix, &perf.fx, a.block)
-                    .map_or(0.0, |b| b.normalized(a.param))
-            });
-        }
+        crate::bank2::ui_door(|u| {
+            u.notes(notes::Ask::Ease {
+                lanes: &mut self.renderer.lanes,
+                perf: self.project.perf(),
+                part: self.active_part,
+            })
+        });
 
         // Animate branch scroll for dungeon map sub-pages.
         // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
