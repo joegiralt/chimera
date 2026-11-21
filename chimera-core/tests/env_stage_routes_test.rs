@@ -63,7 +63,7 @@ fn stages_follow(ui: &UiState, sum: f32) {
         (3, e.release, r.dec_rel.oct),
         (4, e.hold, r.hold.oct),
     ] {
-        let want = (set - 5.0 * sum / oct).clamp(0.0, 1.0);
+        let want = chimera_core::dsp::clampf(set - 5.0 * sum / oct, 0.0, 1.0);
         let got = ui.renderer.anim[slot].target();
         assert!((got - want).abs() < 1e-3, "slot {slot}: {got} want {want}");
     }

@@ -233,7 +233,7 @@ impl Renderer {
             set: [AnimatedValue::new(0.5).with_speed(KNOB_SPEED); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
             orbit_cursor: AnimatedValue::new(0.0),
-            lanes: crate::ui::notes::Lanes::EMPTY,
+            lanes: crate::ui::notes::Lanes::new(),
         }
     }
 

@@ -15,6 +15,7 @@ use crate::comp_key::{CompKey, KEY_NAMES, KEYS};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::{kinds, tx};
+use crate::dsp::clampf;
 use crate::dsp::comp::CompParams;
 use crate::dsp::modulator::EnvType;
 use crate::dsp::modulator::law::speed_ranges;
@@ -160,12 +161,20 @@ pub struct Lanes {
     asked: Cell<[Option<ParamAddr>; LANES]>,
 }
 
+impl Default for Lanes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Lanes {
-    pub const EMPTY: Lanes = Lanes {
-        at: [None; LANES],
-        now: [0.0; LANES],
-        asked: Cell::new([None; LANES]),
-    };
+    pub const fn new() -> Lanes {
+        Lanes {
+            at: [None; LANES],
+            now: [0.0; LANES],
+            asked: Cell::new([None; LANES]),
+        }
+    }
 
     /// `at`'s eased value, if it has a lane; asked for either way.
     fn get(&self, at: ParamAddr) -> Option<f32> {
@@ -232,12 +241,12 @@ fn stage(
         E::DECAY | E::RELEASE => r.dec_rel.oct,
         E::SUSTAIN => {
             let peak = routed(E::LEVEL)?;
-            return Some(value * peak.clamp(0.0, 1.0));
+            return Some(value * clampf(peak, 0.0, 1.0));
         }
         _ => return None,
     };
-    let sum = routed(E::TIME)?.clamp(-1.0, 1.0);
-    Some((value - 5.0 * sum / oct).clamp(0.0, 1.0))
+    let sum = clampf(routed(E::TIME)?, -1.0, 1.0);
+    Some(clampf(value - 5.0 * sum / oct, 0.0, 1.0))
 }
 
 /// Each word `WORDS` holds.

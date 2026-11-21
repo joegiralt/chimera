@@ -8,8 +8,8 @@ mod screen;
 use chimera_core::dsp::reverb::{RevSync, ReverbType};
 use chimera_core::ui::UiState;
 use chimera_core::ui::theme::{CUBE_H, CUBE_W, CUBE_X, CUBE_Y};
-use embedded_graphics::pixelcolor::IntoStorage;
 use chimera_hal::EncoderId;
+use embedded_graphics::pixelcolor::IntoStorage;
 use screen::{Fb, Input, REV, feed, render_ui, settle, stack_ui, to_fx};
 
 /// The focus band's glyph box on the reverb page, GATE at LENGTH `size`
