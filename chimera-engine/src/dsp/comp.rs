@@ -10,6 +10,7 @@ use core::mem::MaybeUninit;
 use crate::block::{
     Block, Change, Motion, ParamId, ParamSpec, Smoothing, ValFmt, apply_code, identity_code,
 };
+use crate::comp_key::{CompKey, KEY_NAMES, KeyState};
 use crate::dsp::algo::math::exp2;
 use crate::part_eq::smart::{Amount, SWITCH_NAMES, SmartEq, Switch};
 
@@ -30,7 +31,7 @@ const PEAK_MAX: f32 = 256.0;
 
 /// Each ratio with its frozen disk ident (ADR 0045), side by side so the
 /// stored index can't be reordered away from what it selects. Append-only.
-const RATIO_TABLE: [(f32, &str); 8] = [
+const RATIO_TABLE: [(f32, &str); 9] = [
     (1.0, "1:1"),
     (1.5, "1.5:1"),
     (2.0, "2:1"),
@@ -39,11 +40,13 @@ const RATIO_TABLE: [(f32, &str); 8] = [
     (6.0, "6:1"),
     (10.0, "10:1"),
     (20.0, "20:1"),
+    // A limiter's slope (ADR 0303): everything over THRESH comes off.
+    (f32::INFINITY, "MAX"),
 ];
 
 /// The compression ratios, by RATIO's index.
-pub const RATIOS: [f32; 8] = {
-    let mut r = [0.0; 8];
+pub const RATIOS: [f32; 9] = {
+    let mut r = [0.0; 9];
     let mut i = 0;
     while i < r.len() {
         r[i] = RATIO_TABLE[i].0;
@@ -51,7 +54,9 @@ pub const RATIOS: [f32; 8] = {
     }
     r
 };
-static RATIO_NAMES: [&str; 8] = ["1:1", "1.5:1", "2:1", "3:1", "4:1", "6:1", "10:1", "20:1"];
+static RATIO_NAMES: [&str; 9] = [
+    "1:1", "1.5:1", "2:1", "3:1", "4:1", "6:1", "10:1", "20:1", "MAX",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CompParams {
@@ -75,6 +80,9 @@ pub struct CompParams {
     /// the master's switch for every Part's SMART EQ cuts, riding MST's
     /// block.
     pub smart: SmartEq,
+    /// KEY (ADR 0303): what the detector listens to, in the padding's
+    /// other two bytes.
+    pub key: CompKey,
 }
 
 impl CompParams {
@@ -88,6 +96,7 @@ impl CompParams {
         vol: 1.0,
         pan: 0.0,
         smart: SmartEq::OFF,
+        key: CompKey::Full,
     };
 }
 
@@ -108,6 +117,7 @@ impl CompParams {
     pub const PAN: ParamId = ParamId(7);
     pub const SMART_EQ: ParamId = ParamId(8);
     pub const AMOUNT: ParamId = ParamId(9);
+    pub const KEY: ParamId = ParamId(10);
 
     /// Off at MIX 0, or at 1:1 with no makeup: every pair passes untouched.
     pub fn is_on(&self) -> bool {
@@ -152,6 +162,7 @@ impl CompParams {
                 clampf(self.pan, -1.0, 1.0)
             },
             smart: self.smart,
+            key: self.key,
         }
     }
 }
@@ -159,7 +170,7 @@ impl CompParams {
 const _: () = assert!(RATIO_TABLE.len() == COMP_SPECS[1].max as usize + 1);
 
 /// The compressor runs outside `Voice`: nothing is modulatable.
-pub static COMP_SPECS: [ParamSpec; 10] = [
+pub static COMP_SPECS: [ParamSpec; 11] = [
     ParamSpec::continuous(
         0,
         "THRESH",
@@ -176,7 +187,7 @@ pub static COMP_SPECS: [ParamSpec; 10] = [
         1,
         "RATIO",
         ValFmt::Names(&RATIO_NAMES),
-        7.0,
+        (RATIO_TABLE.len() - 1) as f32,
         0.0,
         Change::Snap,
     )
@@ -280,6 +291,18 @@ pub static COMP_SPECS: [ParamSpec; 10] = [
     )
     .ident("AMOUNT")
     .glyph(crate::glyph::FocusGlyph::LevelBar),
+    // KEY (ADR 0303): the detector's source. The reduction follows a new
+    // one at ATK and REL, so the choice itself snaps.
+    ParamSpec::choice(
+        10,
+        "KEY",
+        ValFmt::Names(&KEY_NAMES),
+        (KEY_NAMES.len() - 1) as f32,
+        0.0,
+        Change::Snap,
+    )
+    .ident("KEY")
+    .glyph(crate::glyph::FocusGlyph::None),
 ];
 
 impl Block for CompParams {
@@ -300,6 +323,7 @@ impl Block for CompParams {
             Self::PAN => self.pan,
             Self::SMART_EQ => f32::from(self.smart.switch().code()),
             Self::AMOUNT => f32::from(self.smart.amount().code()),
+            Self::KEY => f32::from(self.key.code()),
             _ => 0.0,
         }
     }
@@ -317,6 +341,7 @@ impl Block for CompParams {
             Self::PAN => self.pan = v,
             Self::SMART_EQ => self.smart = self.smart.with_switch(Switch::from_f32(v)),
             Self::AMOUNT => self.smart = self.smart.with_amount(Amount::from_f32(v)),
+            Self::KEY => self.key = CompKey::from_f32(v),
             _ => {}
         }
     }
@@ -326,6 +351,7 @@ impl Block for CompParams {
         match id {
             Self::RATIO => Some(self.ratio),
             Self::SMART_EQ => Some(self.smart.switch().code()),
+            Self::KEY => Some(self.key.code()),
             _ => None,
         }
     }
@@ -334,6 +360,7 @@ impl Block for CompParams {
         match id {
             Self::RATIO => RATIO_TABLE.get(usize::from(self.ratio)).map(|e| e.1),
             Self::SMART_EQ => Some(self.smart.switch().ident()),
+            Self::KEY => Some(self.key.ident()),
             _ => None,
         }
     }
@@ -344,6 +371,7 @@ impl Block for CompParams {
             Self::SMART_EQ => apply_code(Switch::from_code(code), |s| {
                 self.smart = self.smart.with_switch(s)
             }),
+            Self::KEY => apply_code(CompKey::from_code(code), |k| self.key = k),
             _ => false,
         }
     }
@@ -360,6 +388,9 @@ pub fn static_gr_db(level_db: f32, thresh_db: f32, ratio: f32) -> f32 {
 }
 
 pub struct MasterComp {
+    /// KEY's detector filters and pass (ADR 0303): bank 2's to run, at
+    /// rest under FULL.
+    pub(crate) key_state: KeyState,
     /// Smoothed gain reduction, octaves.
     gr: f32,
     /// The last applied multiplier, where the next ramp starts.
@@ -383,7 +414,7 @@ pub struct MasterComp {
     k: f32,
 }
 
-crate::in_place::field_list!(MasterComp => MasterComp { gr, e, thresh, makeup, mix, engage, attack, release, key, att, rel, k });
+crate::in_place::field_list!(MasterComp => MasterComp { key_state, gr, e, thresh, makeup, mix, engage, attack, release, key, att, rel, k });
 
 impl Default for MasterComp {
     fn default() -> Self {
@@ -394,6 +425,7 @@ impl Default for MasterComp {
 impl MasterComp {
     pub const fn new() -> Self {
         Self {
+            key_state: KeyState::REST,
             gr: 0.0,
             e: 0.0,
             thresh: 0.0,
@@ -410,7 +442,8 @@ impl MasterComp {
     }
 
     pub fn init_in_place(slot: &mut MaybeUninit<Self>) -> &mut Self {
-        // SAFETY: `f32`s and `u32`s, valid as zero bytes; zero is `new()`'s
+        // SAFETY: `f32`s and `u32`s, valid as zero bytes, and `KeyState`,
+        // whose zero bytes are its `REST` (its own test); zero is `new()`'s
         // state.
         unsafe {
             slot.as_mut_ptr().write_bytes(0, 1);
@@ -439,6 +472,20 @@ impl MasterComp {
         out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS],
         p: &CompParams,
         sample_rate: u32,
+    ) -> bool {
+        self.process_keyed(out, p, sample_rate, &mut WholeMix)
+    }
+
+    /// `process`, the detector's level and what follows each chunk's gain
+    /// taken from `listen` (ADR 0303). `WholeMix` is `process` itself; bank
+    /// 2's `comp_key::kern` brings the others, and this inlines into it.
+    #[inline(always)]
+    pub(crate) fn process_keyed<const PAIRS: usize, K: Listen<PAIRS>>(
+        &mut self,
+        out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS],
+        p: &CompParams,
+        sample_rate: u32,
+        listen: &mut K,
     ) -> bool {
         const { assert!(PAIRS > 0) };
         let p = p.sanitised();
@@ -491,37 +538,31 @@ impl MasterComp {
             rel: self.rel,
             slope,
         };
-        // Fully in and staying in: the fade's arithmetic drops out.
-        if on && self.engage == 1.0 {
-            self.run::<PAIRS, false>(out, ctl, on);
+        // Fully in and staying in: the fade's arithmetic drops out, where
+        // the key keeps a loop for it.
+        if K::SETTLED_LOOP && on && self.engage == 1.0 {
+            self.run::<PAIRS, false, K>(out, ctl, on, listen);
         } else {
-            self.run::<PAIRS, true>(out, ctl, on);
+            self.run::<PAIRS, true, K>(out, ctl, on, listen);
         }
         (self.thresh, self.makeup, self.mix) = (t1, m1, x1);
         true
     }
 
     #[inline(always)]
-    fn run<const PAIRS: usize, const FADE: bool>(
+    fn run<const PAIRS: usize, const FADE: bool, K: Listen<PAIRS>>(
         &mut self,
         out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS],
         r: Ramp,
         on: bool,
+        listen: &mut K,
     ) {
         let de = STEP as f32 / ENGAGE as f32;
         let (mut t, mut m, mut x) = (r.t, r.m, r.x);
         let (mut gr, mut e0, mut engage) = (self.gr, self.e, self.engage);
         for c in 0..BLOCK_SIZE / STEP {
             let i0 = c * STEP;
-            let mut peak = 0.0f32;
-            for i in i0..i0 + STEP {
-                let (mut l, mut r) = (out[0][2 * i], out[0][2 * i + 1]);
-                for pair in &out[1..] {
-                    l += pair[2 * i];
-                    r += pair[2 * i + 1];
-                }
-                peak = peak.max(l.abs()).max(r.abs());
-            }
+            let peak = listen.peak(out, i0);
             (t, m, x) = (t + r.dt, m + r.dm, x + r.dx);
             let target = (log2_level(peak.min(PEAK_MAX)) - t).max(0.0) * r.slope;
             let a = if target > gr { r.att } else { r.rel };
@@ -541,7 +582,9 @@ impl MasterComp {
             } else {
                 1.0 + x * (g - 1.0)
             };
-            ramp(out, i0, e0, e1);
+            let gains = ramp_gains(e0, e1);
+            scale(out, i0, &gains);
+            listen.pass(out, i0, &gains);
             e0 = e1;
         }
         (self.gr, self.e, self.engage) = (gr, e0, engage);
@@ -556,10 +599,62 @@ pub(crate) fn ramp_gains(e0: f32, e1: f32) -> [f32; STEP] {
     core::array::from_fn(|j| e0 + step * (j + 1) as f32)
 }
 
-/// Scale chunk `i0..i0 + STEP` of every pair by `ramp_gains(e0, e1)`.
+/// What the loop asks of the compressor's KEY, a chunk at a time (ADR
+/// 0303).
+pub(crate) trait Listen<const PAIRS: usize> {
+    /// Whether the loop is built twice, once without the engage fade's
+    /// arithmetic for the blocks fully in. Without it the one loop plays
+    /// them all, to the same bits (a fade of 1 is a multiply by 1.0).
+    const SETTLED_LOOP: bool;
+    /// The detector's peak over chunk `i0..i0 + STEP` of `out`, not yet
+    /// scaled.
+    fn peak(&mut self, out: &[[f32; 2 * BLOCK_SIZE]; PAIRS], i0: usize) -> f32;
+    /// The chunk scaled by `gains`: what the key puts back.
+    fn pass(&mut self, out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS], i0: usize, gains: &[f32; STEP]);
+}
+
+/// FULL: the sum of every pair, and nothing put back.
+pub(crate) struct WholeMix;
+
+impl<const PAIRS: usize> Listen<PAIRS> for WholeMix {
+    const SETTLED_LOOP: bool = true;
+
+    #[inline(always)]
+    fn peak(&mut self, out: &[[f32; 2 * BLOCK_SIZE]; PAIRS], i0: usize) -> f32 {
+        let mut peak = 0.0f32;
+        for i in i0..i0 + STEP {
+            let (l, r) = summed(out, i);
+            peak = peak.max(l.abs()).max(r.abs());
+        }
+        peak
+    }
+
+    #[inline(always)]
+    fn pass(&mut self, _: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS], _: usize, _: &[f32; STEP]) {}
+}
+
+/// Sample `i` of every pair summed: the mix as the detector hears it.
 #[inline(always)]
-fn ramp<const PAIRS: usize>(out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS], i0: usize, e0: f32, e1: f32) {
-    for (j, ej) in ramp_gains(e0, e1).into_iter().enumerate() {
+pub(crate) fn summed<const PAIRS: usize>(
+    out: &[[f32; 2 * BLOCK_SIZE]; PAIRS],
+    i: usize,
+) -> (f32, f32) {
+    let (mut l, mut r) = (out[0][2 * i], out[0][2 * i + 1]);
+    for pair in &out[1..] {
+        l += pair[2 * i];
+        r += pair[2 * i + 1];
+    }
+    (l, r)
+}
+
+/// Scale chunk `i0..i0 + STEP` of every pair by `gains`.
+#[inline(always)]
+fn scale<const PAIRS: usize>(
+    out: &mut [[f32; 2 * BLOCK_SIZE]; PAIRS],
+    i0: usize,
+    gains: &[f32; STEP],
+) {
+    for (j, &ej) in gains.iter().enumerate() {
         for pair in out.iter_mut() {
             pair[2 * (i0 + j)] *= ej;
             pair[2 * (i0 + j) + 1] *= ej;

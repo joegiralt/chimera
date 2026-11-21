@@ -46,6 +46,7 @@ const _: () =
     assert!(size_of::<crate::dsp::va::osc::solo::SoloDoor>() <= DOOR_TABLE_STRIDE as usize);
 const _: () = assert!(size_of::<crate::part_eq::door::EqDoor>() <= DOOR_TABLE_STRIDE as usize);
 const _: () = assert!(size_of::<crate::part_peaks::door::PeakDoor>() <= DOOR_TABLE_STRIDE as usize);
+const _: () = assert!(size_of::<crate::comp_key::door::KeyDoor>() <= DOOR_TABLE_STRIDE as usize);
 
 /// A table's fixed address in bank 2 (after the door in S0, or at the head
 /// of the S4 groups) and the type `bank2.x` links there: a crate the engine

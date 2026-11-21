@@ -249,7 +249,10 @@ fn a_control_jump_does_not_click() {
         attack: 1.0,
         ..hard(r)
     };
-    let cases: [(&str, CompParams, CompParams); 6] = [
+    let cases: [(&str, CompParams, CompParams); 8] = [
+        // MAX (ADR 0303), reached and left.
+        ("RATIO MAX", slow(4), slow(8)),
+        ("RATIO from MAX", slow(8), slow(2)),
         (
             "THRESH",
             slow(4),
@@ -425,4 +428,76 @@ fn a_timing_change_takes_effect() {
         if b < 8 { at(0.2, 0.8) } else { at(0.9, 0.1) }
     });
     assert_eq!(got[0][sec / 2..], want[0][sec / 2..]);
+}
+
+/// FULL is the compressor as it was before KEY (ADR 0303): these hashes
+/// were recorded on origin/0.4 `dac1fa97`, before `process` took its
+/// detector from a `Listen`. The compressor alone, every control moving;
+/// then the whole mix, six Parts on three pairs through `mix_parts`, the
+/// compressor on, after the limiter.
+#[test]
+fn full_hashes_as_it_did_before_key() {
+    use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus};
+    use chimera_core::dsp::rev::sync::Tempo;
+    use chimera_core::hw::MAX_PARTS;
+    use chimera_core::instrument::{AudioShared, DacBlocks, MixState, mix_parts};
+    use chimera_core::part::DacPair;
+    let n = 256 * BLOCK_SIZE;
+    let ch: [Vec<f32>; 2 * PAIRS] = core::array::from_fn(|c| noise(n, 1.2, 101 + c as u32));
+    let at = |b: usize| CompParams {
+        thresh: 0.1 + 0.2 * (b / 17 % 4) as f32,
+        ratio: [3, 7, 0, 5, 1, 6][b / 23 % 6],
+        attack: [0.5, 0.0, 1.0][b / 31 % 3],
+        release: [0.5, 0.1, 0.9][b / 41 % 3],
+        makeup: 0.05 * (b / 29 % 8) as f32,
+        mix: [1.0, 0.5, 0.0, 0.8][b / 37 % 4],
+        ..CompParams::default()
+    };
+    let mut comp = Box::new(MasterComp::new());
+    let out = run(&mut comp, &ch, at);
+    let all: Vec<f32> = out.iter().flatten().copied().collect();
+    assert_eq!(
+        common::fnv1a(&all),
+        0xccd6_1f22_a921_cd21,
+        "the compressor alone"
+    );
+
+    let mut shared = AudioShared::default();
+    for (p, part) in shared.parts.iter_mut().enumerate() {
+        part.mix.output = [DacPair::P1, DacPair::P2, DacPair::P3][p % 3];
+        (part.mix.level, part.mix.pan) = (0.3 + 0.1 * p as f32, p as f32 * 0.3 - 0.7);
+    }
+    shared.fx.comp = CompParams {
+        thresh: 0.3,
+        ratio: 5,
+        makeup: 0.2,
+        mix: 0.8,
+        ..CompParams::default()
+    };
+    let buses: [Vec<f32>; MAX_PARTS] = core::array::from_fn(|p| noise(n, 0.6, 7 + p as u32));
+    let mut sends = [[0.0; BLOCK_SIZE]; FX_SENDS];
+    let mut mix = MixState::default();
+    let mut fx = Box::new(FxBus::new());
+    let mut dac = Box::new(DacBlocks::new());
+    let mut all = Vec::new();
+    for b in 0..n / BLOCK_SIZE {
+        let block: [[f32; BLOCK_SIZE]; MAX_PARTS] =
+            core::array::from_fn(|p| core::array::from_fn(|i| buses[p][b * BLOCK_SIZE + i]));
+        // Part 5 rests every other 16 blocks.
+        let written = core::array::from_fn(|p| p != 4 || b / 16 % 2 == 0);
+        mix_parts(
+            &block,
+            &written,
+            &mut sends,
+            &mut mix,
+            &mut fx,
+            &shared,
+            Tempo::DEFAULT,
+            SR,
+            &mut dac,
+        );
+        all.extend(dac.out().iter().flatten());
+    }
+    assert!(fx.master_gr_db() > 1.0, "the compressor works");
+    assert_eq!(common::fnv1a(&all), 0xf97e_ae56_a538_f5e5, "the mix");
 }

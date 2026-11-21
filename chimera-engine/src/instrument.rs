@@ -497,7 +497,7 @@ pub struct MixState {
 }
 
 /// A Part's eased gains: L, R and the three sends.
-const MIX_GAINS: usize = 2 + FX_SENDS;
+pub(crate) const MIX_GAINS: usize = 2 + FX_SENDS;
 
 impl MixState {
     fn pan_gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
@@ -735,7 +735,14 @@ fn mix_sided(
         }
     }
     // The master section, after every pair is summed; then the output stage.
-    if fx.master(out, &shared.fx, sample_rate) {
+    let tap = crate::comp_key::Tap {
+        buses,
+        sides,
+        written,
+        gains: &mix.gains,
+        parts: &shared.parts,
+    };
+    if fx.master_keyed(out, &shared.fx, sample_rate, Some(&tap)) {
         // Scaled: its +0 pairs no longer known.
         *zero = [false; DAC_PAIRS];
     }
@@ -2616,7 +2623,8 @@ impl Instrument {
         // The reverb TYPE's extra, and GRAIN's (ADR 0202).
         self.rev_extra = self.rev_bill.step(shared.fx.reverb.kind)
             + crate::dsp::delay::extra_cost(&shared.fx.delay)
-            + crate::part_eq::bill::wash(&shared.fx.reverb, self.smart_load(shared));
+            + crate::part_eq::bill::wash(&shared.fx.reverb, self.smart_load(shared))
+            + crate::comp_key::bill::of(shared.fx.comp.key);
         let (_, cents) = self
             .tune_ease
             .step(f32::from(shared.tune), ease_coeff(self.sample_rate.get()));
