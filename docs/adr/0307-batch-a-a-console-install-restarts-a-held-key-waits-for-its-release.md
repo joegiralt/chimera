@@ -24,6 +24,13 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 ### An abort carries the hold it judged (#766)
 - `CardBus::stuck` returns the `Hold` it judged (the stream hold's stamp), `held` the hold now. `ask_abort(Hold)` re-reads the hold and asks only if it is still that one (false otherwise, and the UI's wait may judge again; it marks itself asked only on an ask); it stores the stamp before the flag. `take_abort` is true only if the flag was set and the stamp is still the hold's: a re-take stamps anew, a burst's `renew` moves it, so neither is stopped by an abort judged before it. A gate build's close asks of the hold as it is, read again up to four times.
 
+### A UI that waited `UI_TURN_MS` takes the card's next turn (#569, owner 2026-11-21)
+- Streams still beat a waiting UI (edf, ADR's stream scheduler), but only for `UI_TURN_MS` (**100 ms**, `card_bus::UI_TURN_MS`): a UI hold still spinning then asks a turn (`CardBus::ask_turn`). The card IRQ's next `take_or_want` parks (`Wanted`, so the UI's give pends it again); between fills `next` gives the bus and pends itself instead of keeping it. The UI's take ends the turn; a UI that gives up at its `take` deadline cancels it and pends the IRQ. Under a saturated load UI card work runs slower and never fails `Busy` for want of a turn.
+- Stream admission is not capped. The ring's spare slot covers a turn: the bench model (`stream_bench_test::the_ui_s_turns_leave_every_stream_on_time`) at eight streams, 24 kHz, 1.2×, a UI waiting throughout and a 40 ms card hold every 100 ms, has no empties.
+
+### Bank 2 closed says so at boot (#544, #547, owner 2026-11-21)
+- After the project's note, `UiState::note_bank2` toasts ABOUT's word for a closed bank 2 (`Bank2Status::label`: `NEEDS UPDATE`, or `SLOT IN USE`) for a boot fault's time. While closed, the reverb send's hint reads `REVERB ▸ NEEDS UPDATE` instead of the TYPE (`view::closed_words`). Existing strings only.
+
 ### Tests reach DEMO in any profile (#354)
 - DEMO's rows are `cfg(any(debug_assertions, feature = "test-support"))`. No firmware enables `test-support`, so a release unit still has no DEMO row.
 
@@ -46,7 +53,7 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 ## Consequences
 - After a console install that opens bank 2 the unit restarts; anything that drives `bank2 install` waits for the console again (the tool does), and saves first.
 - Bank 1 grows by the fixes (#1064's restart, #1000's read, #197's note, #315's filter, #766's stamp, #943's re-aim); the measured lines in `tools/bank1-budget.txt` cite this ADR. Bank 2 moves within its 64 B.
-- Not decided here, listed for the owner: #544 and #547 (NEEDS UPDATE's copy), #569 (stream admission against the UI's card turn), #710 (the card's block count costs bank 1 about 1 KB), #943's runtime-closed-door and GET_LINE_CODING items.
+- Owner's rulings (2026-11-21): #943's runtime-closed-door poll (gate builds only) and GET_LINE_CODING items are won't-fix; #305 closes with docs/recovery.md's leave-twice; #710 (the card's block count, about 1 KB of bank 1) waits for 0.5, once the card path is in bank 2.
 
 ## Sources
 - Issues #1064, #1000, #766, #354, #315, #197, #314, #1065, #943, #829, #379, #505, #637, #811, #830, #1018 (joegiralt/chimera).
