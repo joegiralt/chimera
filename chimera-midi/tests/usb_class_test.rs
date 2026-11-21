@@ -812,6 +812,10 @@ fn a_configuration_read_cut_short_answers_nothing_else_with_its_bytes() {
         get_interface(5),
         get_interface(0),
         get_config(9),
+        // The device, configuration and BOS at another index (#943).
+        get_descriptor(1, 1),
+        get_descriptor(2, 1),
+        get_descriptor(0x0F, 1),
     ];
     let clean = static_session(cfg.clone(), &asks);
     assert_eq!(clean[0].sent.len(), 18);
