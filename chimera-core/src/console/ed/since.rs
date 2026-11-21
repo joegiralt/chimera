@@ -1055,14 +1055,9 @@ impl EdSince {
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
-        let Reading {
-            ui,
-            own,
-            refused,
-            clock,
-        } = at;
+        let Reading { ui, own, clock, .. } = at;
         match s {
-            Section::Part => self.part_section(owed, ui, own, refused, clock.delay, pass, w),
+            Section::Part => self.part_section(owed, at, pass, w),
             Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Map => self.map_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, clock, pass, w),
@@ -1159,13 +1154,17 @@ impl EdSince {
     fn part_section(
         &mut self,
         owed: bool,
-        ui: &UiState,
-        own: &CellOwn,
-        refused: &Refusals,
-        delay: FoldState,
+        at: Reading<'_>,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
+        let Reading {
+            ui,
+            own,
+            refused,
+            clock,
+        } = at;
+        let delay = clock.delay;
         let known = if owed { None } else { self.part.seen };
         let part = ui.active_part;
         let engine = engine_of(ui);
