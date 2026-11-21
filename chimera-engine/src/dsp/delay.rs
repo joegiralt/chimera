@@ -431,20 +431,17 @@ pub static DELAY_SPECS: [ParamSpec; 14] = [
     )
     .ident("SYNC")
     .glyph(crate::glyph::FocusGlyph::None),
-    // Stepped: a place in the notes, stored `i / 10` from any input
-    // (`quantize`), the editor's and `ed set`'s too (#1055, ADR 0306); the
-    // note's change still glides its own way.
-    ParamSpec::stepped(
+    ParamSpec::continuous(
         13,
         "NOTE",
         ValFmt::Law(crate::dsp::modulator::law::Law::DelayNote),
         0.0,
         1.0,
         NOTE_DEFAULT,
+        1.0 / (DelayNote::COUNT - 1) as f32,
         false,
-        Motion::Continuous(Smoothing::Own),
+        Smoothing::Own,
     )
-    .stepping(1.0 / (DelayNote::COUNT - 1) as f32)
     .ident("NOTE"),
 ];
 
