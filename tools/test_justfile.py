@@ -183,7 +183,7 @@ class Itcm(unittest.TestCase):
     def test_check_splits_sd_probe_as_its_flash_recipe_does(self):
         # sd-probe links no synth and leaves ITCM empty: its split
         # runs in `check`, so check-itcm can't break `flash-sd-probe` unseen.
-        split = "just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe"
+        split = "just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe"
         self.assertIn(split, "\n".join(recipes()["flash-sd-probe"]))
         body = recipes()["check"]
         i = next(n for n, l in enumerate(body) if "--features sd-probe" in l)
@@ -195,3 +195,16 @@ class Itcm(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TargetDir(unittest.TestCase):
+    """#379: built firmware is read from CARGO_TARGET_DIR, not a fixed
+    target/, so a custom target dir checks the ELF it just built."""
+
+    def test_built_artifacts_are_read_from_the_target_dir(self):
+        text = (ROOT / "Justfile").read_text()
+        self.assertRegex(text, r'(?m)^target_dir := env_var_or_default\("CARGO_TARGET_DIR", "target"\)$')
+        for name, body in recipes().items():
+            for l in body:
+                self.assertNotIn("target/thumbv7em-none-eabihf", l, name)
+

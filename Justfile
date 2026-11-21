@@ -11,6 +11,9 @@
 # (private issue #656).
 bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
+# Where cargo builds: the checks read the ELF from there, not a fixed
+# target/ (#379).
+target_dir := env_var_or_default("CARGO_TARGET_DIR", "target")
 
 # Build desktop simulator
 desktop:
@@ -221,19 +224,19 @@ put-factory-sounds dir="target/factory-sounds/public" *flags:
 # Build STM32 firmware (release): target/chimera.bin and .bk2
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
 
 # Build STM32 firmware with ORBIT (release): target/chimera-orbit.bin and .bk2
 firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
 
 # ORBIT with usb-device writing the configuration (`usb-config-writer`),
 # the fallback if the class's static (ADR 0260) fails on a host:
 # target/chimera-orbit-writer.bin and .bk2.
 firmware-orbit-writer:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit,usb-config-writer
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit-writer
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit-writer
 
 # Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
 # each phase for a hand to pull the power, and the console takes `bank2
@@ -242,7 +245,7 @@ firmware-orbit-writer:
 # released: every other .bin is refused if it holds the aid.
 firmware-gate:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bank2-gate
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
@@ -412,7 +415,7 @@ check-bank1 set:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p target/bank1
-    rust-objcopy -R .bank2 -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
+    rust-objcopy -R .bank2 -O binary {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
     python3 tools/bank1_budget.py "{{set}}" "target/bank1/{{set}}.bin"
 
 # Bank 2's room (ADR 0272): the last-built firmware's free space in S0-S3,
@@ -420,7 +423,7 @@ check-bank1 set:
 # 0251), and the bytes in use are held to the set's line in
 # tools/bank2-budget.txt under bank 1's rules.
 check-bank2 set:
-    python3 tools/bank2_budget.py "{{set}}" target/thumbv7em-none-eabihf/release/chimera-stm32
+    python3 tools/bank2_budget.py "{{set}}" {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
 
 # The .bk2's slot stubs and end markers (ADR 0272): chimera-utils checks
 # their bytes, the size and the 0xFF reserves; here, every gap from a
@@ -609,35 +612,35 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
     just check-bank2 default
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     just check-bank1 orbit
     just check-bank2 orbit
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
     just check-bank2 bank2-gate
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
     just check-bank1 orbit,usb-config-writer
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
-    {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32
-    just check-door-placed target/thumbv7em-none-eabihf/release/chimera-stm32
+    {{utils}} door-check {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-door-placed {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # Its split as `flash-sd-probe` makes it (the seal, check-itcm with ITCM empty).
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
-    rust-objdump -h target/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
+    rust-objdump -h {{target_dir}}/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
     just loom
@@ -676,7 +679,7 @@ stack-check:
     objdump="$bin/llvm-objdump"
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
-    elf=target/thumbv7em-none-eabihf/release/chimera-stm32
+    elf={{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
@@ -828,7 +831,7 @@ flash:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
     python3 tools/chimera-usb.py update target/chimera.bin target/chimera.bk2
 
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
@@ -849,7 +852,7 @@ flash-bench area extra="":
     features="bench-{{area}}"
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
     echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)"
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
@@ -866,7 +869,7 @@ flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
     python3 tools/chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
@@ -890,7 +893,7 @@ backup-bootloader:
 # Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the
