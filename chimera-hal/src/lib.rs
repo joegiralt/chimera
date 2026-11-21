@@ -276,18 +276,13 @@ impl StartHold {
 
     /// Switch `i`'s tick: its raw level and `Debounce`'s settled one in,
     /// `first` on the controls' first read; the level the UI sees out.
+    #[inline(always)]
     pub fn step(&mut self, i: usize, first: bool, raw: bool, settled: bool) -> bool {
-        let bit = 1 << i;
-        if first && raw {
-            self.0 |= bit;
-        }
-        if self.0 & bit == 0 {
-            return settled;
-        }
-        if !raw && !settled {
-            self.0 &= !bit;
-        }
-        false
+        // Set at a first read down, cleared once raw and settled are up;
+        // branch-free, the SysTick read's 18 switches a tick.
+        self.0 |= u32::from(first & raw) << i;
+        self.0 &= !(u32::from(!raw & !settled) << i);
+        settled & (self.0 >> i & 1 == 0)
     }
 }
 
