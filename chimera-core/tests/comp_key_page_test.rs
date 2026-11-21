@@ -7,8 +7,8 @@ mod screen;
 
 use chimera_core::addr::{BlockRef, ParamAddr};
 use chimera_core::block::{Block, ParamId, ValFmt};
-use chimera_core::comp_key::{CompKey, KEY_NAMES};
-use chimera_core::dsp::comp::{COMP_SPECS, CompParams};
+use chimera_core::comp_key::{CompKey, KEY_NAMES, KEYS};
+use chimera_core::dsp::comp::{COMP_SPECS, CompParams, Ratio};
 use chimera_core::nrpn::NrpnAddr;
 use chimera_core::project::PartId;
 use chimera_core::ui::UiState;
@@ -186,19 +186,23 @@ fn makeup_keeps_everything_but_its_cell() {
 fn ratio_ends_at_max() {
     let mut ui = mst();
     feed(&mut ui, Input::turn(EncoderId::B, 20));
-    assert_eq!(ui.project().perf().fx.comp.ratio, 8);
+    assert_eq!(ui.project().perf().fx.comp.ratio, Ratio::MAX);
     let ValFmt::Names(names) = COMP_SPECS[1].fmt else {
         panic!("RATIO is a choice of names");
     };
-    assert_eq!(names[8], "MAX");
+    let (last, before) = names.split_last().unwrap();
+    assert_eq!((*last, Ratio::MAX.ident()), ("MAX", "MAX"));
     assert_eq!(
-        names[..8],
+        before,
         ["1:1", "1.5:1", "2:1", "3:1", "4:1", "6:1", "10:1", "20:1"]
     );
+    // The names are the table's idents, index for index.
+    assert_eq!(names, &Ratio::ALL.map(Ratio::ident));
     let mut p = CompParams::DEFAULT;
-    assert!(p.set_enum_code(CompParams::RATIO, 8));
+    assert!(p.set_enum_code(CompParams::RATIO, Ratio::MAX.code()));
     assert_eq!(p.enum_ident(CompParams::RATIO), Some("MAX"));
-    assert!(!p.set_enum_code(CompParams::RATIO, 9));
+    assert!(!p.set_enum_code(CompParams::RATIO, Ratio::MAX.code() + 1));
+    assert_eq!(p.ratio, Ratio::MAX);
     for k in CompKey::ALL {
         assert!(p.set_enum_code(CompParams::KEY, k.code()));
         assert_eq!(p.key, k);
@@ -206,5 +210,5 @@ fn ratio_ends_at_max() {
         assert_eq!(p.enum_ident(CompParams::KEY), Some(k.ident()));
         assert_eq!(p.get(CompParams::KEY), f32::from(k.code()));
     }
-    assert!(!p.set_enum_code(CompParams::KEY, 10));
+    assert!(!p.set_enum_code(CompParams::KEY, KEYS as u8));
 }

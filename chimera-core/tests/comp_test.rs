@@ -1,7 +1,7 @@
 //! The master compressor (FX diet spec § Master comp, § Testing).
 
 mod common;
-use chimera_core::dsp::comp::{CompParams, MasterComp, STEP};
+use chimera_core::dsp::comp::{CompParams, MasterComp, Ratio, STEP};
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 
@@ -54,11 +54,11 @@ fn db(x: f32) -> f32 {
     20.0 * x.log10()
 }
 
-/// THRESH −20 dB, RATIO `r` (an index into `RATIOS`), default timing, MIX 1.
+/// THRESH −20 dB, RATIO's choice `r`, default timing, MIX 1.
 fn hard(r: u8) -> CompParams {
     CompParams {
         thresh: 0.5,
-        ratio: r,
+        ratio: Ratio::new(r).expect("one of RATIO's choices"),
         ..CompParams::default()
     }
 }
@@ -251,8 +251,8 @@ fn a_control_jump_does_not_click() {
     };
     let cases: [(&str, CompParams, CompParams); 8] = [
         // MAX (ADR 0303), reached and left.
-        ("RATIO MAX", slow(4), slow(8)),
-        ("RATIO from MAX", slow(8), slow(2)),
+        ("RATIO MAX", slow(4), slow(Ratio::MAX.code())),
+        ("RATIO from MAX", slow(Ratio::MAX.code()), slow(2)),
         (
             "THRESH",
             slow(4),
@@ -306,14 +306,15 @@ fn a_control_jump_does_not_click() {
     assert!(bad.is_empty(), "{bad:?}");
 }
 
-/// A NaN or out-of-range control renders finite.
+/// A NaN or out-of-range control renders finite (RATIO's type holds it
+/// to its choices).
 #[test]
 fn nan_and_out_of_range_controls_render_finite() {
     let ch: [Vec<f32>; 2 * PAIRS] =
         core::array::from_fn(|c| noise(16 * BLOCK_SIZE, 2.0, 3 + c as u32));
     let bad = CompParams {
         thresh: f32::NAN,
-        ratio: 200,
+        ratio: Ratio::MAX,
         attack: -1.0,
         release: f32::NAN,
         makeup: 9.0,
@@ -446,7 +447,7 @@ fn full_hashes_as_it_did_before_key() {
     let ch: [Vec<f32>; 2 * PAIRS] = core::array::from_fn(|c| noise(n, 1.2, 101 + c as u32));
     let at = |b: usize| CompParams {
         thresh: 0.1 + 0.2 * (b / 17 % 4) as f32,
-        ratio: [3, 7, 0, 5, 1, 6][b / 23 % 6],
+        ratio: Ratio::ALL[[3, 7, 0, 5, 1, 6][b / 23 % 6]],
         attack: [0.5, 0.0, 1.0][b / 31 % 3],
         release: [0.5, 0.1, 0.9][b / 41 % 3],
         makeup: 0.05 * (b / 29 % 8) as f32,
@@ -469,7 +470,7 @@ fn full_hashes_as_it_did_before_key() {
     }
     shared.fx.comp = CompParams {
         thresh: 0.3,
-        ratio: 5,
+        ratio: Ratio::ALL[5],
         makeup: 0.2,
         mix: 0.8,
         ..CompParams::default()

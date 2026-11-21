@@ -3,10 +3,10 @@
 //! (`COMP_KEY_DOOR_ADDR`). Without `bank2` it is bank 1's, called
 //! directly. A closed door plays FULL.
 
-use super::{Ask, Pairs};
+use super::{Ask, Door, Pairs};
 
 /// KEY's block as the table carries it (`kern::run`).
-pub type KeyRun = for<'a, 'b> fn(Ask<'a, 'b>) -> Pairs;
+pub(crate) type KeyRun = for<'a, 'b> fn(Ask<'a, 'b>) -> Pairs;
 
 /// `KeyDoor`'s entry: called, never handed out.
 #[repr(transparent)]
@@ -14,7 +14,7 @@ pub struct KeyEntry(KeyRun);
 
 impl KeyEntry {
     #[inline(always)]
-    pub fn run(&self, ask: Ask<'_, '_>) -> Pairs {
+    pub(crate) fn run(&self, ask: Ask<'_, '_>) -> Pairs {
         (self.0)(ask)
     }
 }
@@ -41,7 +41,7 @@ impl KeyDoor {
     };
 
     #[inline(always)]
-    pub fn key(&self) -> &KeyEntry {
+    pub(crate) fn key(&self) -> &KeyEntry {
         &self.key
     }
 }
@@ -54,6 +54,8 @@ const SLOT: crate::bank2::DoorSlot<KeyDoor> =
     unsafe { crate::bank2::DoorSlot::new(crate::bank2::COMP_KEY_DOOR_ADDR) };
 
 #[cfg(feature = "bank2")]
+// SAFETY: the section is `bank2.x`'s own slot for this table, which it
+// keeps and places at `COMP_KEY_DOOR_ADDR`; nothing else is linked there.
 #[unsafe(link_section = ".bank2.door.comp_key")]
 #[used]
 static KEY_DOOR: KeyDoor = KeyDoor::OWN;
@@ -65,11 +67,21 @@ pub fn door_ok(j: &crate::bank2::Judged) -> bool {
     j.with_slot(SLOT, |d| d.magic == MAGIC)
 }
 
+/// The door as KEY finds it now: closed, every key plays FULL
+/// (`CompKey::in_effect`).
+#[inline(always)]
+pub fn state() -> Door {
+    match through(|_| ()) {
+        Some(()) => Door::Open,
+        None => Door::Closed,
+    }
+}
+
 /// `f` on KEY's table: bank 2's through the door on the unit, `None`
 /// closed; this build's own elsewhere. A host test under `bank2` answers
 /// as the unit does: only while the door cell is open.
 #[inline(always)]
-pub fn through<R>(f: impl FnOnce(&KeyDoor) -> R) -> Option<R> {
+pub(crate) fn through<R>(f: impl FnOnce(&KeyDoor) -> R) -> Option<R> {
     #[cfg(all(feature = "bank2", target_os = "none"))]
     {
         crate::bank2::DOOR_CELL.with_slot(SLOT, f)

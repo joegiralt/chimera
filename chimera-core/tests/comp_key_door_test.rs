@@ -6,11 +6,11 @@
 mod common;
 
 use chimera_core::bank2::DOOR_CELL;
-use chimera_core::comp_key::{CompKey, KeyState};
-use chimera_core::dsp::comp::CompParams;
+use chimera_core::comp_key::door::state;
+use chimera_core::comp_key::{CompKey, Door, KeyState};
+use chimera_core::dsp::comp::{CompParams, Ratio};
 use chimera_core::dsp::fx_bus::{FxBus, FxParams};
 use chimera_core::hw::DAC_PAIRS;
-use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
 use common::SR;
 
@@ -20,7 +20,7 @@ fn play(key: CompKey) -> (Vec<[[f32; 2 * BLOCK_SIZE]; DAC_PAIRS]>, Box<FxBus>) {
     let p = FxParams {
         comp: CompParams {
             thresh: 0.0,
-            ratio: 8,
+            ratio: Ratio::MAX,
             key,
             ..CompParams::DEFAULT
         },
@@ -51,16 +51,16 @@ fn the_door_keys_open_and_plays_full_closed() {
     assert_ne!(low, full, "open: LOW does not hear 3 kHz");
     assert!(bus.master_gr_db() < 0.1, "{}", bus.master_gr_db());
     assert_ne!(*bus.comp_key(), KeyState::REST);
+    assert_eq!(state(), Door::Open);
+    assert_eq!(CompKey::Low.in_effect(state()), CompKey::Low);
     DOOR_CELL.close();
-    for key in [
-        CompKey::Low,
-        CompKey::High,
-        CompKey::Hit,
-        CompKey::Part(PartId::ALL[2]),
-    ] {
+    assert_eq!(state(), Door::Closed);
+    for key in CompKey::ALL.into_iter().filter(|k| *k != CompKey::Full) {
         let (closed, bus) = play(key);
         assert!(closed == full, "closed: {key:?} plays FULL");
         assert_eq!(*bus.comp_key(), KeyState::REST);
+        // And the page says so under the curve.
+        assert_eq!(key.in_effect(state()), CompKey::Full);
     }
     DOOR_CELL.open_host();
 }

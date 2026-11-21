@@ -685,7 +685,7 @@ fn the_master_page_is_the_compressor_with_level_below() {
     let mut perf = Performance::new();
     assert!(!perf.fx.comp.is_on());
     turn_def(&reg::MASTER, 1, 4, &mut perf);
-    assert_eq!(perf.fx.comp.ratio, 4);
+    assert_eq!(perf.fx.comp.ratio, chimera_core::dsp::comp::Ratio::ALL[4]);
     assert!(perf.fx.comp.is_on());
 }
 

@@ -14,12 +14,12 @@
 use chimera_hal::BLOCK_SIZE;
 
 use super::{
-    Ask, Biquad, CompKey, HIGH_CORNER, Held, KeyLoad, KeyState, LOW_CORNER, Memory, PASS_FADE_S,
-    Pairs, Passing, SECTIONS, Tap, Weight,
+    Ask, Biquad, HIGH_CORNER, KeyState, LOW_CORNER, Made, Memory, PASS_FADE_S, Pairs, PartShare,
+    Passing, Ranged, SECTIONS, Source, Tap, Weight,
 };
+use crate::dsp::Hz;
 use crate::dsp::comp::{Listen, STEP, WholeMix, summed};
 use crate::dsp::ease::step_of;
-use crate::dsp::{Hz, clampf};
 use crate::hw::DAC_PAIRS;
 use crate::part::DacPair;
 use crate::project::PartId;
@@ -106,40 +106,39 @@ enum Sections {
     Two,
 }
 
-/// How many sections `key` runs the detector through; none for a key
-/// that filters nothing.
-#[inline(always)]
-fn ranged(key: CompKey) -> Option<Sections> {
-    match key {
-        CompKey::Low | CompKey::High => Some(Sections::One),
-        CompKey::Hit => Some(Sections::Two),
-        CompKey::Full | CompKey::Part(_) => None,
+impl Ranged {
+    /// How many sections the detector runs through.
+    #[inline(always)]
+    fn stages(self) -> Sections {
+        match self {
+            Ranged::Low | Ranged::High => Sections::One,
+            Ranged::Hit => Sections::Two,
+        }
     }
-}
 
-/// `key`'s sections at `sample_rate`, made when the key or the rate
-/// changes; a key that filters nothing has none.
-#[inline(always)]
-fn sections(key: CompKey, sample_rate: u32) -> [Biquad; SECTIONS] {
-    match key {
-        CompKey::Low => [
-            low_pass(LOW_CORNER, BUTTERWORTH_Q, sample_rate),
-            Biquad::ZERO,
-        ],
-        CompKey::High => [
-            high_pass(HIGH_CORNER, BUTTERWORTH_Q, sample_rate),
-            Biquad::ZERO,
-        ],
-        CompKey::Hit => [shelf(sample_rate), rlb(sample_rate)],
-        CompKey::Full | CompKey::Part(_) => [Biquad::ZERO; SECTIONS],
+    /// Its sections at `sample_rate`, made when the key or the rate
+    /// changes.
+    #[inline(always)]
+    fn sections(self, sample_rate: u32) -> [Biquad; SECTIONS] {
+        match self {
+            Ranged::Low => [
+                low_pass(LOW_CORNER, BUTTERWORTH_Q, sample_rate),
+                Biquad::ZERO,
+            ],
+            Ranged::High => [
+                high_pass(HIGH_CORNER, BUTTERWORTH_Q, sample_rate),
+                Biquad::ZERO,
+            ],
+            Ranged::Hit => [shelf(sample_rate), rlb(sample_rate)],
+        }
     }
 }
 
 /// `key`'s sections at `sample_rate`: for the tests, which hold them to
 /// the stated filters.
 #[cfg(any(test, feature = "test-support"))]
-pub fn sections_of(key: CompKey, sample_rate: u32) -> Option<[Biquad; SECTIONS]> {
-    ranged(key).map(|_| sections(key, sample_rate))
+pub fn sections_of(key: Ranged, sample_rate: u32) -> [Biquad; SECTIONS] {
+    key.sections(sample_rate)
 }
 
 impl Biquad {
@@ -173,40 +172,16 @@ enum Detector<'a> {
     Bus(Option<&'a [f32; BLOCK_SIZE]>),
 }
 
-/// A value ramped across the block as the mix ramps a gain: `from`, then
-/// `step` more each sample, the last landing on its end.
-#[derive(Clone, Copy)]
-struct Ramp {
-    from: f32,
-    step: f32,
-}
-
-impl Ramp {
-    #[inline(always)]
-    fn between(from: f32, to: f32) -> Ramp {
-        Ramp {
-            from,
-            step: step_of((from, to), BLOCK_SIZE),
-        }
-    }
-
-    /// At sample `i`, counted as `glide` counts: `step · (i + 1)`.
-    #[inline(always)]
-    fn at(self, i: usize) -> f32 {
-        self.from + self.step * (i + 1) as f32
-    }
-}
-
-/// One block of the passing Part: its bus (and side), its pair, its left
-/// and right gains and the pass's weight, each ramped across the block.
+/// One block of the passing Part: its bus (and side), its pair, its
+/// share of the pair as the mix played it, and the pass's weight from the
+/// block's start to its end.
 #[derive(Clone, Copy)]
 struct Pass<'a> {
     bus: &'a [f32; BLOCK_SIZE],
     side: Option<&'a [f32; BLOCK_SIZE]>,
     pair: DacPair,
-    left: Ramp,
-    right: Ramp,
-    weight: Ramp,
+    share: PartShare,
+    weight: (Weight, Weight),
 }
 
 /// `Listen` for every KEY but FULL.
@@ -259,62 +234,56 @@ impl Listen<DAC_PAIRS> for Keyed<'_, '_> {
             return;
         };
         let pair = &mut out[p.pair.index()];
+        // Both ends are `Weight`s, so every sample between is in 0..=1.
+        let (w0, w1) = (p.weight.0.get(), p.weight.1.get());
+        let dw = step_of((w0, w1), BLOCK_SIZE);
         for (j, &e) in gains.iter().enumerate() {
             let i = i0 + j;
-            let back = (1.0 - e) * clampf(p.weight.at(i), 0.0, 1.0);
-            let (mid, side) = (p.bus[i], p.side.map_or(0.0, |s| s[i]));
-            pair[2 * i] += back * (mid - side) * p.left.at(i);
-            pair[2 * i + 1] += back * (mid + side) * p.right.at(i);
+            let back = (1.0 - e) * (w0 + dw * (i + 1) as f32);
+            let (l, r) = p.share.at(i, p.bus[i], p.side.map_or(0.0, |s| s[i]));
+            pair[2 * i] += back * l;
+            pair[2 * i + 1] += back * r;
         }
     }
 }
 
-/// The pass this block: who passes, by how much, and what of them is in
-/// the mix. A Part starts passing from nothing, and gives way only once
-/// faded out, so neither end steps.
+/// The pass after this block: who passes and by how much. A Part starts
+/// from nothing and fades toward all while it is the key, toward nothing
+/// once it is not, and gives way only once faded out, so neither end
+/// steps. With it, this block's weight at its start.
 #[inline(always)]
-fn pass<'a>(
-    st: &mut KeyState,
-    wanted: Option<PartId>,
-    tap: Option<&'a Tap<'_>>,
-    sample_rate: u32,
-) -> Option<Pass<'a>> {
-    let now = match st.passing {
-        Passing::Part(p) if st.weight > Weight::NONE || wanted == Some(p) => Some(p),
-        Passing::Part(_) | Passing::Nobody => {
-            (st.weight, st.held) = (Weight::NONE, Held::Fresh);
-            wanted
+fn fade(passing: Passing, wanted: Option<PartId>, sample_rate: u32) -> (Passing, Weight) {
+    let (id, from) = match (passing, wanted) {
+        (Passing::Part { id, weight }, _) if weight > Weight::NONE || wanted == Some(id) => {
+            (id, weight)
         }
+        (Passing::Part { .. } | Passing::Nobody, Some(id)) => (id, Weight::NONE),
+        (Passing::Part { .. } | Passing::Nobody, None) => return (Passing::Nobody, Weight::NONE),
     };
-    st.passing = now.map_or(Passing::Nobody, Passing::Part);
-    let p = now?;
-    let dw = 1.0 / (PASS_FADE_S * sample_rate.max(1) as f32);
-    let dw = if wanted == Some(p) { dw } else { -dw };
-    let w0 = st.weight.0;
-    st.weight = Weight(clampf(
-        w0 + dw * BLOCK_SIZE as f32,
-        Weight::NONE.0,
-        Weight::ALL.0,
-    ));
-    // No Parts given: nothing to put back, and nothing held.
-    let Some(tap) = tap else {
-        st.held = Held::Fresh;
+    let block = BLOCK_SIZE as f32 / (PASS_FADE_S * sample_rate.max(1) as f32);
+    let to = if wanted == Some(id) {
+        from.get() + block
+    } else {
+        from.get() - block
+    };
+    let weight = Weight::new(to);
+    (Passing::Part { id, weight }, from)
+}
+
+/// This block of the Part `passing` names, as the mix has it: none with
+/// nobody passing, no Parts given, or the Part without voices.
+#[inline(always)]
+fn pass<'a>(passing: Passing, from: Weight, tap: Option<&'a Tap<'_>>) -> Option<Pass<'a>> {
+    let Passing::Part { id, weight } = passing else {
         return None;
     };
-    let i = p.index();
-    let to = [tap.gains[i][0].at(), tap.gains[i][1].at()];
-    let from = match st.held {
-        Held::Held => st.gains,
-        Held::Fresh => to,
-    };
-    (st.gains, st.held) = (to, Held::Held);
-    tap.written[i].then(|| Pass {
+    let (tap, i) = (tap?, id.index());
+    Some(Pass {
         bus: &tap.buses[i],
         side: tap.sides[i].as_ref(),
         pair: tap.parts[i].mix.output,
-        left: Ramp::between(from[0], to[0]),
-        right: Ramp::between(from[1], to[1]),
-        weight: Ramp { from: w0, step: dw },
+        share: tap.shares[i]?,
+        weight: (from, weight),
     })
 }
 
@@ -330,31 +299,42 @@ pub(super) fn run(ask: Ask<'_, '_>) -> Pairs {
     } = ask;
     // From bypass, KEY starts from rest.
     let mut st = if comp.is_running() {
-        comp.key_state
+        *comp.key_state()
     } else {
         KeyState::REST
     };
-    let key = params.key;
-    let detector = match (key, ranged(key)) {
-        (_, Some(n)) => {
+    let source = params.key.source();
+    let detector = match source {
+        Source::Ranged(key) => {
             // Its sections, made on a new key or rate, start from silence.
-            if st.made != key || st.rate != sample_rate {
-                st.sections = sections(key, sample_rate);
-                (st.made, st.rate) = (key, sample_rate);
+            let made = Made::For {
+                key,
+                rate: sample_rate,
+            };
+            if st.made != made {
+                st.sections = key.sections(sample_rate);
                 st.memory = [[Memory::ZERO; 2]; SECTIONS];
+                st.made = made;
             }
-            Detector::Ranged(n)
+            Detector::Ranged(key.stages())
         }
-        (CompKey::Part(p), None) => {
-            st.made = CompKey::Full;
-            Detector::Bus(tap.and_then(|t| t.written[p.index()].then(|| &t.buses[p.index()])))
+        Source::Part(p) => {
+            st.made = Made::Nothing;
+            let i = p.index();
+            Detector::Bus(tap.and_then(|t| t.shares[i].map(|_| &t.buses[i])))
         }
-        (CompKey::Full | CompKey::Low | CompKey::High | CompKey::Hit, None) => {
-            st.made = CompKey::Full;
+        Source::Mix => {
+            st.made = Made::Nothing;
             Detector::Mix
         }
     };
-    let pass = pass(&mut st, key.part(), tap, sample_rate);
+    let wanted = match source {
+        Source::Part(p) => Some(p),
+        Source::Mix | Source::Ranged(_) => None,
+    };
+    let (passing, from) = fade(st.passing, wanted, sample_rate);
+    st.passing = passing;
+    let pass = pass(passing, from, tap);
     let mut keyed = Keyed {
         detector,
         pass,
@@ -370,13 +350,12 @@ pub(super) fn run(ask: Ask<'_, '_>) -> Pairs {
     {
         st.memory = [[Memory::ZERO; 2]; SECTIONS];
     }
-    // Back at FULL with the pass faded out, or bypassed: at rest, and the
+    // Bypassed, or back at FULL with the pass faded out: at rest, and the
     // next block is bank 1's alone.
-    st.load = KeyLoad::Runs;
-    comp.key_state = match (ran, key, st.passing) {
-        (false, _, _) | (true, CompKey::Full, Passing::Nobody) => KeyState::REST,
-        (true, CompKey::Full, Passing::Part(_))
-        | (true, CompKey::Low | CompKey::High | CompKey::Hit | CompKey::Part(_), _) => st,
-    };
+    comp.set_key_state(match (ran, source) {
+        (false, _) => KeyState::REST,
+        (true, Source::Mix) if st.at_rest() => KeyState::REST,
+        (true, Source::Mix | Source::Ranged(_) | Source::Part(_)) => st,
+    });
     Pairs::of(ran)
 }

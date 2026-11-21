@@ -214,7 +214,7 @@ fn project_a() -> FxParams {
         },
         comp: CompParams {
             thresh: 0.5,
-            ratio: 3,
+            ratio: chimera_core::dsp::comp::Ratio::ALL[3],
             attack: 0.5,
             release: 0.5,
             makeup: 0.1,
@@ -268,7 +268,7 @@ fn project_b() -> FxParams {
         },
         comp: CompParams {
             thresh: 0.3,
-            ratio: 6,
+            ratio: chimera_core::dsp::comp::Ratio::ALL[6],
             attack: 0.2,
             release: 0.8,
             makeup: 0.3,

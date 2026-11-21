@@ -747,21 +747,22 @@ fn the_eq_round_trips_and_an_old_file_loads_flat() {
 #[test]
 fn key_round_trips_and_an_old_file_loads_full() {
     use chimera_core::comp_key::CompKey;
-    use chimera_core::dsp::comp::CompParams;
+    use chimera_core::dsp::comp::{CompParams, Ratio};
     let (mut p, _) = full();
     let (mut q, _) = Project::boxed();
     for key in CompKey::ALL {
         p.edit_fx().comp.key = key;
-        p.edit_fx().comp.ratio = 8;
+        p.edit_fx().comp.ratio = Ratio::MAX;
         decode(&encode(&p), &mut q).unwrap();
         assert_eq!(q.perf().fx.comp.key, key);
-        assert_eq!(q.perf().fx.comp.ratio, 8, "MAX");
+        assert_eq!(q.perf().fx.comp.ratio, Ratio::MAX);
     }
-    p.edit_fx().comp.ratio = 7;
+    p.edit_fx().comp.ratio = Ratio::ALL[7];
     let old = fx_without(&p, 24, &[CompParams::KEY.0]);
     decode(&old, &mut q).unwrap();
     assert_eq!(q.perf().fx.comp.key, CompKey::Full);
-    assert_eq!(q.perf().fx.comp.ratio, 7, "20:1 still");
+    assert_eq!(q.perf().fx.comp.ratio, Ratio::ALL[7], "20:1 still");
+    assert_eq!(Ratio::ALL[7].ident(), "20:1");
     assert_eq!(q.perf().fx.comp.makeup, p.perf().fx.comp.makeup);
 }
 

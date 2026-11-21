@@ -17,6 +17,7 @@ use chimera_hal::BLOCK_SIZE;
 use chimera_hal::card_bus::CardFault;
 use chimera_hal::units::StreamCount;
 
+use crate::comp_key::Pairs;
 use crate::dsp::ease::{Ease, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
@@ -497,7 +498,7 @@ pub struct MixState {
 }
 
 /// A Part's eased gains: L, R and the three sends.
-pub(crate) const MIX_GAINS: usize = 2 + FX_SENDS;
+const MIX_GAINS: usize = 2 + FX_SENDS;
 
 impl MixState {
     fn pan_gains(&mut self, p: usize, pan: f32) -> (f32, f32) {
@@ -603,6 +604,7 @@ fn mix_sided(
     let mut sided = [[(&buses[0], [0.0f32; 4]); MAX_PARTS]; DAC_PAIRS];
     let mut sided_n = [0usize; DAC_PAIRS];
     let k = ease_coeff(sample_rate);
+    let mut shares = [None; MAX_PARTS];
     for (p, part) in shared.parts.iter().enumerate() {
         let (gl, gr) = mix.pan_gains(p, part.mix.pan);
         // Expression swells the whole Part, its FX feed too (ADR 0263):
@@ -627,6 +629,12 @@ fn mix_sided(
             continue;
         }
         let g: [(f32, f32); MIX_GAINS] = core::array::from_fn(|j| eases[j].step(to[j].get(), k));
+        // The Part's share of its pair, as the passes below play it: what
+        // KEY's PART n puts back (ADR 0303).
+        shares[p] = Some(crate::comp_key::PartShare {
+            left: g[0],
+            right: g[1],
+        });
         let bus = &buses[p];
         src[n] = (bus, [g[2].0, g[3].0, g[4].0]);
         n += 1;
@@ -738,11 +746,10 @@ fn mix_sided(
     let tap = crate::comp_key::Tap {
         buses,
         sides,
-        written,
-        gains: &mix.gains,
+        shares: &shares,
         parts: &shared.parts,
     };
-    if fx.master_keyed(out, &shared.fx, sample_rate, Some(&tap)) {
+    if fx.master_keyed(out, &shared.fx, sample_rate, Some(&tap)) == Pairs::Scaled {
         // Scaled: its +0 pairs no longer known.
         *zero = [false; DAC_PAIRS];
     }

@@ -11,11 +11,11 @@ pub mod kern;
 
 use chimera_hal::BLOCK_SIZE;
 
-use crate::dsp::Hz;
 use crate::dsp::comp::{CompParams, MasterComp};
-use crate::dsp::ease::Ease;
+use crate::dsp::ease::step_of;
+use crate::dsp::{Hz, clampf};
 use crate::hw::{Cost, DAC_PAIRS, MAX_PARTS};
-use crate::instrument::{MIX_GAINS, PartAudio, Sides};
+use crate::instrument::{PartAudio, Sides};
 use crate::project::PartId;
 
 /// KEY: the detector's source. FULL, the three ranges, then the Parts.
@@ -44,22 +44,42 @@ const RANGES: u8 = 4;
 /// KEY's choices in all.
 pub const KEYS: usize = RANGES as usize + MAX_PARTS;
 
-/// Each key with its frozen disk ident (ADR 0045) and its name on the
-/// box, in code order (checked below). Append-only.
-const KEY_TABLE: [(CompKey, &str, &str); KEYS] = [
-    (CompKey::Full, "FULL", "FULL"),
-    (CompKey::Low, "LOW", "LOW"),
-    (CompKey::High, "HIGH", "HIGH"),
-    (CompKey::Hit, "HIT", "HIT"),
-    (CompKey::Part(PartId::ALL[0]), "PART1", "PART 1"),
-    (CompKey::Part(PartId::ALL[1]), "PART2", "PART 2"),
-    (CompKey::Part(PartId::ALL[2]), "PART3", "PART 3"),
-    (CompKey::Part(PartId::ALL[3]), "PART4", "PART 4"),
-    (CompKey::Part(PartId::ALL[4]), "PART5", "PART 5"),
-    (CompKey::Part(PartId::ALL[5]), "PART6", "PART 6"),
+/// The mix through fixed sections: LOW, HIGH or HIT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Ranged {
+    Low,
+    High,
+    Hit,
+}
+
+/// What a key has the detector hear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// The whole mix: FULL.
+    Mix,
+    Ranged(Ranged),
+    Part(PartId),
+}
+
+/// Each key with its name on the box, in code order (checked below): the
+/// stored codes, frozen and append-only (ADR 0045). A range's disk ident
+/// is its name; a Part's is its name without the space (`part_ident`),
+/// since an ident is one token.
+const KEY_TABLE: [(CompKey, &str); KEYS] = [
+    (CompKey::Full, "FULL"),
+    (CompKey::Low, "LOW"),
+    (CompKey::High, "HIGH"),
+    (CompKey::Hit, "HIT"),
+    (CompKey::Part(PartId::ALL[0]), "PART 1"),
+    (CompKey::Part(PartId::ALL[1]), "PART 2"),
+    (CompKey::Part(PartId::ALL[2]), "PART 3"),
+    (CompKey::Part(PartId::ALL[3]), "PART 4"),
+    (CompKey::Part(PartId::ALL[4]), "PART 5"),
+    (CompKey::Part(PartId::ALL[5]), "PART 6"),
 ];
 
-// Row `c` is code `c`: `ident` and `KEY_NAMES` index the table by code.
+// Row `c` is code `c`: `from_code` and `KEY_NAMES` index the table by code.
 const _: () = {
     let mut c = 0;
     while c < KEYS {
@@ -76,20 +96,39 @@ pub static KEY_NAMES: [&str; KEYS] = {
     let mut n = [""; KEYS];
     let mut c = 0;
     while c < KEYS {
-        n[c] = KEY_TABLE[c].2;
+        n[c] = KEY_TABLE[c].1;
         c += 1;
     }
     n
 };
 
-static KEY_IDENTS: [&str; KEYS] = {
-    let mut n = [""; KEYS];
-    let mut c = 0;
-    while c < KEYS {
-        n[c] = KEY_TABLE[c].1;
-        c += 1;
+/// The Parts' disk idents: `PART1` ..= `PART6`, each its name less the
+/// space (checked below).
+static PART_IDENTS: [&str; MAX_PARTS] = ["PART1", "PART2", "PART3", "PART4", "PART5", "PART6"];
+
+// A Part's ident is its name's bytes but the space.
+const _: () = {
+    let mut p = 0;
+    while p < MAX_PARTS {
+        let (name, ident) = (
+            KEY_TABLE[RANGES as usize + p].1.as_bytes(),
+            PART_IDENTS[p].as_bytes(),
+        );
+        assert!(name.len() == ident.len() + 1);
+        let (mut i, mut j) = (0, 0);
+        while i < name.len() {
+            if name[i] != b' ' {
+                assert!(
+                    name[i] == ident[j],
+                    "a Part's ident is its name less the space"
+                );
+                j += 1;
+            }
+            i += 1;
+        }
+        assert!(j == ident.len());
+        p += 1;
     }
-    n
 };
 
 impl CompKey {
@@ -115,16 +154,12 @@ impl CompKey {
         }
     }
 
+    /// The key stored as `c`: the table's row.
     pub const fn from_code(c: u8) -> Option<CompKey> {
-        match c {
-            0 => Some(CompKey::Full),
-            1 => Some(CompKey::Low),
-            2 => Some(CompKey::High),
-            3 => Some(CompKey::Hit),
-            _ => match PartId::new(c - RANGES) {
-                Some(p) => Some(CompKey::Part(p)),
-                None => None,
-            },
+        if (c as usize) < KEYS {
+            Some(KEY_TABLE[c as usize].0)
+        } else {
+            None
         }
     }
 
@@ -138,8 +173,23 @@ impl CompKey {
         }
     }
 
+    /// What the detector hears.
+    #[inline(always)]
+    pub const fn source(self) -> Source {
+        match self {
+            CompKey::Full => Source::Mix,
+            CompKey::Low => Source::Ranged(Ranged::Low),
+            CompKey::High => Source::Ranged(Ranged::High),
+            CompKey::Hit => Source::Ranged(Ranged::Hit),
+            CompKey::Part(p) => Source::Part(p),
+        }
+    }
+
     pub fn ident(self) -> &'static str {
-        KEY_IDENTS[usize::from(self.code())]
+        match self.source() {
+            Source::Part(p) => PART_IDENTS[p.index()],
+            Source::Mix | Source::Ranged(_) => self.name(),
+        }
     }
 
     pub fn name(self) -> &'static str {
@@ -148,11 +198,27 @@ impl CompKey {
 
     /// The Part it keys from, which passes unducked.
     pub const fn part(self) -> Option<PartId> {
-        match self {
-            CompKey::Part(p) => Some(p),
-            CompKey::Full | CompKey::Low | CompKey::High | CompKey::Hit => None,
+        match self.source() {
+            Source::Part(p) => Some(p),
+            Source::Mix | Source::Ranged(_) => None,
         }
     }
+
+    /// What plays: the key itself with bank 2's door open, FULL closed.
+    #[inline(always)]
+    pub fn in_effect(self, door: Door) -> CompKey {
+        match door {
+            Door::Open => self,
+            Door::Closed => CompKey::Full,
+        }
+    }
+}
+
+/// Bank 2's door as KEY finds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Door {
+    Open,
+    Closed,
 }
 
 /// What KEY reserves from the budget beside the bus (ADR 0303), cycles a
@@ -163,7 +229,7 @@ impl CompKey {
 /// with the door open or closed (closed, FULL plays and these over-bill),
 /// and whether or not the compressor is on.
 pub mod bill {
-    use super::CompKey;
+    use super::{CompKey, Ranged, Source};
     use crate::hw::Cost;
 
     /// LOW or HIGH: the detector's left and right through one section.
@@ -175,11 +241,11 @@ pub mod bill {
     pub const PART: Cost = Cost(56);
 
     pub const fn of(key: CompKey) -> Cost {
-        match key {
-            CompKey::Full => Cost::ZERO,
-            CompKey::Low | CompKey::High => RANGE,
-            CompKey::Hit => HIT,
-            CompKey::Part(_) => PART,
+        match key.source() {
+            Source::Mix => Cost::ZERO,
+            Source::Ranged(Ranged::Low | Ranged::High) => RANGE,
+            Source::Ranged(Ranged::Hit) => HIT,
+            Source::Part(_) => PART,
         }
     }
 }
@@ -213,43 +279,51 @@ impl Memory {
 /// The sections a ranged key runs the detector through.
 const SECTIONS: usize = 2;
 
-/// The Part whose bus is put back after the gain.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-enum Passing {
-    /// Zero bytes: at rest.
-    Nobody = 0,
-    Part(PartId),
-}
-
-/// Whether the passing Part's gains at the last block's end are held, so
-/// this block's ramps start where the mix's did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-enum Held {
-    /// Zero bytes: its first block, whose ramps start at their ends.
-    Fresh = 0,
-    Held,
-}
-
-/// Whether bank 2 still has a pass to fade out with KEY back at FULL.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-enum KeyLoad {
-    /// Zero bytes: FULL needs no call.
-    Rests = 0,
-    Runs,
-}
-
 /// How much of the passing Part is put back: 0 none ..= 1 all of what
-/// the gain took. It fades over `PASS_FADE_S`.
+/// the gain took. It fades over `PASS_FADE_S`. Only `new` makes one, so
+/// every one is in range.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[repr(transparent)]
-struct Weight(f32);
+pub struct Weight(f32);
 
 impl Weight {
-    const NONE: Weight = Weight(0.0);
-    const ALL: Weight = Weight(1.0);
+    pub const NONE: Weight = Weight(0.0);
+    pub const ALL: Weight = Weight(1.0);
+
+    /// `w` held to 0..=1; NaN is none.
+    #[inline(always)]
+    pub fn new(w: f32) -> Weight {
+        Weight(if w.is_nan() { 0.0 } else { clampf(w, 0.0, 1.0) })
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// Who is put back after the gain, and by how much: the pass and its
+/// fade as one value, so nobody passing has no weight to hold.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[repr(u8)]
+pub enum Passing {
+    /// Zero bytes: at rest.
+    Nobody = 0,
+    Part {
+        id: PartId,
+        weight: Weight,
+    },
+}
+
+/// What the ranged detector's sections were made for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Made {
+    /// Zero bytes: no ranged key has run since the rest.
+    Nothing = 0,
+    For {
+        key: Ranged,
+        rate: u32,
+    },
 }
 
 /// The pass's fade in and out, seconds.
@@ -261,72 +335,90 @@ pub const PASS_FADE_S: f32 = 0.01;
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(C)]
 pub struct KeyState {
-    /// The sections, made for `made` at `rate`.
+    /// The sections, as `made` says.
     sections: [Biquad; SECTIONS],
     /// Each section's memory, left and right.
     memory: [[Memory; 2]; SECTIONS],
-    rate: u32,
-    /// The passing Part's left and right gains at the last block's end.
-    gains: [f32; 2],
-    weight: Weight,
-    /// The ranged key the sections were made for; FULL, none.
-    made: CompKey,
+    made: Made,
     passing: Passing,
-    held: Held,
-    load: KeyLoad,
 }
 
 impl KeyState {
     pub const REST: KeyState = KeyState {
         sections: [Biquad::ZERO; SECTIONS],
         memory: [[Memory::ZERO; 2]; SECTIONS],
-        rate: 0,
-        gains: [0.0; 2],
-        weight: Weight::NONE,
-        made: CompKey::Full,
+        made: Made::Nothing,
         passing: Passing::Nobody,
-        held: Held::Fresh,
-        load: KeyLoad::Rests,
     };
 
-    /// How much of the passing Part is put back now, 0..=1: for the tests.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn pass_weight(&self) -> f32 {
-        self.weight.0
+    /// Nobody passing: under FULL, nothing for bank 2 to do.
+    #[inline(always)]
+    pub fn at_rest(&self) -> bool {
+        matches!(self.passing, Passing::Nobody)
+    }
+
+    /// Who passes, and by how much.
+    pub fn passing(&self) -> Passing {
+        self.passing
     }
 }
 
 /// Whether the compressor's block is bank 2's to play: any KEY but FULL,
 /// or a pass still fading out under FULL.
 #[inline(always)]
-pub fn asked(p: &CompParams, comp: &MasterComp) -> bool {
-    p.key != CompKey::Full || comp.key_state.load != KeyLoad::Rests
+pub(crate) fn asked(p: &CompParams, comp: &MasterComp) -> bool {
+    p.key != CompKey::Full || !comp.key_state().at_rest()
+}
+
+/// A Part's share of its pair this block, as the mix plays it: its left
+/// and right gains (pan, LEVEL and expression) at the block's start and
+/// end. `mix_sided` fills it from the gains it mixes with, so the pass
+/// puts back exactly what went in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartShare {
+    /// `(from, to)`.
+    pub left: (f32, f32),
+    pub right: (f32, f32),
+}
+
+impl PartShare {
+    /// The Part's left and right in its pair at sample `i`, from its bus
+    /// (`mid`) and side: each gain at the block's start plus its step
+    /// `i + 1` times, as `mix_sided`'s passes and `glide` sum them.
+    #[inline(always)]
+    pub fn at(&self, i: usize, mid: f32, side: f32) -> (f32, f32) {
+        let n = (i + 1) as f32;
+        let gain = |(from, to): (f32, f32)| from + step_of((from, to), BLOCK_SIZE) * n;
+        (
+            (mid - side) * gain(self.left),
+            (mid + side) * gain(self.right),
+        )
+    }
 }
 
 /// The Parts as the mix has them when the master section runs: what PART
 /// n listens to and puts back.
-pub struct Tap<'a> {
+pub(crate) struct Tap<'a> {
     /// Each Part's bus, after its EQ and before its LEVEL.
-    pub buses: &'a [[f32; BLOCK_SIZE]; MAX_PARTS],
-    pub sides: &'a Sides,
-    pub written: &'a [bool; MAX_PARTS],
-    /// Each Part's eased gains at this block's end.
-    pub gains: &'a [[Ease; MIX_GAINS]; MAX_PARTS],
+    pub(crate) buses: &'a [[f32; BLOCK_SIZE]; MAX_PARTS],
+    pub(crate) sides: &'a Sides,
+    /// Each Part's share of its pair; `None` with no voices this block.
+    pub(crate) shares: &'a [Option<PartShare>; MAX_PARTS],
     /// For each Part's output pair.
-    pub parts: &'a [PartAudio; MAX_PARTS],
+    pub(crate) parts: &'a [PartAudio; MAX_PARTS],
 }
 
 /// The block as bank 1 hands it to `kern::run`.
-pub struct Ask<'a, 'b> {
-    pub comp: &'a mut MasterComp,
-    pub out: &'a mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
-    pub params: &'a CompParams,
-    pub sample_rate: u32,
+pub(crate) struct Ask<'a, 'b> {
+    pub(crate) comp: &'a mut MasterComp,
+    pub(crate) out: &'a mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
+    pub(crate) params: &'a CompParams,
+    pub(crate) sample_rate: u32,
     /// `None` where no Parts are (the bus alone): PART n hears silence.
-    pub tap: Option<&'a Tap<'b>>,
+    pub(crate) tap: Option<&'a Tap<'b>>,
 }
 
-/// What the compressor did to the pairs.
+/// What the master section did to the pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Pairs {
@@ -352,13 +444,44 @@ mod tests {
     /// KEY at rest.
     #[test]
     fn zero_bytes_are_rest() {
-        // SAFETY: every field is an `f32`, a `u32` or a `repr(u8)` enum
-        // whose first variant is 0.
+        // SAFETY: every field is an `f32` or a `repr(u8)` enum whose
+        // first variant is 0 and holds nothing.
         let zero: KeyState = unsafe { core::mem::zeroed() };
         assert_eq!(zero, KeyState::REST);
+        assert!(zero.at_rest());
         // SAFETY: `repr(u8)`, and 0 is `Full`'s tag.
         let p: CompKey = unsafe { core::mem::zeroed() };
         assert_eq!(p, CompKey::Full);
         assert!(size_of::<KeyState>() <= 96);
+    }
+
+    #[test]
+    fn a_weight_is_always_in_range() {
+        for w in [
+            -1.0,
+            -0.0,
+            0.0,
+            0.3,
+            1.0,
+            1.0001,
+            7.0,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            let g = Weight::new(w).get();
+            assert!((0.0..=1.0).contains(&g), "{w} -> {g}");
+        }
+        assert_eq!(Weight::new(f32::NAN), Weight::NONE);
+    }
+
+    #[test]
+    fn idents_are_tokens_and_codes_are_the_table() {
+        for (c, k) in CompKey::ALL.into_iter().enumerate() {
+            assert_eq!(CompKey::from_code(c as u8), Some(k));
+            assert!(!k.ident().contains(' '), "{k:?}");
+        }
+        for c in KEYS as u8..=u8::MAX {
+            assert_eq!(CompKey::from_code(c), None, "{c}");
+        }
     }
 }

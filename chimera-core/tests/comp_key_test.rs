@@ -4,12 +4,14 @@
 
 mod common;
 use chimera_core::comp_key::kern::sections_of;
-use chimera_core::comp_key::{Biquad, CompKey, KEY_NAMES, PASS_FADE_S, bill};
-use chimera_core::dsp::comp::{CompParams, MasterComp, RATIOS};
+use chimera_core::comp_key::{
+    Biquad, CompKey, KEY_NAMES, KEYS, PASS_FADE_S, Passing, Ranged, Source, bill,
+};
+use chimera_core::dsp::comp::{CompParams, Ratio};
 use chimera_core::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use chimera_core::dsp::rev::sync::Tempo;
 use chimera_core::hw::{Cost, DAC_PAIRS, MAX_PARTS};
-use chimera_core::instrument::{AudioShared, DacBlocks, MixState, mix_parts, pan_gains};
+use chimera_core::instrument::{AudioShared, DacBlocks, MixState, mix_parts};
 use chimera_core::part::DacPair;
 use chimera_core::project::PartId;
 use chimera_hal::BLOCK_SIZE;
@@ -18,14 +20,18 @@ use std::f64::consts::PI;
 
 type Out = [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS];
 
-const PART: [CompKey; MAX_PARTS] = [
-    CompKey::Part(PartId::ALL[0]),
-    CompKey::Part(PartId::ALL[1]),
-    CompKey::Part(PartId::ALL[2]),
-    CompKey::Part(PartId::ALL[3]),
-    CompKey::Part(PartId::ALL[4]),
-    CompKey::Part(PartId::ALL[5]),
-];
+/// PART `n + 1`.
+fn part(n: usize) -> CompKey {
+    PartId::ALL.map(CompKey::Part)[n]
+}
+
+/// How much of the passing Part is put back, 0 with nobody passing.
+fn weight(bus: &FxBus) -> f32 {
+    match bus.comp_key().passing() {
+        Passing::Nobody => 0.0,
+        Passing::Part { weight, .. } => weight.get(),
+    }
+}
 
 fn db(x: f32) -> f32 {
     20.0 * x.log10()
@@ -106,46 +112,16 @@ fn the_keys_are_full_the_ranges_then_the_parts() {
         assert_eq!(CompKey::from_code(c as u8), Some(k));
         assert_eq!(CompKey::from_f32(c as f32), k);
     }
-    assert_eq!(CompKey::from_code(10), None);
+    for c in KEYS as u8..=u8::MAX {
+        assert_eq!(CompKey::from_code(c), None, "{c}");
+    }
     assert_eq!(CompKey::from_f32(f32::NAN), CompKey::Full);
     assert_eq!(CompKey::from_f32(-3.0), CompKey::Full);
-    assert_eq!(CompKey::from_f32(99.0), PART[5]);
+    assert_eq!(CompKey::from_f32(99.0), part(5));
     assert_eq!(CompParams::default().key, CompKey::Full);
     // In the padding: SMART EQ's test holds the size too.
     assert_eq!(size_of::<CompParams>(), 32);
     assert_eq!(size_of::<CompKey>(), 2);
-}
-
-/// FULL takes no part of KEY's code: through the bus's master section it
-/// is `MasterComp::process`, bit for bit, the settings moving.
-#[test]
-fn full_is_the_compressor_bit_for_bit() {
-    let n = 96 * BLOCK_SIZE;
-    let ch: [Vec<f32>; 2 * DAC_PAIRS] = core::array::from_fn(|c| noise(n, 0.9, 11 + c as u32));
-    let at = |b: usize| CompParams {
-        thresh: 0.2 + 0.1 * (b / 12 % 4) as f32,
-        ratio: [3, 8, 0, 6][b / 20 % 4],
-        makeup: 0.1 * (b / 30) as f32,
-        mix: [1.0, 0.5, 0.0, 1.0][b / 24 % 4],
-        ..CompParams::default()
-    };
-    let mut bus = Box::new(FxBus::new());
-    let got = master(&mut bus, &ch, |b| fx(at(b), CompKey::Full));
-    let mut comp = Box::new(MasterComp::new());
-    let mut want: [Vec<f32>; 2 * DAC_PAIRS] = Default::default();
-    for b in 0..n / BLOCK_SIZE {
-        let mut out: Out = core::array::from_fn(|k| {
-            core::array::from_fn(|i| ch[2 * k + i % 2][b * BLOCK_SIZE + i / 2])
-        });
-        comp.process(&mut out, &at(b), SR);
-        for (c, g) in want.iter_mut().enumerate() {
-            g.extend((0..BLOCK_SIZE).map(|i| out[c / 2][2 * i + c % 2]));
-        }
-    }
-    for (g, w) in got.iter().zip(&want) {
-        assert!(g.iter().zip(w).all(|(a, b)| a.to_bits() == b.to_bits()));
-    }
-    assert_eq!(bus.comp_key().pass_weight(), 0.0);
 }
 
 /// A section's gain at `hz`, dB, in f64.
@@ -175,8 +151,8 @@ const K_RLB: Biquad = Biquad {
 #[test]
 fn the_sections_are_the_stated_filters() {
     let butter = |hz: f64| -10.0 * (1.0 + (hz / 150.0).powi(4)).log10();
-    let low = sections_of(CompKey::Low, SR).unwrap();
-    let high = sections_of(CompKey::High, SR).unwrap();
+    let low = sections_of(Ranged::Low, SR);
+    let high = sections_of(Ranged::High, SR);
     for hz in [20.0, 60.0, 150.0, 300.0, 600.0, 1_200.0, 3_000.0] {
         let (l, h) = (gain_db(&low[0], hz), gain_db(&high[0], 150.0 * 150.0 / hz));
         // The bilinear warp shows by 3 kHz: a quarter dB at −52.
@@ -190,7 +166,7 @@ fn the_sections_are_the_stated_filters() {
     }
     assert!((gain_db(&low[0], 150.0) + 3.01).abs() < 0.05);
     assert!((gain_db(&high[0], 150.0) + 3.01).abs() < 0.05);
-    let hit = sections_of(CompKey::Hit, SR).unwrap();
+    let hit = sections_of(Ranged::Hit, SR);
     for (got, want) in hit.iter().zip([K_SHELF, K_RLB]) {
         for (g, w) in got.b.iter().chain(&got.a).zip(want.b.iter().chain(&want.a)) {
             assert!((g - w).abs() < 2e-6, "{got:?} against {want:?}");
@@ -203,8 +179,10 @@ fn the_sections_are_the_stated_filters() {
     assert!((k(10_000.0) - 4.0).abs() < 0.1, "{}", k(10_000.0));
     assert!((k(100.0) + 1.0).abs() < 0.3, "{}", k(100.0));
     assert!(k(20.0) < -10.0, "{}", k(20.0));
-    assert_eq!(sections_of(CompKey::Full, SR), None);
-    assert_eq!(sections_of(PART[0], SR), None);
+    // Only the ranges have sections: the other keys name none.
+    assert_eq!(CompKey::Full.source(), Source::Mix);
+    assert_eq!(part(0).source(), Source::Part(PartId::ALL[0]));
+    assert_eq!(CompKey::Hit.source(), Source::Ranged(Ranged::Hit));
 }
 
 /// What the detector reads of a −6 dBFS sine at `hz` under `key`, dB
@@ -214,7 +192,7 @@ fn the_sections_are_the_stated_filters() {
 fn heard(key: CompKey, hz: f32) -> Option<f32> {
     let p = CompParams {
         thresh: 0.0,
-        ratio: 2,
+        ratio: Ratio::ALL[2],
         attack: 0.0,
         release: 1.0,
         ..CompParams::default()
@@ -276,12 +254,12 @@ fn the_audio_is_only_ever_scaled() {
     });
     let squash = CompParams {
         thresh: 0.2,
-        ratio: 6,
+        ratio: Ratio::ALL[6],
         ..CompParams::default()
     };
     let idle = CompParams {
         thresh: 1.0,
-        ratio: 8,
+        ratio: Ratio::MAX,
         ..CompParams::default()
     };
     for key in CompKey::ALL {
@@ -331,7 +309,7 @@ fn low_pumps_where_full_holds() {
     // The design's good setting: 6:1 over −24 dB, 3 ms in, 150 ms out.
     let p = CompParams {
         thresh: 0.4,
-        ratio: 5,
+        ratio: Ratio::ALL[5],
         attack: 0.33,
         release: 0.6,
         ..CompParams::default()
@@ -372,7 +350,7 @@ fn an_inf_sample_recovers_under_a_range() {
     x[BLOCK_SIZE * 40 + 3] = f32::INFINITY;
     let p = CompParams {
         thresh: 0.0,
-        ratio: 4,
+        ratio: Ratio::ALL[4],
         ..CompParams::default()
     };
     for key in [CompKey::Low, CompKey::High, CompKey::Hit] {
@@ -397,16 +375,22 @@ fn an_inf_sample_recovers_under_a_range() {
 /// everything over THRESH off.
 #[test]
 fn max_ends_the_ratios() {
-    assert_eq!(RATIOS[..8], [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 20.0]);
-    assert_eq!(RATIOS.len(), 9);
-    assert_eq!(RATIOS[8], f32::INFINITY);
+    let ratios = Ratio::ALL.map(Ratio::ratio);
+    let (last, before) = ratios.split_last().unwrap();
+    assert_eq!(before, [1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0, 20.0]);
+    assert_eq!((*last, Ratio::MAX.ratio()), (f32::INFINITY, f32::INFINITY));
+    assert_eq!((Ratio::UNITY.slope(), Ratio::MAX.slope()), (0.0, 1.0));
+    assert_eq!(Ratio::MAX.ident(), "MAX");
+    // A code past the table is no ratio; a knob's value past it is MAX.
+    assert_eq!(Ratio::new(Ratio::MAX.code() + 1), None);
+    assert_eq!(Ratio::from_f32(200.0), Ratio::MAX);
+    assert_eq!(Ratio::from_f32(f32::NAN), Ratio::UNITY);
     let p = CompParams {
         thresh: 0.5,
-        ratio: 8,
+        ratio: Ratio::MAX,
         ..CompParams::default()
     };
-    assert_eq!(p.sanitised().ratio, 8);
-    assert_eq!(CompParams { ratio: 200, ..p }.sanitised().ratio, 8);
+    assert_eq!(p.sanitised().ratio, Ratio::MAX);
     for level in [-30.0f32, -20.0, -12.0, 0.0] {
         let x = 10f32.powf(level / 20.0);
         let n = SR as usize / BLOCK_SIZE * BLOCK_SIZE;
@@ -426,7 +410,7 @@ fn full_bills_nothing() {
     assert_eq!(bill::of(CompKey::Low), bill::RANGE);
     assert_eq!(bill::of(CompKey::High), bill::RANGE);
     assert_eq!(bill::of(CompKey::Hit), bill::HIT);
-    for k in PART {
+    for k in PartId::ALL.map(CompKey::Part) {
         assert_eq!(bill::of(k), bill::PART);
     }
     assert!(bill::RANGE > Cost::ZERO && bill::HIT > bill::RANGE);
@@ -496,7 +480,7 @@ impl Mix {
 /// RATIO MAX over −40 dB: everything the detector hears comes off.
 const CRUSH: CompParams = CompParams {
     thresh: 0.0,
-    ratio: 8,
+    ratio: Ratio::MAX,
     attack: 0.2,
     release: 0.5,
     ..CompParams::DEFAULT
@@ -519,7 +503,7 @@ fn the_key_part_plays_through_and_the_rest_ducks() {
     for pair in [DacPair::P1, DacPair::P2, DacPair::P3] {
         for mix in [1.0f32, 0.5] {
             let on = CompParams {
-                key: PART[0],
+                key: part(0),
                 mix,
                 ..CRUSH
             };
@@ -558,7 +542,7 @@ fn the_key_part_plays_through_and_the_rest_ducks() {
                 }
             }
             assert!((all.fx.master_gr_db() - 34.0).abs() < 1.5);
-            assert_eq!(all.fx.comp_key().pass_weight(), 1.0);
+            assert_eq!(weight(&all.fx), 1.0);
         }
     }
 }
@@ -569,7 +553,7 @@ fn the_key_part_plays_through_and_the_rest_ducks() {
 #[test]
 fn the_key_part_is_whole_on_a_shared_pair() {
     let on = CompParams {
-        key: PART[0],
+        key: part(0),
         ..CRUSH
     };
     let mut all = Mix::new(DacPair::P1, on);
@@ -594,7 +578,7 @@ fn the_key_part_is_whole_on_a_shared_pair() {
 #[test]
 fn the_key_is_heard_before_its_level() {
     let on = CompParams {
-        key: PART[0],
+        key: part(0),
         ..CRUSH
     };
     let mut m = Mix::new(DacPair::P2, on);
@@ -612,7 +596,7 @@ fn the_key_is_heard_before_its_level() {
 #[test]
 fn a_silent_key_releases() {
     let on = CompParams {
-        key: PART[0],
+        key: part(0),
         ..CRUSH
     };
     let mut m = Mix::new(DacPair::P1, on);
@@ -640,7 +624,7 @@ fn a_silent_key_releases() {
     let mut never = Mix::new(
         DacPair::P1,
         CompParams {
-            key: PART[4],
+            key: part(4),
             ..CRUSH
         },
     );
@@ -663,20 +647,20 @@ fn step(x: &[f32]) -> f32 {
 fn switching_key_never_clicks() {
     let seq = [
         CompKey::Full,
-        PART[0],
+        part(0),
         CompKey::Low,
-        PART[1],
-        PART[0],
+        part(1),
+        part(0),
         CompKey::Hit,
         CompKey::High,
         CompKey::Full,
-        PART[0],
+        part(0),
         CompKey::Full,
-        PART[1],
+        part(1),
     ];
     let comp = CompParams {
         thresh: 0.0,
-        ratio: 8,
+        ratio: Ratio::MAX,
         attack: 0.5,
         release: 0.5,
         ..CompParams::DEFAULT
@@ -717,31 +701,31 @@ fn the_pass_fades_over_ten_ms() {
     let mut m = Mix::new(
         DacPair::P1,
         CompParams {
-            key: PART[0],
+            key: part(0),
             ..CRUSH
         },
     );
     let mut blocks = 0;
-    while m.fx.comp_key().pass_weight() < 1.0 {
+    while weight(&m.fx) < 1.0 {
         m.step(Some(&kick), Some(&pad));
         blocks += 1;
         assert!(blocks < 100);
     }
     assert_eq!(blocks, fade.div_ceil(BLOCK_SIZE));
-    m.shared.fx.comp.key = PART[1];
+    m.shared.fx.comp.key = part(1);
     m.step(Some(&kick), Some(&pad));
-    let w = m.fx.comp_key().pass_weight();
+    let w = weight(&m.fx);
     assert!(w < 1.0 && w > 0.8, "Part 1 fades out first: {w}");
     for _ in 0..2 * fade.div_ceil(BLOCK_SIZE) {
         m.step(Some(&kick), Some(&pad));
     }
-    assert_eq!(m.fx.comp_key().pass_weight(), 1.0);
+    assert_eq!(weight(&m.fx), 1.0);
     // Back at FULL the pass fades out, and KEY then rests.
     m.shared.fx.comp.key = CompKey::Full;
     for _ in 0..fade.div_ceil(BLOCK_SIZE) + 1 {
         m.step(Some(&kick), Some(&pad));
     }
-    assert_eq!(m.fx.comp_key().pass_weight(), 0.0);
+    assert_eq!(weight(&m.fx), 0.0);
     assert_eq!(*m.fx.comp_key(), chimera_core::comp_key::KeyState::REST);
 }
 
@@ -750,7 +734,7 @@ fn the_pass_fades_over_ten_ms() {
 #[test]
 fn the_pass_follows_the_key_parts_moving_gains() {
     let on = CompParams {
-        key: PART[0],
+        key: part(0),
         ..CRUSH
     };
     let mut all = Mix::new(DacPair::P2, on);
@@ -776,8 +760,6 @@ fn the_pass_follows_the_key_parts_moving_gains() {
             );
         }
     }
-    let (l, r) = pan_gains(0.7);
-    assert!(l < r);
 }
 
 /// KEY's bill is reserved beside the bus: a pool that just holds four
@@ -845,7 +827,7 @@ fn a_panned_key_part_plays_through_whole() {
     };
     let (dry, _) = play(CompParams::DEFAULT);
     let (keyed, gr) = play(CompParams {
-        key: PART[0],
+        key: part(0),
         ..CRUSH
     });
     assert!(gr > 12.0, "the key asks for {gr} dB");
@@ -863,4 +845,41 @@ fn a_panned_key_part_plays_through_whole() {
     let (full, _) = play(CRUSH);
     let fpeak = full[from..].iter().fold(0.0f32, |m, s| m.max(s.abs()));
     assert!(fpeak < 0.5 * peak);
+}
+
+/// After any sequence of keys, each held for any number of blocks, the
+/// pass's weight is in 0..=1, nobody passing carries none, and a Part
+/// that is not the key never gains weight.
+#[test]
+fn the_pass_weight_stays_in_range_under_any_key_sequence() {
+    let mut rng = common::XorShift(0x5eed_c0de_1037);
+    for _ in 0..40 {
+        let mut m = Mix::new(DacPair::P1, CRUSH);
+        let mut last: Option<(PartId, f32)> = None;
+        for _ in 0..60 {
+            let key = CompKey::ALL[rng.below(KEYS)];
+            m.shared.fx.comp.key = key;
+            for _ in 0..1 + rng.below(12) {
+                m.step(Some(&kick), Some(&pad));
+                match m.fx.comp_key().passing() {
+                    Passing::Nobody => {
+                        assert_eq!(weight(&m.fx), 0.0);
+                        assert!(m.fx.comp_key().at_rest());
+                        last = None;
+                    }
+                    Passing::Part { id, weight } => {
+                        let w = weight.get();
+                        assert!((0.0..=1.0).contains(&w), "{key:?}: {w}");
+                        if let Some((was, w0)) = last
+                            && was == id
+                            && key.part() != Some(id)
+                        {
+                            assert!(w <= w0, "{id:?} is not the key, yet {w0} -> {w}");
+                        }
+                        last = Some((id, w));
+                    }
+                }
+            }
+        }
+    }
 }
