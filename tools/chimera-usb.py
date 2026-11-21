@@ -340,15 +340,23 @@ class ErrLine(bytes):
     before = b""
 
 
-def answer(conn: Conn, first=SILENCE_S) -> tuple:
+LISTS = ("ls",)  # answers whose rows are `<name> <size>`: a file may be named OK or ERR
+ROW = re.compile(rb"\S+ [0-9]+")
+
+
+def answer(conn: Conn, first=SILENCE_S, listing=False) -> tuple:
     """(Status.OK, body) or (Status.ERR, the ERR line), the first byte
-    waited for up to `first` s. An `OK <words>` line ends the body too.
+    waited for up to `first` s. An `OK <words>` line ends the body too;
+    in a `listing`, a `<name> <size>` row never does, whatever its name.
 
     A `SHOT` header line stays in the body, followed by exactly its length
     of pixel bytes. Raises NoAnswer, Vanished or BadShot."""
     rd, body = Reader(conn, first), b""
     while True:
         ln = rd.line()
+        if listing and ROW.fullmatch(ln):
+            body += ln + b"\n"
+            continue
         if ln == b"OK":
             return Status.OK, body
         # `OK queued`, `ed since`'s `OK <gen> [more]`: the line is the news.
@@ -392,7 +400,8 @@ def request(conn: Conn, line) -> tuple:
 
     def ask():
         send(conn, line)
-        return answer(conn, first_wait(text.lower()))
+        word = (text.lower().split() or [""])[0]
+        return answer(conn, first_wait(text.lower()), word in LISTS)
 
     return retry_busy(ask)
 

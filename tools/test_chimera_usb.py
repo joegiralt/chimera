@@ -321,6 +321,17 @@ class Tool(unittest.TestCase):
             self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"),))
             self.assertNotEqual(tool.target({"CHIMERA_SYSFS": root}), tool.Tty("tty", "/dev/ttyACM0"))
 
+    def test_a_listing_row_named_ok_or_err_is_a_row(self):
+        # #1065's review: `ls` rows are `<name> <size>`; a file named OK or
+        # ERR is a row, and only a bare OK (or ERR <words>) ends the listing.
+        rows = b"OK 200\nERR 10\nP0000001.A 1234\n"
+        with FakeUnit({b"ls\n": rows + b"OK\n", b"ls sounds\n": rows + b"ERR ls: NO CARD\n"}) as u:
+            ok = run_tool(["ls"], u.target)
+            err = run_tool(["ls", "sounds"], u.target)
+        self.assertEqual((ok.returncode, ok.stdout), (0, rows), ok.stderr)
+        self.assertEqual((err.returncode, err.stdout), (1, rows))
+        self.assertIn(b"ERR ls: NO CARD", err.stderr)
+
     def test_a_card_stopped_short_prints_what_it_measured(self):
         with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:
             r = run_tool(["card", "seed=7"], u.target)
