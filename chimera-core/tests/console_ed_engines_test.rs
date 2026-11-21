@@ -387,11 +387,17 @@ fn every_param_line_says_its_specs_kind() {
     use chimera_core::console::ed_schema_pages;
     use chimera_engine::block::ParamKind;
     let mut f = Fake::new();
-    let mut texts: Vec<String> = (0..ed_schema_pages(Schema::Mixer))
-        .map(|n| ask(&mut f, &format!("ed describe MIXER {n}\n")))
-        .collect();
+    let mut schemas = vec![Schema::Mixer, Schema::Settings, Schema::Map, Schema::Orbit];
     for e in EngineType::ALL {
-        texts.extend(page_texts(&mut f, e));
+        schemas.extend([Schema::Engine(e), Schema::Matrix(e)]);
+    }
+    let mut texts = Vec::new();
+    for sc in schemas {
+        let mut t = String::new();
+        sc.write(&mut t).unwrap();
+        texts.extend(
+            (0..ed_schema_pages(sc)).map(|n| ask(&mut f, &format!("ed describe {t} {n}\n"))),
+        );
     }
     let mut stepped = 0;
     for p in params(&texts) {
@@ -406,6 +412,7 @@ fn every_param_line_says_its_specs_kind() {
         stepped += usize::from(p[3] == "stepped");
     }
     assert!(stepped > 0);
+    println!("{} param lines, {stepped} stepped", params(&texts).len());
 }
 
 #[test]

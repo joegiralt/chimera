@@ -739,9 +739,10 @@ stored p v =
     toFloat (round (clamp p.min p.max v * 10000)) / 10000
 
 
-{-| One wheel notch `by` from knob position `from`: a stepped param to its
-next step that way, never past it (from an off-step top, the step under
-it); a continuous one by `wheel` of its travel.
+{-| One wheel notch `by` from knob position `from`: a stepped param a
+step from the step it is on (the unit's norm, printed to 7 decimals, is
+rounded to it first, so a notch never lands back where it was), within
+range; a continuous one by `wheel` of its travel.
 -}
 nudged : Param -> { from : Float, by : Int, wheel : Float } -> Float
 nudged p n =
@@ -752,16 +753,7 @@ nudged p n =
     in
     case ( p.kind, p.step > 0 ) of
         ( Stepped, True ) ->
-            let
-                g : Float
-                g =
-                    valueAt p (clamp 0 1 n.from) / p.step
-            in
-            if n.by > 0 then
-                stored p (toFloat (floor (g + 1.0e-6) + n.by) * p.step)
-
-            else
-                stored p (toFloat (ceiling (g - 1.0e-6) + n.by) * p.step)
+            stored p (toFloat (roundAway (valueAt p (clamp 0 1 n.from) / p.step) + n.by) * p.step)
 
         ( Stepped, False ) ->
             notch ()

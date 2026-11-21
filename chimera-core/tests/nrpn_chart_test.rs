@@ -425,3 +425,28 @@ fn write_nrpn_fixture() {
     s.push('\n');
     std::fs::write(FIXTURE, s).unwrap();
 }
+
+/// A stepped or choice spec's bounds sit on its steps (`min / step` and
+/// `max / step` whole): `quantize` counts steps from zero, so a bound off
+/// them would store values the editor's snap (which clamps to the range)
+/// can't match (ADR 0306).
+#[test]
+fn stepped_bounds_sit_on_their_steps() {
+    let on = |x: f32, step: f32| ((x / step) - (x / step).round()).abs() < 1e-4;
+    for b in BlockRef::ALL {
+        for s in b
+            .specs()
+            .iter()
+            .filter(|s| matches!(s.kind, ParamKind::Stepped | ParamKind::Enum))
+        {
+            assert!(
+                on(s.min, s.step) && on(s.max, s.step),
+                "{b:?} {}: {}..{} by {}",
+                s.ident,
+                s.min,
+                s.max,
+                s.step
+            );
+        }
+    }
+}
