@@ -36,7 +36,7 @@ fn closed_no_kit_is_written_read_or_seen() {
     st.mount().unwrap();
     let stamp = BuildStamp::new("0.4.0", "02e440e2", false);
     let name = SoundName::new("CLOSED").unwrap();
-    let id = save_library_part(&mut Card::new(), &mut st, &mut p, P1, name, &stamp)
+    let id = save_library_part(&mut Card::new(), &mut st, &p, P1, name, &stamp)
         .out
         .unwrap();
     let mut page = Box::new(LibPage::EMPTY);

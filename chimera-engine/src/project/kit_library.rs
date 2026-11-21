@@ -7,7 +7,8 @@ mod kern;
 use chimera_hal::store::StoreError;
 
 use crate::dsp::drum::types::Kit;
-use crate::storage::{FileError, RecordTag, RecordWriter};
+use crate::preset::Sound;
+use crate::storage::{Event, FileError, RecordWriter};
 
 use super::{PartId, Project};
 
@@ -24,31 +25,36 @@ pub enum KitMark {
 
 /// A Part's kit as its status and its replace's witness read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KitSeen {
-    /// Not a DRUM Part's (its kit is out of play), or bank 2 closed.
-    Unread,
-    /// As marked, at this CRC.
-    Kept(u32),
-    /// Edited since its mark, to this CRC.
-    Edited(u32),
+pub struct KitSeen {
+    edited: bool,
+    witness: u32,
 }
 
 impl KitSeen {
-    #[optimize(size)]
-    pub fn edited(self) -> bool {
-        matches!(self, KitSeen::Edited(_))
+    /// Not a DRUM Part's (its kit is out of play), or bank 2 closed.
+    pub const UNREAD: KitSeen = KitSeen {
+        edited: false,
+        witness: 0,
+    };
+
+    /// A DRUM Part's kit at `crc`, `edited` since its mark or not: a
+    /// witness that moves with either.
+    #[inline(always)]
+    pub(super) fn new(crc: u32, edited: bool) -> KitSeen {
+        KitSeen {
+            edited,
+            witness: if edited { !crc } else { crc },
+        }
     }
 
-    /// For a witness: which, then the CRC.
-    #[optimize(size)]
-    pub(super) fn bytes(self) -> [u8; 5] {
-        let (k, crc) = match self {
-            KitSeen::Unread => (0, 0),
-            KitSeen::Kept(c) => (1, c),
-            KitSeen::Edited(c) => (2, c),
-        };
-        let [a, b, c, d] = crc.to_le_bytes();
-        [k, a, b, c, d]
+    #[inline(always)]
+    pub fn edited(self) -> bool {
+        self.edited
+    }
+
+    #[inline(always)]
+    pub(super) fn witness(self) -> u32 {
+        self.witness
     }
 }
 
@@ -68,10 +74,11 @@ const MAGIC: Magic = Magic(0xB2E0_0305);
 #[repr(C)]
 pub struct KitDoor {
     magic: Magic,
-    put: fn(&Kit, &mut RecordWriter<'_>) -> Result<(), StoreError>,
-    read: fn(RecordTag, &[u8], Option<&mut Kit>) -> Result<(), FileError>,
+    put: fn(&Sound, &Kit, &mut RecordWriter<'_>) -> Result<(), StoreError>,
+    read: fn(&Event<'_>, &mut Kit) -> Result<(), FileError>,
     land: fn(&mut Project, PartId),
     settle: fn(&mut Project, PartId),
+    saved: fn(&mut Project, PartId),
     seen: fn(&Project, PartId) -> KitSeen,
 }
 
@@ -100,6 +107,7 @@ impl KitDoor {
         read: kern::read,
         land: kern::land,
         settle: kern::settle,
+        saved: kern::saved,
         seen: kern::seen,
     };
 
@@ -124,20 +132,21 @@ impl KitDoor {
         }
     }
 
-    /// `kit`'s records after a library Sound's: `Kit`, then a `KitSound`
-    /// a pad, as a project's Part writes them.
+    /// After a library Sound `s`'s records, if it is DRUM's: `kit`'s, a
+    /// `Kit`, then a `KitSound` a pad, as a project's Part writes them.
     #[inline(always)]
     #[optimize(size)]
-    pub(super) fn put(kit: &Kit, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
-        Self::with(|d| (d.put)(kit, w)).unwrap_or(Ok(()))
+    pub(super) fn put(s: &Sound, kit: &Kit, w: &mut RecordWriter<'_>) -> Result<(), StoreError> {
+        Self::with(|d| (d.put)(s, kit, w)).unwrap_or(Ok(()))
     }
 
-    /// A library file's `Kit` or `KitSound` record: checked, and onto
-    /// `kit` if given. Any other record is none of its business.
+    /// One event of a library file's pass 2, onto the scratch `kit`: its
+    /// header resets it, a `Kit` or `KitSound` record lands on it or
+    /// refuses the file. Anything else is none of its business.
     #[inline(always)]
     #[optimize(size)]
-    pub(super) fn read(tag: RecordTag, p: &[u8], kit: Option<&mut Kit>) -> Result<(), FileError> {
-        Self::with(|d| (d.read)(tag, p, kit)).unwrap_or(Ok(()))
+    pub(super) fn read(e: &Event<'_>, kit: &mut Kit) -> Result<(), FileError> {
+        Self::with(|d| (d.read)(e, kit)).unwrap_or(Ok(()))
     }
 
     /// The scratch kit onto Part `id`, marked as loaded, if the Sound it
@@ -148,18 +157,25 @@ impl KitDoor {
         Self::with(|d| (d.land)(p, id));
     }
 
-    /// Part `id`'s kit is the one loaded or saved: its mark is the kit
-    /// as it is now.
+    /// Part `id`'s kit is the one a project load read: its mark.
     #[inline(always)]
     #[optimize(size)]
     pub(super) fn settle(p: &mut Project, id: PartId) {
         Self::with(|d| (d.settle)(p, id));
     }
 
-    /// Part `id`'s kit against its mark.
+    /// Part `id`'s library save held its kit, if it plays DRUM: its mark.
     #[inline(always)]
     #[optimize(size)]
+    pub(super) fn saved(p: &mut Project, id: PartId) {
+        Self::with(|d| (d.saved)(p, id));
+    }
+
+    /// Part `id`'s kit against its mark. Out of line: the status and the
+    /// witness share the one call.
+    #[inline(never)]
+    #[optimize(size)]
     pub(super) fn seen(p: &Project, id: PartId) -> KitSeen {
-        Self::with(|d| (d.seen)(p, id)).unwrap_or(KitSeen::Unread)
+        Self::with(|d| (d.seen)(p, id)).unwrap_or(KitSeen::UNREAD)
     }
 }

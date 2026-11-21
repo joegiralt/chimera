@@ -85,6 +85,8 @@ fn save_part(st: &mut MemStore, p: &mut Project, from: PartId) -> LibFile {
     let id = save_library_part(&mut Card::new(), st, p, from, name, &ST)
         .out
         .expect("saved");
+    // As the UI does on a save.
+    p.library_saved(from);
     listed(st, id.into())
 }
 

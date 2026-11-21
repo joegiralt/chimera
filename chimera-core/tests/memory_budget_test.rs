@@ -416,7 +416,8 @@ fn kits_are_compact_and_outside_the_parts() {
     assert_eq!(size_of::<Kit>(), 12 * 80 + 4);
     // A kit, a selected pad, two `PadSet`s of lights, PAD FOLLOW's hold
     // (ADR 0268) and the kit's mark (ADR 0305, a tag and a CRC) a Part,
-    // and a library load's scratch kit (ADR 0305), the whole padded to 4.
+    // and a library load's scratch kit after the Parts' (ADR 0305), the
+    // whole padded to 4.
     assert_eq!(
         size_of::<Kits>(),
         hw::MAX_PARTS * (12 * 80 + 4 + 1 + 4 + 2 + 8) + (12 * 80 + 4) + 2

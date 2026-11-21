@@ -135,7 +135,7 @@ impl Target for PartSource {
             }
             Origin::Init(e) => c.update(&[1, e.disk_code()]),
         }
-        c.update(&KitDoor::seen(p, self.part).bytes());
+        c.update(&KitDoor::seen(p, self.part).witness().to_le_bytes());
         c.finish()
     }
 }

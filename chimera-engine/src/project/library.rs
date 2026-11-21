@@ -23,7 +23,7 @@ use crate::preset::Sound;
 use crate::storage::{
     BuildStamp, Card, CardFault, Check, DecodeInPlace, Event, FileError, FileKind, Generation,
     HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId, LibKind, LibraryDecoder, LoadError, NextId, Note, Peek,
-    ReadTag, SaveError, Side, SideState, SoundCheck, UserId, check_file, encode_library_part,
+    SaveError, Side, SideState, SoundCheck, UserId, check_file, encode_library_part,
     held_for_file_len, lib_id, library_file, load_ab_in_place, next_user_id, peek_library, save_ab,
     sound_crc, source_file, user_file,
 };
@@ -113,23 +113,19 @@ fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, Lib
 
 /// Part `part`'s Sound as `save_library_sound` saves it, with the map
 /// record its closed door kept (#862) and, for a DRUM Part, its kit
-/// (ADR 0305): saved, the kit is the Part's mark.
+/// (ADR 0305). Saved, `Project::library_saved` tells the Part.
 #[optimize(size)]
 pub fn save_library_part<S: Store>(
     card: &mut Card,
     store: &mut S,
-    p: &mut Project,
+    p: &Project,
     part: PartId,
     name: SoundName,
     stamp: &BuildStamp,
 ) -> CardOut<Result<UserId, LibNote>> {
     let s = &p.part(part).sound;
-    let kit = (s.engine() == EngineType::Drum).then(|| p.kits.kit(part));
-    let out = save_library(card, store, s, &p.kept[part.index()], kit, name, stamp);
-    if kit.is_some() && out.out.is_ok() {
-        KitDoor::settle(p, part);
-    }
-    out
+    let kit = Some(p.kits.kit(part));
+    save_library(card, store, s, &p.kept[part.index()], kit, name, stamp)
 }
 
 /// `s` as a new library file named `name`: the directories made first, the
@@ -163,7 +159,7 @@ fn save_library<S: Store>(
         let file = user_file(id);
         let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
             encode_library_part(s, kept, stamp, w)?;
-            kit.map_or(Ok(()), |k| KitDoor::put(k, w))
+            kit.map_or(Ok(()), |k| KitDoor::put(s, k, w))
         })
         .map_err(|e| match e {
             SaveError::Store(e) => LibNote::Store(e),
@@ -767,23 +763,12 @@ pub fn peek_note<S: Store>(
 }
 
 /// A library file as a Part's load reads it: the Sound onto the pool's
-/// scratch (`LibraryDecoder`), a DRUM Part's kit records onto the scratch
-/// kit (ADR 0305).
+/// scratch (`LibraryDecoder`), and in pass 2 a DRUM Part's kit onto the
+/// scratch kit (ADR 0305), which only `adopt` reads: a kit record that
+/// fails there fails the read, as a Sound's record does.
 struct PartDecoder<'a> {
     sound: LibraryDecoder<'a>,
     kit: &'a mut Kit,
-}
-
-impl PartDecoder<'_> {
-    /// A `Kit` or `KitSound` record: checked, and onto `kit` if given.
-    #[inline(always)]
-    #[optimize(size)]
-    fn kit_record(e: &Event<'_>, kit: Option<&mut Kit>) -> Result<(), FileError> {
-        match *e {
-            Event::Record(ReadTag::Known(t), p) => KitDoor::read(t, p, kit),
-            _ => Ok(()),
-        }
-    }
 }
 
 impl Check for PartDecoder<'_> {
@@ -791,7 +776,6 @@ impl Check for PartDecoder<'_> {
 
     #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        Self::kit_record(&e, None)?;
         self.sound.event(e)
     }
 
@@ -804,7 +788,7 @@ impl Check for PartDecoder<'_> {
 impl DecodeInPlace for PartDecoder<'_> {
     #[optimize(size)]
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        Self::kit_record(&e, Some(&mut *self.kit))?;
+        KitDoor::read(&e, self.kit)?;
         self.sound.apply(e)
     }
 
@@ -831,13 +815,9 @@ pub fn read_library_sound<S: Store>(
         }
         let ab = library_file(file.id);
         let (scratch, kept) = p.pool.scratch_kept();
-        // A file with no kit (a Sound's own save, or one from before
-        // ADR 0305) leaves the default.
-        let kit = p.kits.scratch_mut();
-        kit.reset();
         let mut d = PartDecoder {
             sound: LibraryDecoder::new(scratch, kept),
-            kit,
+            kit: p.kits.scratch_mut(),
         };
         match load_ab_in_place(s, r, ab, &mut d) {
             // The newer side failing its CRC leaves the older: not the row.

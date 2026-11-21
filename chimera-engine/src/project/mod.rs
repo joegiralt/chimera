@@ -352,12 +352,14 @@ impl Project {
         self.perf.parts[p.index()].expression = v;
     }
 
-    /// Part `p`'s Sound saved as it sounds (ADR 0263): its shifts are its
-    /// own values now, so CC 64 is the Sound as saved.
+    /// Part `p`'s Sound saved to the library as it sounds: its shifts are
+    /// its own values now, so CC 64 is the Sound as saved (ADR 0263), and
+    /// a DRUM Part's kit, which the file holds, is its mark (ADR 0305).
     #[optimize(size)]
-    pub fn reset_shift(&mut self, p: PartId) {
+    pub fn library_saved(&mut self, p: PartId) {
         self.bump();
         self.perf.parts[p.index()].env = [0; 2];
+        KitDoor::saved(self, p);
     }
 
     /// Part `p`'s CC 73 (`which` 0) or 72 (1) offset applied (ADR 0263).

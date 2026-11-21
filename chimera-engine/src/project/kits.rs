@@ -21,17 +21,21 @@ use super::kit_library::KitMark;
 /// either.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kits {
-    kits: [Kit; MAX_PARTS],
+    /// Each Part's, then a library load's scratch kit (`SCRATCH`): the
+    /// kit of the library Sound in the pool's scratch, which only `adopt`
+    /// reads. In the one array, so the one loop builds it; no `PartId`
+    /// reaches it.
+    kits: [Kit; MAX_PARTS + 1],
     selected: [PadId; MAX_PARTS],
     lights: [PadLights; MAX_PARTS],
     hold: [FollowHold; MAX_PARTS],
     marks: [KitMark; MAX_PARTS],
-    /// The kit of the library Sound in the pool's scratch: only `adopt`
-    /// reads it.
-    scratch: Kit,
 }
 
-crate::in_place::field_list!(Kits => Kits { kits, selected, lights, hold, marks, scratch });
+/// The scratch kit's place in `Kits::kits`.
+const SCRATCH: usize = MAX_PARTS;
+
+crate::in_place::field_list!(Kits => Kits { kits, selected, lights, hold, marks });
 
 /// A Part's lit pads: those its voices sound, and those struck since the
 /// UI's last frame, so a hit too short to see sounding still flashes.
@@ -85,12 +89,11 @@ impl FollowHold {
 
 impl Kits {
     pub const DEFAULT: Kits = Kits {
-        kits: [Kit::DEFAULT; MAX_PARTS],
+        kits: [Kit::DEFAULT; MAX_PARTS + 1],
         selected: [PadId::ALL[0]; MAX_PARTS],
         lights: [PadLights::DARK; MAX_PARTS],
         hold: [FollowHold::FREE; MAX_PARTS],
         marks: [KitMark::Init; MAX_PARTS],
-        scratch: Kit::DEFAULT,
     };
 
     /// Every kit `Kit::DEFAULT`, built a kit at a time: no whole `Kits`
@@ -99,18 +102,18 @@ impl Kits {
     pub fn init_in_place(slot: &mut MaybeUninit<Kits>) -> &mut Kits {
         let p = slot.as_mut_ptr();
         // SAFETY: `p` is valid and unaliased; kit `i` is inside `kits`;
-        // every kit, `selected`, `lights`, `hold`, `marks` and `scratch`
-        // (`field_list!` above) are written once before `assume_init_mut`.
+        // every kit, `selected`, `lights`, `hold` and `marks`
+        // (`field_list!` above) are written once before
+        // `assume_init_mut`.
         unsafe {
             let kits = addr_of_mut!((*p).kits).cast::<Kit>();
-            for i in 0..MAX_PARTS {
+            for i in 0..=SCRATCH {
                 kits.add(i).write(Kit::init());
             }
             addr_of_mut!((*p).selected).write([PadId::ALL[0]; MAX_PARTS]);
             addr_of_mut!((*p).lights).write([PadLights::DARK; MAX_PARTS]);
             addr_of_mut!((*p).hold).write([FollowHold::FREE; MAX_PARTS]);
             addr_of_mut!((*p).marks).write([KitMark::Init; MAX_PARTS]);
-            addr_of_mut!((*p).scratch).write(Kit::init());
             slot.assume_init_mut()
         }
     }
@@ -133,12 +136,12 @@ impl Kits {
     }
 
     /// What Part `p`'s kit is weighed against (ADR 0305).
-    #[optimize(size)]
+    #[inline(always)]
     pub(in crate::project) fn mark(&self, p: PartId) -> KitMark {
         self.marks[p.index()]
     }
 
-    #[optimize(size)]
+    #[inline(always)]
     pub(in crate::project) fn set_mark(&mut self, p: PartId, m: KitMark) {
         self.marks[p.index()] = m;
     }
@@ -146,13 +149,13 @@ impl Kits {
     /// A library load's scratch kit, for the load to write.
     #[optimize(size)]
     pub(in crate::project) fn scratch_mut(&mut self) -> &mut Kit {
-        &mut self.scratch
+        &mut self.kits[SCRATCH]
     }
 
     /// The scratch kit into Part `p`'s: a library load's adopt.
-    #[optimize(size)]
+    #[inline(always)]
     pub(in crate::project) fn land(&mut self, p: PartId) {
-        self.kits[p.index()] = self.scratch;
+        self.kits[p.index()] = self.kits[SCRATCH];
     }
 
     /// Part `p`'s selected pad.
@@ -210,8 +213,8 @@ impl Kits {
         self.hold[p.index()] = FollowHold::AFTER_EDIT;
     }
 
-    /// Every kit back to `Kit::DEFAULT` and marked so, pad 1 selected,
-    /// none lit: NEW.
+    /// Every kit (the scratch too) back to `Kit::DEFAULT` and marked so,
+    /// pad 1 selected, none lit: NEW.
     #[optimize(size)]
     pub fn reset(&mut self) {
         self.kits.iter_mut().for_each(Kit::reset);

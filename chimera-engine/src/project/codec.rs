@@ -87,6 +87,10 @@ fn old_sends(payload: &[u8]) -> Option<[SendLevel; FX_SENDS]> {
 /// A `Slot` or `Part` payload: the index, then the padded name.
 const CONTEXT_LEN: usize = 1 + 16;
 
+// The kit's four coders below are inlined: one copy in a project's
+// codec, as before a library file had kits, and `kit_library::kern`'s own
+// in bank 2 (ADR 0305).
+
 /// The pads, then TONAL's code (ADR 0270); a kit from before TONAL is
 /// the pads alone.
 const PADS_BYTES: usize = PAD_BYTES * PadId::ALL.len();
@@ -94,7 +98,7 @@ const KIT_BYTES: usize = PADS_BYTES + 1;
 
 /// `kit`'s record; `None` is `Kit::DEFAULT`'s, built a pad at a time (no
 /// whole `Kit` on the save's stack).
-#[optimize(size)]
+#[inline(always)]
 pub(super) fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(), StoreError> {
     let mut b = [0; KIT_BYTES];
     for (p, out) in PadId::ALL.into_iter().zip(b.as_chunks_mut().0) {
@@ -112,7 +116,7 @@ pub(super) fn put_kit(w: &mut RecordWriter<'_>, kit: Option<&Kit>) -> Result<(),
 /// defaulted or held). Without TONAL's byte (before ADR 0270) it is OFF,
 /// nothing lost; an unknown code is OFF, lossy. `None`: neither length,
 /// `kit` untouched. In place: no whole `Kit` on the load's stack.
-#[optimize(size)]
+#[inline(always)]
 pub(super) fn get_kit(b: &[u8], mut kit: Option<&mut Kit>) -> Option<bool> {
     let (pads, tonal) = match b.len() {
         PADS_BYTES => (b, Some(Tonal::Off)),
@@ -137,7 +141,7 @@ pub(super) fn get_kit(b: &[u8], mut kit: Option<&mut Kit>) -> Option<bool> {
 const KIT_SOUND_BYTES: usize = 1 + PAD_SOUND_BYTES;
 
 /// `kit`'s `KitSound` records, a pad each; `None` is `Kit::DEFAULT`'s.
-#[optimize(size)]
+#[inline(always)]
 pub(super) fn put_kit_sounds(
     w: &mut RecordWriter<'_>,
     kit: Option<&Kit>,
@@ -155,7 +159,7 @@ pub(super) fn put_kit_sounds(
 /// A `KitSound` payload: its pad, the sound (an unknown code or a
 /// non-finite float the default's), and whether a save would write other
 /// bytes. `None`: the wrong length or no such pad.
-#[optimize(size)]
+#[inline(always)]
 pub(super) fn get_kit_sound(b: &[u8]) -> Option<(PadId, PadSound, bool)> {
     let [i, raw @ ..] = *<&[u8; KIT_SOUND_BYTES]>::try_from(b).ok()?;
     let s = PadSound::from_bytes(raw, &PadSound::DEFAULT);
