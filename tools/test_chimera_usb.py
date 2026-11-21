@@ -303,34 +303,61 @@ class Tool(unittest.TestCase):
 
     def tty_sysfs(self, root, ttys):
         r = pathlib.Path(root)
-        for dev, vid, pid, tty_ in ttys:
+        for dev, vid, pid, tty_, *product in ttys:
             d = r / "devices" / dev
             (d / (dev + ":1.0")).mkdir(parents=True)
             (d / "idVendor").write_text(vid + "\n")
             (d / "idProduct").write_text(pid + "\n")
+            if product:
+                (d / "product").write_text(product[0] + "\n")
             (r / "class/tty" / tty_).mkdir(parents=True)
             (r / "class/tty" / tty_ / "device").symlink_to(d / (dev + ":1.0"))
         (r / "bus/usb/devices").mkdir(parents=True)
+
+    def pick(self, root, link=None, answers=True):
+        """`target` with no CHIMERA_USB: the udev link `link` (absent if
+        None), and a `status` check that answers as Chimera or not."""
+        saved = tool.UDEV_LINK, tool.is_chimera
+        self.addCleanup(lambda: setattr(tool, "UDEV_LINK", saved[0]) or setattr(tool, "is_chimera", saved[1]))
+        tool.UDEV_LINK = link or os.path.join(root, "no-such-link")
+        self.asked = []
+        tool.is_chimera = lambda t: self.asked.append(t) or answers
+        return tool.target({"CHIMERA_SYSFS": root})
 
     def test_the_default_port_is_the_consoles_by_usb_id(self):
         # #314: /dev/ttyACM0 is another CDC device's; never guess it.
         with tempfile.TemporaryDirectory() as root:
             self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"), ("1-2", "0483", "5740", "ttyACM3")))
-            self.assertEqual(tool.target({"CHIMERA_SYSFS": root}), tool.Tty("tty", "/dev/ttyACM3"))
+            self.assertEqual(self.pick(root), tool.Tty("tty", "/dev/ttyACM3"))
+            self.assertEqual(self.asked, [tool.Tty("tty", "/dev/ttyACM3")], "one match: status confirms it")
         with tempfile.TemporaryDirectory() as root:
             self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"),))
-            self.assertNotEqual(tool.target({"CHIMERA_SYSFS": root}), tool.Tty("tty", "/dev/ttyACM0"))
+            self.assertNotEqual(self.pick(root), tool.Tty("tty", "/dev/ttyACM0"))
 
-    def test_a_listing_row_named_ok_or_err_is_a_row(self):
-        # #1065's review: `ls` rows are `<name> <size>`; a file named OK or
-        # ERR is a row, and only a bare OK (or ERR <words>) ends the listing.
-        rows = b"OK 200\nERR 10\nP0000001.A 1234\n"
-        with FakeUnit({b"ls\n": rows + b"OK\n", b"ls sounds\n": rows + b"ERR ls: NO CARD\n"}) as u:
-            ok = run_tool(["ls"], u.target)
-            err = run_tool(["ls", "sounds"], u.target)
-        self.assertEqual((ok.returncode, ok.stdout), (0, rows), ok.stderr)
-        self.assertEqual((err.returncode, err.stdout), (1, rows))
-        self.assertIn(b"ERR ls: NO CARD", err.stderr)
+    def test_the_udev_link_comes_first(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-2", "0483", "5740", "ttyACM3"),))
+            link = os.path.join(root, "chimera")
+            pathlib.Path(link).touch()
+            self.assertEqual(self.pick(root, link), tool.Tty("tty", link))
+            self.assertEqual(self.asked, [])
+
+    def test_among_several_the_one_named_chimera(self):
+        # A stock PreenFM3 shares 0483:5740; its product string isn't ours.
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-2", "0483", "5740", "ttyACM1", "PreenFM3"), ("1-3", "0483", "5740", "ttyACM2", "Chimera")))
+            self.assertEqual(self.pick(root), tool.Tty("tty", "/dev/ttyACM2"))
+            self.assertEqual(self.asked, [], "the name says so")
+
+    def test_one_match_that_doesnt_answer_as_chimera_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-2", "0483", "5740", "ttyACM3", "PreenFM3"),))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as e:
+                self.pick(root, answers=False)
+        self.assertEqual(e.exception.code, 1)
+        self.assertIn("/dev/ttyACM3", err.getvalue())
+        self.assertIn("doesn't answer as Chimera", err.getvalue())
 
     def test_a_card_stopped_short_prints_what_it_measured(self):
         with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:

@@ -57,9 +57,11 @@ the file belongs to another firmware (`staged: needs firmware <version>`: it
 installs at the next boot of that firmware), 1 on any other ERR.
 `--version` prints this tool's release.
 
-The port: CHIMERA_USB picks it. Unset, on Linux the tty whose USB id is
-the console's (/dev/chimera if none is listed), elsewhere pyserial's, else
-the first /dev/cu.usbmodem* (macOS); else give a device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
+The port: CHIMERA_USB picks it. Unset, on Linux /dev/chimera (the udev
+rule's link), else the tty whose USB id is the console's, one named Chimera
+before a stock PreenFM3's (one found only by its id must answer `status` as
+Chimera); elsewhere pyserial's, else the first /dev/cu.usbmodem* (macOS);
+else give a device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
 add yourself to the dialout group (then log out and in again), or run the
 `sudo tee` line it prints once. Shots are saved in the current directory;
 CHIMERA_SHOTS picks another. Where there is no /sys (macOS, Windows),
@@ -200,18 +202,51 @@ def target(env) -> Target:
             for p in sorted(glob.glob("/dev/cu.usbmodem*")):
                 return Tty("tty", p)
             return Tty("tty", "/dev/ttyACM0")
-        # The console's tty by its USB id, never a guessed /dev/ttyACM0:
-        # that can be another CDC device's (#314).
-        found = [p.path for p in unit_ports(env)]
-        if len(found) > 1:
-            sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(found)))
-        return Tty("tty", found[0] if found else "/dev/chimera")
+        return default_port(env)
     if v == "sim":
         return Tcp("tcp", *SIM)
     if v.startswith("tcp:"):
         host, port = v[4:].rsplit(":", 1)
         return Tcp("tcp", host, int(port))
     return Tty("tty", v)
+
+
+UDEV_LINK = "/dev/chimera"  # the udev rule's symlink (UDEV_HINT)
+
+
+def default_port(env) -> Tty:
+    """Linux, no CHIMERA_USB: the udev link; else the tty whose USB id is
+    the console's, one named Chimera before others with that id (a stock
+    PreenFM3 shares it), never a guessed /dev/ttyACM0 (#314). One found
+    only by its id must answer `status` as Chimera first."""
+    if os.path.exists(UDEV_LINK):
+        return Tty("tty", UDEV_LINK)
+    ports = unit_ports(env)
+    named = [p for p in ports if "chimera" in (p.product or "").lower()]
+    pool = named or ports
+    if len(pool) > 1:
+        sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(p.path for p in pool)))
+    if not pool:
+        return Tty("tty", UDEV_LINK)  # opening it says there is no console
+    t = Tty("tty", pool[0].path)
+    if not named and not is_chimera(t):
+        sys.exit(fail("%s has the console's USB id but doesn't answer as Chimera: set CHIMERA_USB=<port>" % t.path))
+    return t
+
+
+def is_chimera(t: Target) -> bool:
+    """`t` answers `status` with Chimera's `firmware` line."""
+    try:
+        conn = Conn(t)
+    except (OSError, TermiosError):
+        return False
+    try:
+        status, body = request(conn, "status")
+    except (NoAnswer, Vanished):
+        return False
+    finally:
+        conn.close()
+    return status is Status.OK and any(ln.startswith(b"firmware ") for ln in body.splitlines())
 
 
 def describe(t: Target) -> str:
@@ -982,6 +1017,14 @@ class UnitPort(NamedTuple):
 
     path: str
     serial: Optional[str]
+    product: Optional[str] = None
+
+
+def _read(path: pathlib.Path) -> Optional[str]:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
 
 
 def unit_ports(env) -> list:
@@ -992,7 +1035,7 @@ def unit_ports(env) -> list:
             from serial.tools import list_ports
         except ImportError:
             return []
-        return [UnitPort(p.device, getattr(p, "serial_number", None)) for p in list_ports.comports() if (p.vid, p.pid) == tuple(CONSOLE_ID)]
+        return [UnitPort(p.device, getattr(p, "serial_number", None), getattr(p, "product", None)) for p in list_ports.comports() if (p.vid, p.pid) == tuple(CONSOLE_ID)]
     out = []
     for d in sorted(pathlib.Path(env.get("CHIMERA_SYSFS", "/sys"), "class/tty").glob("*")):
         usb = (d / "device").resolve().parent  # the interface's parent: the USB device
@@ -1002,11 +1045,8 @@ def unit_ports(env) -> list:
             continue  # a virtual console, or a device leaving mid-read
         if ids != CONSOLE_ID:
             continue
-        try:
-            serial = (usb / "serial").read_text().strip()
-        except OSError:
-            serial = None
-        out.append(UnitPort("/dev/" + d.name, serial))
+        serial, product = (_read(usb / f) for f in ("serial", "product"))
+        out.append(UnitPort("/dev/" + d.name, serial, product))
     return out
 
 
