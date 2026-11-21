@@ -1,6 +1,6 @@
 # 0303. The compressor's KEY listens to a range or a Part
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Deciders:** owner (2026-11-20, private issue #1037, the design's four questions answered), firmware
 
 ## Context
@@ -80,7 +80,7 @@ Release builds, `CHIMERA_STAMP_CLEAN=1`, every one of the thirteen budgeted sets
 
 ORBIT after: bank 1 907,156 B (10,348 B under the SD-flash limit; it was 905,984); bank 2 591,616 B used, all of the growth in S4 (186,688 B free there; S0-S3 unchanged at 7,072 B free).
 
-Bank 1's growth on ORBIT (+1,172 B), by symbol: the audio's `block` +334 B (the master section's stub: KEY's check, the ask, the door call and the rest's clear; `mix_sided`'s shares and tap; the bill), the page's draw +84 B (the key's name under the curve and its door check, the hint's door call), `KEY_NAMES` 80 B and the Parts' idents 48 B, `COMP_SPECS` +72 B (KEY's spec), `CompParams`' arms +268 B (`write` +96, `enum_ident` +80, `get` +40, `set_enum_code` +30, `enum_code` +22), the boot's door check +12 B, `RATIO_NAMES` +8 B, and the names' text. Over the design's 600–900 B: the typed arms cost more than a bare code would, and typing is not traded for flash. The sets differ by how the linker's outliner falls: default +1,548, ORBIT +1,172.
+Bank 1's growth on ORBIT (+1,172 B), by symbol: the audio's `block` +334 B (the master section's stub: KEY's check, the ask, the door call and the rest's clear; `mix_sided`'s shares and tap; the bill), the page's draw +84 B (the key's name under the curve and its door check, the hint's door call), `KEY_NAMES` 80 B and the Parts' idents 48 B, `COMP_SPECS` +72 B (KEY's spec), `CompParams`' arms +268 B (`write` +96, `enum_ident` +80, `get` +40, `set_enum_code` +30, `enum_code` +22), the boot's door check +12 B, `RATIO_NAMES` +8 B, and the names' text. Over the design's 600–900 B: the typed arms cost more than a bare code would, and typing is not traded for flash. The sets differ in the audio's `block`: `mix_sided`'s shares are a 120 B array on its frame, and the wider frame re-encodes stack offsets across the function (+328 B on default against +46 B on ORBIT in the review round): default +1,548, ORBIT +1,172.
 
 Bank 2 (+6,240 B, S4): `comp_key::kern::run` 5,872 B (the compressor's loop inlined once with the three detectors and the pass, the sections' coefficients, the pass's setup), `ui::notes`' KEY hints and words 380 B, the table 8 B. With FULL's second loop kept in the keyed block it was 8,892 B (decision 13).
 
