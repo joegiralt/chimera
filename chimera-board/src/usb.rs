@@ -595,7 +595,9 @@ impl Usb {
                 (false, _, true) => Restart::Bank2(Bank2Opened(())),
                 _ => return None,
             };
-            if sent.is_err() {
+            // A stalled answer keeps the unit up, but bank 2 is open
+            // either way: its USB still needs the boot (#1064).
+            if sent.is_err() && !matches!(restart, Restart::Bank2(_)) {
                 return None;
             }
             // `flush` empties the class's buffer, not the endpoint: polls
