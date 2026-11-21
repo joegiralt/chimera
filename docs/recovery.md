@@ -18,10 +18,9 @@ Ixox's own update mechanism and instructions, and Chimera rides on it (ADR
 - **Where to get it:** the stock PreenFM3 firmware releases,
   https://github.com/Ixox/preenfm3/releases, and the source in that repo's
   `bootloader/`. Follow Ixox's instructions there to install or restore it.
-- **The version Chimera expects:** bootloader 1.09. The 128 KB image a unit
-  running 1.09 reads back has SHA-256
-  `ad8ef9800ce2a584c74831532f2258f811d2e7aaba7699c1c406c4aadf2a4124`; a
-  backup or a restore can be checked against it.
+- **The version Chimera expects:** bootloader 1.09, `p3_boot_1_09.bin`,
+  inside the stock v1.03 release's `pfm3_firmware_1_03.zip`
+  (https://github.com/Ixox/preenfm3/releases/tag/v1.03).
 - `just backup-bootloader` takes a local copy, read off your own unit, into
   `~/chimera-backups/`.
 
