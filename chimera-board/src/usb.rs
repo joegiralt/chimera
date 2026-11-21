@@ -164,10 +164,17 @@ pub struct DfuAsked(());
 #[must_use]
 pub struct SweepAsked(());
 
+/// `bank2 install` opened the door and its `OK` is out: the boot it
+/// restarts into lays USB out with MIDI and audio (#1064). Only
+/// `Usb::service` makes one.
+#[must_use]
+pub struct Bank2Opened(());
+
 /// A console answer that ends in a restart.
 pub enum Restart {
     Dfu(DfuAsked),
     Sweep(SweepAsked),
+    Bank2(Bank2Opened),
 }
 
 /// `card`'s measurement, run before its answer starts: `None` without one
@@ -581,9 +588,11 @@ impl Usb {
             if unit.forget {
                 ui.forget_library();
             }
-            let restart = match (dfu, sweep_ask) {
-                (true, _) => Restart::Dfu(DfuAsked(())),
-                (false, Some(SweepAsk::Requested)) => Restart::Sweep(SweepAsked(())),
+            let opened = bank2.as_ref().is_some_and(Bank2Answer::restarts);
+            let restart = match (dfu, sweep_ask, opened) {
+                (true, _, _) => Restart::Dfu(DfuAsked(())),
+                (false, Some(SweepAsk::Requested), _) => Restart::Sweep(SweepAsked(())),
+                (false, _, true) => Restart::Bank2(Bank2Opened(())),
                 _ => return None,
             };
             if sent.is_err() {

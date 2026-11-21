@@ -50,7 +50,9 @@ Python 3 and its standard library only; Linux and macOS (no Windows).
 the flash if the .bk2 can't go onto the card, waits up to 2 minutes
 for the unit to answer after the flash, and exits 0 only once
 `status` shows the pair's seal open (`OK updated <version>`);
-it needs dfu-util. `bank2` exits 0 on OK (or `OK already installed`), 2 if
+it needs dfu-util. An install that opens bank 2 restarts the unit (its USB
+MIDI and audio come up at boot): `bank2` waits up to a minute for it, then
+exits 0 on OK (or `OK already installed`), 2 if
 the file belongs to another firmware (`staged: needs firmware <version>`: it
 installs at the next boot of that firmware), 1 on any other ERR.
 `--version` prints this tool's release.
@@ -110,6 +112,7 @@ BANK2_SEAL = slice(0x18, 0x20)  # the .bk2 header's seal
 BK2_HEADER = 256
 BK2_MAX = 1 << 20  # bank 2's slots: 1 MB
 UPDATE_BOOT_WAIT_S = 120.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
+RESTART_WAIT_S = 60.0  # `bank2 install` opened the door: the unit restarts so USB lays out MIDI and audio (#1064)
 # Firmware from before bank 2 refuses the path (its `put` usage, exactly): the
 # .bk2 then goes after the flash.
 OLD_PUT_REFUSALS = (
@@ -785,7 +788,14 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     """Put `local` where the unit stages it and have the unit write it:
     0 on OK, 2 if it is for another firmware or the unit's slot holds other
     code, else 1. `note` leads every failure message (update: \"flashed, but \")."""
-    fail = lambda m: _fail(note + m)
+    return install_bk2(t, env, local, note)[0]
+
+
+def install_bk2(t: Target, env, local: str, note: str = "") -> tuple:
+    """`bank2_install`'s exit code, and the unit once back from the restart
+    an install that opens the door ends in (#1064: USB's MIDI and audio
+    are a boot's layout), else None."""
+    fail = lambda m: (_fail(note + m), None)
     if not local.lower().endswith(".bk2"):
         return fail("bank2 takes a .bk2 file, not %s (the .bin goes by DFU)" % local)
     try:
@@ -797,20 +807,21 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     seal = data[BANK2_SEAL].hex()
     rc = wait_console(env, float(env.get("CHIMERA_DFU_WAIT", "10")))
     if rc:
-        return rc
+        return rc, None
+    serial = unit_serial(t, env)  # the unit before its restart, to know it after
     conn = open_conn(t)
     try:
         status, body = request(conn, "bank2")
         state = body.decode(errors="replace").splitlines()[:1]
         if status is Status.OK and state and state[0].startswith("bank2 open ") and state[0].endswith(" seal=" + seal):
             print("OK already installed")
-            return 0
+            return 0, None
         status, body = retry_busy(lambda: put(conn, data, BANK2_REMOTE, show_progress))
         print(file=sys.stderr)
         if status is Status.ERR:
             return fail(body.decode(errors="replace"))
         if body.startswith(b"staged:"):
-            return stage_only(body, note)
+            return stage_only(body, note), None
         for _ in range(BUSY_TRIES):
             send(conn, "bank2 install")
             ln, before = bank2_answer(conn)
@@ -829,16 +840,24 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
         conn.close()
     sys.stdout.buffer.write(before)
     text = ln.decode(errors="replace")
+    if text.startswith("OK bank2 open "):
+        print(text)
+        sys.stdout.flush()
+        print("restarting: the open door's USB MIDI and audio come up at boot", file=sys.stderr)
+        try:
+            return 0, back_after_flash(t, env, RESTART_WAIT_S, serial)
+        except NotBack as e:
+            return fail("bank2: installed, but the unit isn't back %g s after its restart: %s" % (RESTART_WAIT_S, e.reason()))
     if text.startswith("OK"):
         print(text)
-        return 0
+        return 0, None
     foreign = text.startswith("ERR bank2 slot foreign ") and foreign_slot(text)
     if foreign:
-        fail(foreign)
-        return 2
+        _fail(note + foreign)
+        return 2, None
     if "staged: needs firmware" in text:
-        fail(text + LATER)
-        return 2
+        _fail(note + text + LATER)
+        return 2, None
     return fail(text)
 
 
@@ -1219,11 +1238,12 @@ def update(t: Target, env, pkg: Package) -> int:
             return fail(not_back(pkg, e, UPDATE_BOOT_WAIT_S))
         if staged:
             return updated(back.target, pkg, back)
-        # The port it came back on carries on: the install, then status again.
-        rc = bank2_install(back.target, env, str(k), "update: flashed, but ")
+        # The port it came back on carries on: the install, then status again
+        # (after the restart an install that opens the door ends in).
+        rc, again = install_bk2(back.target, env, str(k), "update: flashed, but ")
         if rc:
             return rc
-    return updated(back.target, pkg)
+    return updated(again.target, pkg, again) if again else updated(back.target, pkg)
 
 
 def card_wait(t: Target, env, verbs) -> int:

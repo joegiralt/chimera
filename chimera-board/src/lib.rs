@@ -820,6 +820,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
                 // The boot it restarts into sweeps, the arena's gap free.
                 usb::Restart::Sweep(_) => marker.reset(),
+                // The door's USB layout is a boot's (#1064).
+                usb::Restart::Bank2(_) => marker.reset(),
             }
         }
         // `bank2 install` held the screen: everything redraws below.

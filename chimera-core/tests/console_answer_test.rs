@@ -1206,6 +1206,27 @@ fn the_install_and_the_door_decide_the_answer() {
     );
 }
 
+/// USB took its layout at boot, door closed: console alone. Only an install
+/// that opens the door restarts, so the boot lays MIDI and audio out (#1064).
+#[test]
+fn only_an_install_that_opens_the_door_restarts() {
+    let opened = Bank2Answer::Open {
+        version: v020(),
+        audio: AUDIO,
+    };
+    assert!(opened.restarts());
+    for a in [
+        Bank2Answer::Already,
+        Bank2Answer::Refused(Bank2Refusal::Busy),
+        Bank2Answer::Failed {
+            why: Bank2Fail::Door,
+            audio: AUDIO,
+        },
+    ] {
+        assert!(!a.restarts(), "{a:?}");
+    }
+}
+
 #[test]
 fn key_and_turn_queue_then_ok() {
     let mut u = Fake::new();

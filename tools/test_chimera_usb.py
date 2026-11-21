@@ -1148,18 +1148,32 @@ class Bank2(unittest.TestCase):
     def test_puts_then_installs_and_exits_0_on_open(self):
         answers = self.status(bytes(8), "empty")
         answers[b"bank2 install"] = b"audio overruns 0 -> 0 blocks +40\nOK bank2 open 0.2.0 02e440e2\n"
+        answers[b"status"] = b"bank2 open 0.2.0 02e440e2\nOK\n"
         with PutUnit(answers=answers) as u:
             r = self.run_bank2(u)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(u.requests[0], b"bank2")
         self.assertTrue(u.requests[1].startswith(b"put /CHIMERA/SYSTEM/BANK2.BK2 %d " % len(self.bk2)))
-        self.assertEqual(u.requests[-1], b"bank2 install")
+        self.assertEqual(u.requests[-2:], [b"bank2 install", b"status"])
         self.assertEqual(u.data, bytes(self.bk2))
         self.assertEqual(r.stdout, b"audio overruns 0 -> 0 blocks +40\nOK bank2 open 0.2.0 02e440e2\n")
+
+    def test_an_install_that_opens_waits_for_the_restart(self):
+        # #1064: the unit restarts once its install opens the door; the
+        # tool says so and returns once the console answers again.
+        answers = self.status(bytes(8), "empty")
+        answers[b"bank2 install"] = b"OK bank2 open 0.2.0 02e440e2\n"
+        answers[b"status"] = b"bank2 open 0.2.0 02e440e2\nOK\n"
+        with PutUnit(answers=answers) as u:
+            r = self.run_bank2(u)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.requests[-2:], [b"bank2 install", b"status"])
+        self.assertIn(b"restarting", r.stderr)
 
     def test_a_seal_that_differs_installs(self):
         answers = self.status(bytes(range(9, 17)))
         answers[b"bank2 install"] = b"OK bank2 open v\n"
+        answers[b"status"] = b"bank2 open v\nOK\n"
         with PutUnit(answers=answers) as u:
             r = self.run_bank2(u)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1457,6 +1471,24 @@ class Update(unittest.TestCase):
         self.assertLess(puts[1], install[0])
         self.assertLess(install[0], status[-1])
         self.assertEqual(u.data, self.bk2)
+
+    def test_an_install_after_the_flash_waits_for_the_restart(self):
+        # #1064: the firmware restarts once its install opens the door (USB's
+        # MIDI and audio are a boot's layout): status is read after it.
+        answers = {
+            b"bank2": b"bank2 empty\nOK\n",
+            b"bank2 install": b"OK bank2 open 0.2.0 02e440e2\n",
+            b"status": self.status(self.open_line()),
+        }
+        back, backs = tool.back_after_flash, []
+        tool.back_after_flash = lambda t, env, secs, serial=None: backs.append(secs) or back(t, env, secs, serial)
+        self.addCleanup(setattr, tool, "back_after_flash", back)
+        with PutUnit(answers=answers, refuse=OLD_PUT, refuse_once=True) as u:
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(backs, [tool.UPDATE_BOOT_WAIT_S, tool.RESTART_WAIT_S])
+        install, status = self.sent("bank2 install"), self.sent("status")
+        self.assertLess(install[0], status[-1])
 
     def flash_first(self, line, bk2=None):
         if bk2 is not None:

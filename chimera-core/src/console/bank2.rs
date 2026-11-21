@@ -371,6 +371,25 @@ pub enum Bank2Answer {
     Armed(PullAt),
 }
 
+impl Bank2Answer {
+    /// The unit restarts once this answer is out: USB took its layout at
+    /// boot with the door closed (console alone), and only a boot lays out
+    /// what the open door brings (USB MIDI and audio, #1064).
+    pub const fn restarts(&self) -> bool {
+        match self {
+            Bank2Answer::Open { .. } => true,
+            Bank2Answer::Already | Bank2Answer::Refused(_) | Bank2Answer::Failed { .. } => false,
+            #[cfg(feature = "bank2-gate")]
+            Bank2Answer::Erased(_)
+            | Bank2Answer::SlotPoked(_)
+            | Bank2Answer::EccTorn(_)
+            | Bank2Answer::SlotsErased(_)
+            | Bank2Answer::Ecc { .. }
+            | Bank2Answer::Armed(_) => false,
+        }
+    }
+}
+
 /// The staged file's verdict, and the card error behind an unreadable one,
 /// before anything is written: its header if it is to be installed. `open`:
 /// bank 2 is open, so with this build's seal, the staged one's.
