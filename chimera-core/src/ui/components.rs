@@ -697,7 +697,9 @@ pub fn gauge_left(gauge: &Gauge) -> Option<i32> {
         Gauge::Feedback { .. } => Some(theme::WAVE_X),
         Gauge::Blend { .. } => Some(end - theme::BLEND_W - theme::XF_CAP_W / 2),
         Gauge::Staff { .. } => Some(theme::STAFF_X),
-        Gauge::Wave(_) | Gauge::VaWave(_) | Gauge::Lfo(_) => Some(theme::WAVE_X),
+        Gauge::Wave(_) | Gauge::VaWave(_) | Gauge::VaLoop { .. } | Gauge::Lfo(_) => {
+            Some(theme::WAVE_X)
+        }
         Gauge::VaMix(_) => Some(end - theme::VA_MIX_W),
         Gauge::Braid(_) => Some(theme::BRAID_X),
         Gauge::Rings(_) => Some(theme::RINGS_X),
@@ -747,6 +749,7 @@ pub fn gauge_rect(gauge: &Gauge) -> Option<(i32, i32, i32, i32)> {
         | Gauge::Staff { .. }
         | Gauge::Wave(_)
         | Gauge::VaWave(_)
+        | Gauge::VaLoop { .. }
         | Gauge::VaMix(_)
         | Gauge::Blend { .. }
         | Gauge::Tape(_)
@@ -774,6 +777,7 @@ where
         Gauge::Staff { step, accidental } => staff(d, step, accidental),
         Gauge::Wave(k) => scope(d, &glyph::kind_trace::<SCOPE_N>(k, SCOPE_HALF)),
         Gauge::VaWave(m) => scope(d, &glyph::va_wave_trace::<SCOPE_N>(m, SCOPE_HALF)),
+        Gauge::VaLoop { b0 } => scope(d, &glyph::va_loop_trace::<SCOPE_N>(b0, SCOPE_HALF)),
         Gauge::VaMix(v) => scope(d, &glyph::va_mix_trace::<VA_MIX_N>(&v, SCOPE_HALF)),
         Gauge::Blend { value, mode } => {
             crossfader(d, value, theme::BLEND_W);
