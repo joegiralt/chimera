@@ -301,6 +301,26 @@ class Tool(unittest.TestCase):
         self.assertEqual((queued.returncode, queued.stdout), (0, b"OK queued\n"), queued.stderr)
         self.assertEqual((since.returncode, since.stdout), (0, b"chg 3 MIDI.SYNC 0\nOK 6 more\n"), since.stderr)
 
+    def tty_sysfs(self, root, ttys):
+        r = pathlib.Path(root)
+        for dev, vid, pid, tty_ in ttys:
+            d = r / "devices" / dev
+            (d / (dev + ":1.0")).mkdir(parents=True)
+            (d / "idVendor").write_text(vid + "\n")
+            (d / "idProduct").write_text(pid + "\n")
+            (r / "class/tty" / tty_).mkdir(parents=True)
+            (r / "class/tty" / tty_ / "device").symlink_to(d / (dev + ":1.0"))
+        (r / "bus/usb/devices").mkdir(parents=True)
+
+    def test_the_default_port_is_the_consoles_by_usb_id(self):
+        # #314: /dev/ttyACM0 is another CDC device's; never guess it.
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"), ("1-2", "0483", "5740", "ttyACM3")))
+            self.assertEqual(tool.target({"CHIMERA_SYSFS": root}), tool.Tty("tty", "/dev/ttyACM3"))
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"),))
+            self.assertNotEqual(tool.target({"CHIMERA_SYSFS": root}), tool.Tty("tty", "/dev/ttyACM0"))
+
     def test_a_card_stopped_short_prints_what_it_measured(self):
         with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:
             r = run_tool(["card", "seed=7"], u.target)

@@ -57,9 +57,9 @@ the file belongs to another firmware (`staged: needs firmware <version>`: it
 installs at the next boot of that firmware), 1 on any other ERR.
 `--version` prints this tool's release.
 
-The port: CHIMERA_USB picks it. Unset, the first of /dev/chimera,
-/dev/ttyACM0 (Linux) or /dev/cu.usbmodem* (macOS) that exists; else give a
-device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
+The port: CHIMERA_USB picks it. Unset, on Linux the tty whose USB id is
+the console's (/dev/chimera if none is listed), elsewhere pyserial's, else
+the first /dev/cu.usbmodem* (macOS); else give a device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
 add yourself to the dialout group (then log out and in again), or run the
 `sudo tee` line it prints once. Shots are saved in the current directory;
 CHIMERA_SHOTS picks another. Where there is no /sys (macOS, Windows),
@@ -197,10 +197,15 @@ def target(env) -> Target:
                 sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(found)))
             if found:
                 return Tty("tty", found[0])
-        for p in ["/dev/chimera", "/dev/ttyACM0", *sorted(glob.glob("/dev/cu.usbmodem*"))]:
-            if os.path.exists(p):
+            for p in sorted(glob.glob("/dev/cu.usbmodem*")):
                 return Tty("tty", p)
-        return Tty("tty", "/dev/ttyACM0")
+            return Tty("tty", "/dev/ttyACM0")
+        # The console's tty by its USB id, never a guessed /dev/ttyACM0:
+        # that can be another CDC device's (#314).
+        found = [p.path for p in unit_ports(env)]
+        if len(found) > 1:
+            sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(found)))
+        return Tty("tty", found[0] if found else "/dev/chimera")
     if v == "sim":
         return Tcp("tcp", *SIM)
     if v.startswith("tcp:"):
