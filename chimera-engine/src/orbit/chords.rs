@@ -124,6 +124,7 @@ impl ChordRing {
 
     /// `i` flipped in the notes SCALE plays: a named scale becomes CUSTOM,
     /// seeded from its own notes (ADR 0084).
+    #[inline(always)]
     pub fn toggle(&mut self, i: Interval) {
         self.custom = self.set().toggle(i);
         self.scale = ScaleKind::Custom;

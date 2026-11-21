@@ -38,6 +38,28 @@ struct Read {
     saves: u8,
 }
 
+/// A map's name as a queued rename carries it: FNV-1a 32 of its padded
+/// bytes, not the name, so the job and the editor's act are no wider than
+/// the widest they were (the act queue is ITCM's). Bytes, to align as a
+/// name does. Two names of one mark: the rename takes the other map only
+/// if the Part also moved to it while the job waited.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MapMark([u8; 4]);
+
+impl MapMark {
+    /// `n`'s mark. Inlined: the editor's check takes it in its own slot.
+    #[inline(always)]
+    pub(crate) fn of(n: SoundName) -> MapMark {
+        // A counted loop: an array's iterator is an instance bank 1 holds.
+        let (bytes, mut h, mut i) = (n.padded(), 0x811C_9DC5u32, 0);
+        while i < bytes.len() {
+            h = (h ^ u32::from(bytes[i])).wrapping_mul(0x0100_0193);
+            i += 1;
+        }
+        MapMark(h.to_le_bytes())
+    }
+}
+
 /// Card work MIDI MAP asked for.
 #[derive(Clone, Copy)]
 pub enum CtlJob {
@@ -52,6 +74,11 @@ pub enum CtlJob {
     /// Map `.1`, the one DELETE named, deleted from the card: every Part on
     /// it plays NONE.
     Delete(PartId, SoundName),
+    /// The browser editor's rename (ADR 0289), asked of the map marked
+    /// `.2`: the Part on another by the card work, nothing is renamed.
+    /// Last, and no wider than an edit: the jobs before it build as they
+    /// did.
+    RenameOf(PartId, SoundName, MapMark),
 }
 
 /// Each Part's layer and what it was read for, the card's maps as last
@@ -68,11 +95,11 @@ pub struct Layers {
     /// `maps_put` when last seen: a console `put` or `rm` since reads every
     /// layer again.
     puts: u8,
-    list: [Option<SoundName>; MAX_MAPS],
-    listed: bool,
+    pub(in crate::ui) list: [Option<SoundName>; MAX_MAPS],
+    pub(in crate::ui) listed: bool,
     /// The card holds more maps than `list`.
-    pub(super) more: bool,
-    job: Option<CtlJob>,
+    pub(in crate::ui) more: bool,
+    pub(in crate::ui) job: Option<CtlJob>,
     /// The card last worked on: another reads every layer again.
     vol: Option<VolumeId>,
     /// A map read from the card (`ctl_work_in`): here, not on the stack,
@@ -121,9 +148,9 @@ pub(super) unsafe fn rest_at(p: *mut Layers) {
 
 /// The words a save or a delete says, `|` between: a named static, so its
 /// bytes are bank 2's.
-static WORDS: [u8; 106] =
+static WORDS: [u8; 118] =
     *b"SAVED |MAP FULL|CONTROLLER|NONE|IN |NO CONTROLLER MAP|NAME TAKEN|CARD HOLDS MORE: 16 SHOWN|\
-MIX+EDIT RENAME";
+MIX+EDIT RENAME|MAP CHANGED";
 
 #[derive(Clone, Copy)]
 #[repr(u8)]
@@ -137,6 +164,7 @@ pub(super) enum W {
     Taken,
     More,
     Whole,
+    Changed,
 }
 
 #[inline(never)]
@@ -153,8 +181,11 @@ impl Layers {
     /// Row `i` of Part `p`'s layer, `was`, made `to` here and, by the next
     /// card work, in the map; an edit of the row waiting takes it on.
     /// `false`: another job waits, nothing changed.
+    /// Inlined: MIDI MAP's keys and the editor's (`ed_cue`) call it, in
+    /// two bank-2 groups.
     #[cfg(feature = "midi-map")]
-    pub(super) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
+    #[inline(always)]
+    pub(in crate::ui) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
         let first = match self.job {
             None => was,
             // The same row: the whole binding, as two rows may share a
@@ -173,7 +204,8 @@ impl Layers {
         true
     }
 
-    /// The maps listed, `None` before a listing.
+    /// The maps listed, `None` before a listing. Inlined, as `edit`.
+    #[inline(always)]
     pub fn listed(&self) -> Option<&[Option<SoundName>]> {
         self.listed
             .then(|| &self.list[..self.list.iter().take_while(|n| n.is_some()).count()])
@@ -193,6 +225,9 @@ impl UiState {
 
     /// Card work waits: a job, a stale layer, or MIDI MAP open unlisted.
     /// The door's `ctl_due`.
+    // Out of line: the editor's wrappers (`ed_cue::ctl_due`, `ctl_work`)
+    // call it, and it stays in the MIDI UI's group.
+    #[inline(never)]
     pub(in crate::ui) fn ctl_due_in(&self) -> bool {
         let mapping = self.screen() == Some(super::super::settings::Screen::MidiMap);
         let Some(m) = self.cc.built() else {
@@ -215,6 +250,9 @@ impl UiState {
     /// No card (`None`): every layer empty, read for what it wants, the job
     /// dropped and the listing empty, so no pass mounts again for them.
     /// The door's `ctl_work`.
+    // Out of line: the editor's wrappers (`ed_cue::ctl_due`, `ctl_work`)
+    // call it, and it stays in the MIDI UI's group.
+    #[inline(never)]
     pub(in crate::ui) fn ctl_work_in(&mut self, s: &mut dyn Store, r: Option<&Ready>) {
         let Some(r) = r else {
             let saves = self.cc.ui().ctl.saves;
@@ -293,15 +331,36 @@ impl UiState {
         }
     }
 
+    /// The editor's rename, asked of the map marked `was`, is still
+    /// asked of the map the Part is on, `now`: the Part on another, or on
+    /// none, it renames nothing and the box says MAP CHANGED. Out of
+    /// line: the job's own code stays as it was laid out.
+    #[inline(never)]
+    fn held(&mut self, now: Option<SoundName>, was: MapMark) -> bool {
+        match now {
+            Some(n) if MapMark::of(n) == was => true,
+            Some(_) | None => {
+                self.error(Line::new(word(W::Changed)));
+                false
+            }
+        }
+    }
+
     fn ctl_job(&mut self, s: &mut dyn Store, r: &Ready, j: CtlJob) {
         let p = match j {
             CtlJob::Save(p, _)
             | CtlJob::Drop(p, _)
             | CtlJob::Edit(p, ..)
             | CtlJob::Rename(p, _)
+            | CtlJob::RenameOf(p, ..)
             | CtlJob::Delete(p, _) => p,
         };
         let now = self.project.controller(p);
+        if let CtlJob::RenameOf(_, _, of) = j
+            && !self.held(now, of)
+        {
+            return;
+        }
         // The map a rename or a delete takes the Parts off.
         let was = match j {
             CtlJob::Delete(_, n) => Some(n),
@@ -311,8 +370,10 @@ impl UiState {
         // Part's (a save as); every other job the Part's.
         let (name, from) = match (j, now) {
             (CtlJob::Save(_, n), _) => (n, [Some(n), now]),
-            (CtlJob::Rename(_, n), Some(was)) if n != was => (n, [Some(was), None]),
-            (CtlJob::Rename(..), _) => return,
+            (CtlJob::Rename(_, n) | CtlJob::RenameOf(_, n, _), Some(was)) if n != was => {
+                (n, [Some(was), None])
+            }
+            (CtlJob::Rename(..) | CtlJob::RenameOf(..), _) => return,
             (CtlJob::Delete(_, n), _) => (n, [Some(n), None]),
             (_, None) => return,
             (_, Some(n)) => (n, [Some(n), None]),
@@ -335,7 +396,7 @@ impl UiState {
         c.saves = c.saves.wrapping_add(1);
         c.listed = false;
         let to = match j {
-            CtlJob::Rename(_, n) => Some(Some(n)),
+            CtlJob::Rename(_, n) | CtlJob::RenameOf(_, n, _) => Some(Some(n)),
             CtlJob::Delete(..) => Some(None),
             _ => None,
         };
@@ -446,7 +507,7 @@ fn job_on(
     m: &mut ctl::ControllerMap,
 ) -> Result<(), JobErr> {
     // A rename never writes over a map of its new name.
-    if let CtlJob::Rename(..) = j {
+    if let CtlJob::Rename(..) | CtlJob::RenameOf(..) = j {
         match ctl::load(s, r, &name, m) {
             Ok(_) => return Err(JobErr::Say(Line::new(word(W::Taken)))),
             Err(LoadError::Missing) => {}
@@ -483,7 +544,7 @@ fn job_on(
             Ok(())
         }
         CtlJob::Delete(..) => return busy_or(ctl::delete(s, r, &name)),
-        CtlJob::Rename(..) => Ok(()),
+        CtlJob::Rename(..) | CtlJob::RenameOf(..) => Ok(()),
     };
     if edited == Err(MapFull) {
         return Err(JobErr::Say(Line::new(word(W::Full))));
@@ -493,7 +554,7 @@ fn job_on(
         // retried: the new file would read as taken; a failed delete
         // leaves a copy.
         Ok(()) => {
-            if let (CtlJob::Rename(..), Some(was)) = (j, from[0]) {
+            if let (CtlJob::Rename(..) | CtlJob::RenameOf(..), Some(was)) = (j, from[0]) {
                 let _ = ctl::delete(s, r, &was);
             }
             Ok(())
@@ -522,6 +583,26 @@ mod tests {
         m.learn(Input::cc(cc).unwrap(), Mappable::new(t).unwrap())
             .unwrap();
         m.entries()[0]
+    }
+
+    /// The editor's rename carries its map's mark in the job, the last
+    /// variant, and the job is no wider for it: an edit's two rows are
+    /// still the widest.
+    #[test]
+    fn a_marked_rename_is_a_job_no_wider_than_an_edit() {
+        let p = PartId::ALL[0];
+        let was = MapMark::of(SoundName::new("EC4").unwrap());
+        let to = SoundName::new("YOURS").unwrap();
+        let j = CtlJob::RenameOf(p, to, was);
+        assert!(matches!(j, CtlJob::RenameOf(q, n, m) if q == p && n == to && m == was));
+        assert_eq!(
+            core::mem::size_of::<CtlJob>(),
+            core::mem::size_of_val(&CtlJob::Edit(p, row(21), row(22)))
+        );
+        assert!(
+            core::mem::size_of::<(PartId, SoundName, MapMark)>()
+                <= core::mem::size_of::<(PartId, Binding, Binding)>()
+        );
     }
 
     /// Two rows on one target (a hand-made file can hold them): an edit

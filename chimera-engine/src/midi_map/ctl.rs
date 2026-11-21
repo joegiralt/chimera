@@ -409,7 +409,9 @@ fn put(b: &mut [u8], at: &mut usize, x: &[u8]) -> bool {
 /// The maps on the card, by name in order, into `out`: how many, and
 /// whether the card holds more than `out` (of the first `MAX_MAPS + 1`
 /// stems listed). No folder is no maps; a file that won't load is left
-/// out.
+/// out. Inlined: its callers, the MIDI UI's card work and the editor's
+/// (ADR 0289), are in two bank-2 groups.
+#[inline(always)]
 pub fn list(
     s: &mut dyn Store,
     r: &Ready,

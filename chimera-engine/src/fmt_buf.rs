@@ -92,3 +92,21 @@ impl core::fmt::Write for ByteCount {
         Ok(())
     }
 }
+
+/// Hashes what is written, FNV-1a 64, and keeps nothing: `ed schema`
+/// hashes `describe`'s own bytes with it (ADR 0289). Bank 1's, beside
+/// `ByteCount`, for the same vtable rule.
+pub struct Fnv64(pub u64);
+
+impl Fnv64 {
+    pub const NEW: Fnv64 = Fnv64(0xcbf2_9ce4_8422_2325);
+}
+
+impl core::fmt::Write for Fnv64 {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        for &b in s.as_bytes() {
+            self.0 = (self.0 ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Ok(())
+    }
+}

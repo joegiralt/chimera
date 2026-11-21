@@ -1,11 +1,18 @@
 module Schema exposing
-    ( Page
+    ( Act
+    , Matrix
+    , MidiMap
+    , Page
     , Panel
     , Param
+    , Route
     , Schema
     , add
     , addresses
     , empty
+    , hasPanel
+    , matrix
+    , midiMap
     , optionName
     , pageAddresses
     , pageCount
@@ -21,7 +28,7 @@ answers arrive. Pages hold panels (a variant each), panels hold params.
 
 import Addr exposing (Addr)
 import Dict exposing (Dict)
-import Protocol exposing (AnswerLine, Kind, OptIndex, PageLabel, PageNo, Scale)
+import Protocol exposing (ActCell, AnswerLine, Cell, ControlNo, Flags, Kind, MapForm, MapKind, Msb, OptIndex, PageLabel, PageNo, RouteKind, Scale, SpanPlace)
 
 
 type alias Param =
@@ -33,6 +40,7 @@ type alias Param =
     , max : Float
     , step : Float
     , default : Float
+    , flags : Flags
     , options : List ( OptIndex, String )
     }
 
@@ -41,31 +49,94 @@ type alias Panel =
     { name : String
     , variant : String
     , params : List Param
-    , routes : List String
+    , routes : List Route
     }
+
+
+{-| A FLT › MOD knob: the matrix cell it views.
+-}
+type alias Route =
+    { label : String, cell : Cell, kind : RouteKind }
+
+
+{-| What `ed describe MTX-<ENGINE>` says: the source rows, the fixed
+columns, the amounts' range and the registry's columns.
+-}
+type alias Matrix =
+    { sources : List ( String, String )
+    , cols : List ( String, Addr )
+    , range : Maybe ( Int, Int )
+    , dests : Maybe Int
+    }
+
+
+{-| What `ed describe MAP` says: each input form and its kinds in the box's
+cycle order, each kind's box words, the CCs a binding may take, the 14-bit
+MSBs, a span's places, a Sound's rows and a controller map's.
+-}
+type alias MidiMap =
+    { inputs : List { form : MapForm, kinds : List MapKind }
+    , kinds : List { kind : MapKind, head : String, tail : String }
+    , ccs : List ControlNo
+    , msbs : List Msb
+    , span : Maybe ( SpanPlace, SpanPlace )
+    , rows : Maybe Int
+    , mapRows : Maybe Int
+    }
+
+
+{-| An ORBIT cell that is no parameter, and the box's label for it.
+-}
+type alias Act =
+    { label : String, cell : ActCell }
 
 
 type alias Page =
     { n : PageNo
     , label : PageLabel
+
+    -- A SETTINGS page's place in the box's lists: its list's crumb and its own.
+    , crumb : Maybe { list : String, row : String }
     , panels : List Panel
+
+    -- ORBIT's own cells on the page, in describe order.
+    , acts : List Act
     }
 
 
 type Schema
-    = Schema
-        { count : Maybe Int
-        , pages : List Page
-        , index : Dict String Param
+    = Schema Fields
 
-        -- Every address once, the last described first.
-        , order : List Addr
-        }
+
+type alias Fields =
+    { count : Maybe Int
+    , pages : List Page
+    , index : Dict String Param
+    , matrix : Matrix
+    , midiMap : MidiMap
+
+    -- Every address once, the last described first.
+    , order : List Addr
+    }
 
 
 empty : Schema
 empty =
-    Schema { count = Nothing, pages = [], index = Dict.empty, order = [] }
+    Schema { count = Nothing, pages = [], index = Dict.empty, matrix = { sources = [], cols = [], range = Nothing, dests = Nothing }, midiMap = { inputs = [], kinds = [], ccs = [], msbs = [], span = Nothing, rows = Nothing, mapRows = Nothing }, order = [] }
+
+
+{-| The matrix part of a schema: empty but for `MTX-<ENGINE>`'s.
+-}
+matrix : Schema -> Matrix
+matrix (Schema s) =
+    s.matrix
+
+
+{-| The MIDI MAP part of a schema: empty but for `MAP`'s.
+-}
+midiMap : Schema -> MidiMap
+midiMap (Schema s) =
+    s.midiMap
 
 
 {-| How many pages the unit says there are, once one has been described.
@@ -118,6 +189,13 @@ pageNumber label (Schema s) =
 param : Addr -> Schema -> Maybe Param
 param a (Schema s) =
     Dict.get (Addr.key a) s.index
+
+
+{-| Some page of it lists a panel of that name (`REVERB`, `FILTER`).
+-}
+hasPanel : String -> Schema -> Bool
+hasPanel name (Schema s) =
+    List.any (\pg -> List.any (\pn -> pn.name == name) pg.panels) s.pages
 
 
 {-| The parameter as the panels now showing describe it. One address can be
@@ -179,7 +257,7 @@ add line (Schema s) =
             Schema
                 { s
                     | count = Just p.count
-                    , pages = List.filter (\x -> x.n /= p.n) s.pages ++ [ { n = p.n, label = p.label, panels = [] } ]
+                    , pages = List.filter (\x -> x.n /= p.n) s.pages ++ [ { n = p.n, label = p.label, crumb = Nothing, panels = [], acts = [] } ]
                 }
 
         Protocol.Panel p ->
@@ -189,7 +267,7 @@ add line (Schema s) =
             let
                 q : Param
                 q =
-                    { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, options = [] }
+                    { addr = p.addr, label = p.label, kind = p.kind, scale = p.scale, min = p.min, max = p.max, step = p.step, default = p.default, flags = p.flags, options = [] }
             in
             Schema
                 { s
@@ -222,6 +300,47 @@ add line (Schema s) =
         Protocol.Route r ->
             Schema { s | pages = onLastPanel (\pn -> { pn | routes = pn.routes ++ [ r ] }) s.pages }
 
+        Protocol.Src r ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | sources = m.sources ++ [ ( r.src, r.label ) ] } }
+
+        Protocol.Col c ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | cols = m.cols ++ [ ( c.tag, c.addr ) ] } }
+
+        Protocol.AmountRange lo hi ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | range = Just ( lo, hi ) } }
+
+        Protocol.Dests n ->
+            let
+                m : Matrix
+                m =
+                    s.matrix
+            in
+            Schema { s | matrix = { m | dests = Just n } }
+
+        Protocol.RoutesIs ->
+            Schema s
+
+        Protocol.RouteIs _ ->
+            Schema s
+
+        Protocol.Unroute _ ->
+            Schema s
+
         -- TAPE's SOURCE is read-only: its text comes with `since`.
         Protocol.Source _ ->
             Schema s
@@ -235,8 +354,97 @@ add line (Schema s) =
         Protocol.PartIs _ _ ->
             Schema s
 
+        Protocol.SchemaIs _ ->
+            Schema s
+
+        Protocol.MixerIs ->
+            Schema s
+
+        Protocol.Crumb c ->
+            Schema { s | pages = onLast (\pg -> { pg | crumb = Just c }) s.pages }
+
+        Protocol.SettingsIs ->
+            Schema s
+
+        Protocol.ProjectIs _ ->
+            Schema s
+
+        Protocol.SoundIs _ ->
+            Schema s
+
+        Protocol.ToastIs _ ->
+            Schema s
+
+        Protocol.ProjectsIs _ ->
+            Schema s
+
+        Protocol.Proj _ ->
+            Schema s
+
         Protocol.Refused _ _ ->
             Schema s
+
+        Protocol.InputIs r ->
+            onMidiMap (\mm -> { mm | inputs = mm.inputs ++ [ r ] }) s
+
+        Protocol.KindIs r ->
+            onMidiMap (\mm -> { mm | kinds = mm.kinds ++ [ r ] }) s
+
+        Protocol.CcsAre ns ->
+            onMidiMap (\mm -> { mm | ccs = ns }) s
+
+        Protocol.MsbsAre ns ->
+            onMidiMap (\mm -> { mm | msbs = ns }) s
+
+        Protocol.SpanIs lo hi ->
+            onMidiMap (\mm -> { mm | span = Just ( lo, hi ) }) s
+
+        Protocol.RowsAre n ->
+            onMidiMap (\mm -> { mm | rows = Just n }) s
+
+        Protocol.MapRowsAre n ->
+            onMidiMap (\mm -> { mm | mapRows = Just n }) s
+
+        Protocol.MapIs _ ->
+            Schema s
+
+        Protocol.RowIs _ ->
+            Schema s
+
+        Protocol.LearnIs _ ->
+            Schema s
+
+        Protocol.MapFileIs _ ->
+            Schema s
+
+        Protocol.Act a ->
+            Schema { s | pages = onLast (\pg -> { pg | acts = pg.acts ++ [ a ] }) s.pages }
+
+        Protocol.OrbitIs ->
+            Schema s
+
+        Protocol.SongIs _ ->
+            Schema s
+
+        Protocol.SlotIs _ ->
+            Schema s
+
+        Protocol.ChordIs _ _ ->
+            Schema s
+
+        Protocol.ScaleIs _ ->
+            Schema s
+
+        Protocol.StepIs _ _ _ ->
+            Schema s
+
+        Protocol.PoolIs _ _ ->
+            Schema s
+
+
+onMidiMap : (MidiMap -> MidiMap) -> Fields -> Schema
+onMidiMap f s =
+    Schema { s | midiMap = f s.midiMap }
 
 
 onLastPanel : (Panel -> Panel) -> List Page -> List Page

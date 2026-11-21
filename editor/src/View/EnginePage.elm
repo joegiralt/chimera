@@ -642,16 +642,58 @@ connectPage m s =
         (Page.new "CHIMERA"
             |> Page.meta says
             |> Page.modules
-                [ Module.new Chip.Unit "UNIT"
-                    |> Module.note says
-                    |> Module.body
-                        [ div [ class "connect" ]
-                            [ button [ class "hbtn", onClick (Unit (Model.Connect Model.ViaUnit)) ] [ text "CONNECT UNIT" ]
-                            , button [ class "hbtn", onClick (Unit (Model.Connect Model.ViaSimulator)) ] [ text "CONNECT SIMULATOR" ]
-                            ]
-                        ]
-                ]
+                (saidModule m
+                    ++ [ Module.new Chip.Unit "UNIT"
+                            |> Module.note says
+                            |> Module.body
+                                [ div [ class "connect" ]
+                                    [ button [ class "hbtn", onClick (Unit (Model.Connect Model.ViaUnit)) ] [ text "CONNECT UNIT" ]
+                                    , button [ class "hbtn", onClick (Unit (Model.Connect Model.ViaSimulator)) ] [ text "CONNECT SIMULATOR" ]
+                                    ]
+                                ]
+                       ]
+                )
         )
+
+
+{-| What the unit refused or the editor couldn't read, in the unit's words,
+until the user has seen it; nothing kept, no module.
+-}
+saidModule : Model -> List (Module.Config Msg)
+saidModule m =
+    if List.isEmpty (Model.notices m) then
+        []
+
+    else
+        let
+            line : Model.Kept -> Html Msg
+            line k =
+                div []
+                    [ text (Model.noticeText k.notice)
+                    , text
+                        (if k.times > 1 then
+                            " ×" ++ String.fromInt k.times
+
+                         else
+                            ""
+                        )
+                    ]
+
+            lost : List (Html Msg)
+            lost =
+                if Model.noticesLost m > 0 then
+                    [ div [] [ text ("AND " ++ String.fromInt (Model.noticesLost m) ++ " MORE NO LONGER KEPT") ] ]
+
+                else
+                    []
+        in
+        [ Module.new Chip.Unit "THE UNIT SAID"
+            |> Module.full
+            |> Module.body
+                [ div [ class "said" ]
+                    (List.map line (Model.notices m) ++ lost ++ [ div [ class "connect" ] [ button [ class "hbtn", onClick (Unit Model.SeenNotices) ] [ text "SEEN" ] ] ])
+                ]
+        ]
 
 
 enginePage : Model -> State -> String -> Engine -> Html Msg
@@ -704,7 +746,8 @@ enginePage m s status e =
                         identity
                )
             |> Page.modules
-                (List.map (moduleOf ctx) lay.shown
+                (saidModule m
+                    ++ List.map (moduleOf ctx) lay.shown
                     ++ (if List.isEmpty rest then
                             []
 
@@ -823,7 +866,7 @@ extra ctx x =
                 named : List String
                 named =
                     Schema.pages ctx.m.schema
-                        |> List.concatMap (.panels >> List.filter (\pn -> pn.variant == "-" || Dict.get pn.name ctx.m.variants == Just pn.variant) >> List.concatMap .routes)
+                        |> List.concatMap (.panels >> List.filter (\pn -> pn.variant == "-" || Dict.get pn.name ctx.m.variants == Just pn.variant) >> List.concatMap (.routes >> List.map .label))
                         |> List.foldl
                             (\r acc ->
                                 if List.member r acc then

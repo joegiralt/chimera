@@ -129,14 +129,21 @@ async function settle(addr, ok) {
 // ---- `since`: the generation a client holds ----
 
 let gen = 0;
-/** `ed since <gen>` : its lines, the generation held moves on. */
+/** `ed since <gen>` : its lines, the generation held moves on. An answer
+ * that ends `OK <m> more` owes sections: asked again at once, its lines
+ * joined (ADR 0289). */
 async function since(n = gen) {
-  const got = await ask(`ed since ${n}`);
-  const end = got.at(-1);
-  const m = /^OK (\d+)$/.exec(end);
-  if (!m) throw new Error(`ed since ${n}: ${got.join(" | ")}`);
-  gen = Number(m[1]);
-  return got.slice(0, -1);
+  const lines = [];
+  for (let ask_ = n; ; ) {
+    const got = await ask(`ed since ${ask_}`);
+    const end = got.at(-1);
+    const m = /^OK (\d+)( more)?$/.exec(end);
+    if (!m) throw new Error(`ed since ${ask_}: ${got.join(" | ")}`);
+    gen = Number(m[1]);
+    lines.push(...got.slice(0, -1));
+    if (!m[2]) return lines;
+    ask_ = gen;
+  }
 }
 
 /** `since` until a line matches, or the settle time: every line seen meanwhile. */
@@ -192,32 +199,52 @@ async function describeAll(engine) {
   if (!(count > 0)) throw new Error(`describe ${engine} 0: ${first.join(" | ")}`);
   const blocks = []; // { panel, variant, params: [{ addr, kind, scale, min, max, opts }] }
   const params = new Map(); // every addr described anywhere
+  const texts = []; // each page's lines, for the hash
   for (let n = 0; n < count; n++) {
     const got = n === 0 ? first : await ask(`ed describe ${engine} ${n}`);
     if (got.at(-1) !== "OK") {
       fail(`${engine} page ${n}`, "ed describe", got.join(" | "));
       continue;
     }
+    texts.push(got.slice(0, -1));
     let block = null;
     for (const l of got) {
       const t = tokens(l);
       if (t[0] === "panel" && t.length === 3) {
         block = { panel: t[1], variant: t[2], params: [] };
         blocks.push(block);
-      } else if (t[0] === "param" && t.length === 9 && block) {
+      } else if (t[0] === "param" && t.length === 10 && block) {
         if (t[4] !== "lin" && t[4] !== "oct") fail(t[1], "describe", `scale ${t[4]}`);
+        if (!["-", "m", "d", "md"].includes(t[9])) fail(t[1], "describe", `flags ${t[9]}`);
         const p = { addr: t[1], kind: t[3], scale: t[4], min: Number(t[5]), max: Number(t[6]), opts: [] };
         block.params.push(p);
         params.set(p.addr, p);
       } else if (t[0] === "param") {
-        fail(t[1] ?? "?", "describe", `not a protocol 3 param line: ${l}`);
+        fail(t[1] ?? "?", "describe", `not a protocol 4 param line: ${l}`);
       } else if (t[0] === "opt" && t.length === 4 && block) {
         block.params.at(-1)?.opts.push([Number(t[2]), t[3]]);
       }
     }
   }
   info(`describe ${engine}: ${count} pages, ${blocks.length} panel variants, ${params.size} addresses`);
+  await checkHash(engine, texts);
   return { blocks, params, count };
+}
+
+/** FNV-1a 64 of every byte `describe` wrote, as `ed schema` hashes it. */
+function fnv64(text) {
+  let h = 0xcbf29ce484222325n;
+  for (const b of Buffer.from(text, "utf8")) h = BigInt.asUintN(64, (h ^ BigInt(b)) * 0x100000001b3n);
+  return h.toString(16).padStart(16, "0");
+}
+
+/** `ed schema <S>`: its pages and the hash of describe's own bytes. */
+async function checkHash(schema, texts) {
+  const got = await ask(`ed schema ${schema}`);
+  const t = tokens(got[0] ?? "");
+  const want = fnv64(texts.map((lines) => lines.map((l) => l + "\n").join("")).join(""));
+  if (t[0] !== "schema" || t[1] !== schema || Number(t[2]) !== texts.length || t[3] !== want)
+    fail(schema, "ed schema", `${got.join(" | ")}: want ${texts.length} pages, ${want}`);
 }
 
 /** The variants the Part shows now. */
@@ -306,6 +333,7 @@ async function browse(row, took, settled = async () => false) {
 /** One engine end to end: INIT loaded, described, every param in the
  * variants the Part shows set and read back, a full answer only of
  * described addresses. */
+let mixerAddrs = new Set();
 async function enginePass(engine) {
   await loadInit(engine);
   const { blocks, params } = await describeAll(engine);
@@ -318,13 +346,85 @@ async function enginePass(engine) {
   const refusable = (a) => /\.KNOB_|\.CHOKE$/.test(a);
   await sweep(shown.filter((p) => !selector(p)), ` ${engine}`, done, refusable);
   await sweep(shown.filter(selector), ` ${engine}`, done, refusable);
-  const all = await ask("ed since 0");
-  const vals = all.map(parseVal).filter(Boolean);
+  const all = await since(0);
+  const vals = all.map(parseVal).filter(Boolean).filter((v) => !mixerAddrs.has(v.addr));
   const extra = vals.filter((v) => !params.has(v.addr)).map((v) => v.addr);
   if (extra.length) fail(engine, "since 0", `answered but not described: ${extra.slice(0, 5).join(" ")}`);
   if (all[1] !== `part 1 ${engine}`) fail(engine, "since 0", `opens ${JSON.stringify(all.slice(0, 2))}`);
   if (engine === "TAPE" && !all.some((l) => l.startsWith("source \""))) fail(engine, "since 0", "no source line");
   info(`${engine}: ${sets - before} sets read back, a full answer of ${vals.length} vals`);
+}
+
+/** `cmd` is queued, then a `since` line passes `said`: else a failure at `where`. */
+async function queuedThenSaid(where, cmd, said, what) {
+  await since(); // catch up: only what the command moves is read
+  const got = await send(cmd);
+  if (got.at(-1) !== "OK queued") {
+    fail(where, cmd, got.join(" | "));
+    return null;
+  }
+  const seen = await sinceUntil(said);
+  const line = seen.find(said);
+  if (!line) fail(where, cmd, `since never said ${what}: ${seen.join(" | ")}`);
+  return line ?? null;
+}
+
+/** The followed Part's Sound row on FILTER.CUTOFF, as a whole answer says it. */
+async function cutoffRow() {
+  return (await since(0)).find((l) => /^row S\d+ \S+ \S+ FILTER\.CUTOFF /.test(l)) ?? null;
+}
+
+async function mapPass() {
+  const schema = tokens((await ask("ed schema MAP"))[0] ?? "");
+  if (schema[0] !== "schema" || schema[1] !== "MAP") return fail("MAP", "ed schema", schema.join(" "));
+  if (schema[2] === "0") return info("map: not in this build (0 pages)");
+  await describeAll("MAP");
+  const page = await ask("ed describe MAP 0");
+  for (const want of [/^input CC( \S+)+$/, /^kind PICKUP "/, /^ccs( \d+)+$/, /^msbs( \d+)+$/, /^span 0 255$/, /^rows \d+$/, /^maprows \d+$/])
+    if (!page.some((l) => want.test(l))) fail("MAP", "describe", `no line ${want}`);
+
+  // add: `row S<i> <input> <kind> <addr> <min> <max> <echo> <status>`
+  const row = (rest) => new RegExp(`^row (S\\d+) ${rest}$`);
+  const added = await queuedThenSaid(
+    "map", "ed map add CC20 PICKUP FILTER.CUTOFF",
+    (l) => row("CC20 PICKUP FILTER\\.CUTOFF 0 255 off live").test(l), "the row",
+  );
+  if (!added) return;
+  const s = tokens(added)[1];
+
+  // set: each against the row as `since` last said it
+  for (const [field, value, want] of [["min", 10, "10 255"], ["max", 200, "10 200"]]) {
+    const line = `row ${s} CC20 PICKUP FILTER.CUTOFF ${want} off live`;
+    await queuedThenSaid("map", `ed map set ${s} ${field} ${value}`, (l) => l === line, line);
+  }
+
+  // rm: witnessed by the row's input and target
+  for (const stale of [`ed map rm ${s} CC21 FILTER.CUTOFF`, `ed map rm ${s} CC20 FILTER.RESO`]) {
+    const got = await send(stale);
+    if (got.at(-1) !== `ERR ed map rm ${s} is not that row: ed since`) fail("map", stale, got.join(" | "));
+  }
+  if (!(await cutoffRow())) fail("map", "rm with a stale witness", "the row went");
+  const rm = `ed map rm ${s} CC20 FILTER.CUTOFF`;
+  const gone = await send(rm);
+  if (gone.at(-1) !== "OK queued") fail("map", rm, gone.join(" | "));
+  else {
+    const until = Date.now() + SETTLE_MS;
+    let left = await cutoffRow();
+    while (left && Date.now() < until) {
+      await sleep(40);
+      left = await cutoffRow();
+    }
+    if (left) fail("map", rm, `since still says ${left}`);
+  }
+
+  // learn: the box goes to the cell's page and arms there
+  const armed = (l) => l.startsWith('learn armed FILTER.CUTOFF "');
+  await queuedThenSaid("learn", "ed learn FILTER.CUTOFF", armed, "learn armed FILTER.CUTOFF");
+  await queuedThenSaid("learn", "ed learn off", (l) => l === 'learn off ""', 'learn off ""');
+  const not = await ask("ed learn THEME.ACCENT");
+  if (not.at(-1) !== "ERR ed learn THEME.ACCENT is no Part page's cell") fail("learn", "ed learn THEME.ACCENT", not.join(" | "));
+  await onPart1();
+  info(`map: a row added on FILTER.CUTOFF (${s}), its span set, removed by its witness; learn armed and off`);
 }
 
 // ---- the run ----
@@ -338,15 +438,127 @@ async function main() {
   // hello
   const hello = tokens((await ask("ed hello"))[0]);
   if (
-    !(hello.length === 7 && hello[0] === "ed" && hello[1] === "hello" && hello[2] === "3" &&
+    !(hello.length === 7 && hello[0] === "ed" && hello[1] === "hello" && hello[2] === "4" &&
       hello[4] === "part" && hello[5] === "1" && hello[6] === "ALGO")
   ) {
-    fail("hello", "ed hello", `${hello.join(" ")}: want protocol 3, part 1 ALGO`);
+    fail("hello", "ed hello", `${hello.join(" ")}: want protocol 4, part 1 ALGO`);
     throw new Error("not on Part 1 ALGO: cannot go on");
   }
   info(`hello: protocol ${hello[2]}, build ${hello[3]}, part 1 ALGO`);
 
-  const { blocks, params, count } = await describeAll("ALGO");
+  const { blocks, params: algo, count } = await describeAll("ALGO");
+  // The mixer (ADR 0289): Part 3's own cells and the buses, set and read
+  // back while the box follows Part 1.
+  const mixer = await describeAll("MIXER");
+  const params = new Map([...algo, ...mixer.params]);
+  mixerAddrs = new Set(mixer.params.keys());
+  const mixerShown = mixer.blocks
+    .filter((b) => b.variant === "-" || b.panel === "REVERB" || b.panel === "DELAY")
+    .flatMap((b) => b.params)
+    .filter((p) => /^(PART3(_SND)?|CHORUS|DELAY|REVERB|TAPE|COMP)\./.test(p.addr) && p.addr !== "REVERB.TYPE");
+  await sweep(mixerShown, " MIXER", new Set(), (a) => /\.(RESERVE|MAX_VOICES)$/.test(a));
+  // 0.4's mixer params (ADR 0296 SMART EQ, ADR 0302 the delay's SYNC): each described, so each in the sweep above.
+  for (const a of ["PART3.ROLE", "COMP.SMART_EQ", "COMP.AMOUNT", "COMP.KEY", "COMP.MAKEUP", "REVERB.ROLE", "DELAY.SYNC", "DELAY.TIME", "DELAY.NOTE"])
+    if (!mixerShown.some((p) => p.addr === a)) fail(a, "describe", "not among the params MIXER shows");
+  // The delay's TIME cell is the DELAY panel: the ms under FREE, the note
+  // under SYNC. The sweep left SYNC on FREE.
+  const delayPanels = mixer.blocks.filter((b) => b.panel === "DELAY").map((b) => `${b.variant} ${b.params.map((p) => p.addr).join(" ")}`);
+  if (delayPanels.join(", ") !== "FREE DELAY.TIME, SYNC DELAY.NOTE") fail("DELAY", "describe", `panels ${JSON.stringify(delayPanels)}`);
+  for (const [opt, variant] of [["#1", "SYNC"], ["#0", "FREE"]]) {
+    const got = await send(`ed set DELAY.SYNC ${opt}`);
+    sets++;
+    const now = got.at(-1) === "OK queued" ? await settleVariant("DELAY", variant) : null;
+    if (now !== variant) fail("DELAY.SYNC", `set ${opt}`, `panel DELAY is ${now}: ${got.join(" | ")}`);
+    if (variant !== "SYNC") continue;
+    // A note under SYNC: stored as sent, read as the box writes it.
+    for (const [want, text] of [[0.7, "1/8"], [0.9, "1/8D"]]) {
+      const set = await send(`ed set DELAY.NOTE ${want}`);
+      sets++;
+      const v = set.at(-1) === "OK queued" ? await settle("DELAY.NOTE", (v) => near(v.stored, want)) : null;
+      if (!v) fail("DELAY.NOTE", `set ${want}`, set.join(" | "));
+      else if (!near(v.stored, want) || v.text.replace(/^\S*?(?=1\/)/, "") !== text)
+        fail("DELAY.NOTE", `set ${want}`, `read back stored ${v.stored} "${v.text}", want ${want} "${text}"`);
+    }
+  }
+  info("delay: SYNC and FREE seen as panel DELAY, the note set and read back under SYNC");
+
+  // The matrix (ADR 0289): every source into FREQ, set, read back and removed.
+  const mtx = await ask("ed describe MTX-ALGO 0");
+  await checkHash("MTX-ALGO", [mtx.slice(0, -1)]);
+  const srcs = mtx.map(tokens).filter((t) => t[0] === "src").map((t) => t[1]);
+  if (srcs.length !== 13) fail("MTX-ALGO", "describe", `${srcs.length} sources`);
+  for (const s of srcs) {
+    const cell = `${s}:FILTER.CUTOFF`;
+    for (const [to, want] of [["-90", "route " + cell + " -90 "], ["off", null]]) {
+      const got = await ask(`ed route ${cell} ${to}`);
+      if (got.at(-1) !== "OK queued") { fail(cell, `route ${to}`, got.join(" | ")); continue; }
+      const until = Date.now() + SETTLE_MS;
+      let ok = false;
+      while (!ok && Date.now() < until) {
+        const lines = await since(0);
+        const line = lines.find((l) => l.startsWith(`route ${cell} `));
+        ok = want ? line?.startsWith(want) : !line;
+        if (!ok) await sleep(40);
+      }
+      if (!ok) fail(cell, `route ${to}`, "since never said so");
+    }
+  }
+  info(`routes: ${srcs.length} sources into FREQ, set and removed`);
+
+  // SETTINGS (ADR 0289): its pages with their crumbs; THEME and Part 3's
+  // LIVE SNAP set and read back; `ed projects` lists the card once.
+  const settings = await describeAll("SETTINGS");
+  for (const [a, p] of settings.params) params.set(a, p);
+  mixerAddrs = new Set([...mixerAddrs, ...settings.params.keys()]);
+  const settingsShown = settings.blocks
+    .flatMap((b) => b.params)
+    .filter((p) => /^(THEME\.|PART3\.(SNAP|HELD)$)/.test(p.addr));
+  await sweep(settingsShown, " SETTINGS", new Set());
+  // PERSONALIZE › ALGO PAGES (0.4 #1045): the sweep set OPS, then PARAMS, each
+  // read back; it is left on its first option.
+  const algoFirst = settingsShown.find((p) => p.addr === "THEME.ALGO_FIRST");
+  if (algoFirst?.opts.map(([i, n]) => `${i} ${n}`).join(", ") !== "0 PARAMS, 1 OPS")
+    fail("THEME.ALGO_FIRST", "describe", `options ${JSON.stringify(algoFirst?.opts)}: want PARAMS, OPS`);
+  else if ((await get("THEME.ALGO_FIRST")).stored !== 0) fail("THEME.ALGO_FIRST", "after the sweep", "not back on PARAMS");
+  const listed = await ask("ed projects");
+  if (listed.at(-1) !== "OK queued") fail("projects", "ed projects", listed.join(" | "));
+  else {
+    const lines = await sinceUntil((l) => l.startsWith("projects "));
+    if (!lines.some((l) => l.startsWith("projects "))) fail("projects", "since", "never listed");
+    if (!(await since(0)).some((l) => l.startsWith("project \""))) fail("projects", "since 0", "no project line");
+  }
+  info(`settings: ${settings.count} pages, THEME and PART3's snap read back, the card listed`);
+
+  // ORBIT (ADR 0289): its pages, ring 3's rhythm and voice set and read
+  // back whatever ring the box shows; a step and a queued scene in since.
+  const orbit = await describeAll("ORBIT");
+  for (const [a, p] of orbit.params) params.set(a, p);
+  mixerAddrs = new Set([...mixerAddrs, ...orbit.params.keys()]);
+  const orbitShown = orbit.blocks
+    .flatMap((b) => b.params)
+    .filter((p) => /^RING3\.(STEPS|HITS|CHANCE|GATE|VEL)$/.test(p.addr));
+  // HITS never passes STEPS, as the box clamps it: the sweep leaves STEPS at its min.
+  await sweep(orbitShown, " ORBIT", new Set(), (a) => a === "RING3.HITS");
+  // Another note first, so a second run on the same simulator still sees a diff.
+  await ask("ed step 2 5 61");
+  await sinceUntil((l) => l.startsWith("step 2 5 61"));
+  for (const [cmd, line] of [
+    ["ed step 2 5 62", "step 2 5 62"],
+    ["ed scene queue 2", "song "],
+  ]) {
+    const got = await ask(cmd);
+    if (got.at(-1) !== "OK queued") fail("orbit", cmd, got.join(" | "));
+    else if (!(await sinceUntil((l) => l.startsWith(line))).some((l) => l.startsWith(line)))
+      fail("orbit", cmd, `since never said ${line}`);
+  }
+  await ask("ed scene queue 1");
+  info(`orbit: ${orbit.count} pages, RING3 read back, a step and a queue in since`);
+
+  // MIDI MAP (ADR 0289, slice 4): its page; a Sound row added on CUTOFF
+  // (learn's write: the row INIT has there is replaced), its span set, a
+  // removal refused on a stale witness and taken on the row's own; learn
+  // armed on the cell and off again, each seen in `since`.
+  await mapPass();
 
   // every param to its max, then its min, read back
   const done = new Set();
@@ -370,6 +582,15 @@ async function main() {
     await sweep(blocks.filter((b) => b.panel === "FILTER" && b.variant === kind).flatMap((b) => b.params), ` @${kind}`, done);
   }
   await sweep(shown.filter(hold), "", done);
+  // FDBK steps 0.1 (0.4 #1045): the sweep took it to 7 and 0; a tenth is stored as sent.
+  if (!shown.some((p) => p.addr === "OP_A.FDBK")) fail("OP_A.FDBK", "sweep", "not among the params ALGO shows");
+  for (const want of [3.3, 0]) {
+    const got = await send(`ed set OP_A.FDBK ${want}`);
+    const v = got.at(-1) === "OK queued" ? await settle("OP_A.FDBK", (v) => near(v.stored, want)) : null;
+    sets++;
+    if (!v) fail("OP_A.FDBK", `set ${want}`, got.join(" | "));
+    else if (!near(v.stored, want)) fail("OP_A.FDBK", `set ${want}`, `read back stored ${v.stored}, want ${want} (${v.text})`);
+  }
   info(`set/get: ${sets} sets read back, ${skipped.length} skipped`);
 
   // a knob: the simulator's own, seen in `since`
@@ -418,15 +639,17 @@ async function main() {
   const load = await browse(0, (l) => l.startsWith("val FILTER.CUTOFF "));
   const cut = load.map(parseVal).filter(Boolean).find((v) => v.addr === "FILTER.CUTOFF");
   if (!cut || !near(cut.stored, 20000)) fail("FILTER.CUTOFF", "load INIT ALGO", `since: ${load.slice(0, 3).join(" | ")}`);
-  else if (!load.every((l) => l.startsWith("val ") || l.startsWith("panel ") || l.startsWith("part "))) {
-    fail("load", "since", `unexpected lines: ${load.filter((l) => !/^(val|panel|part) /.test(l)).join(" | ")}`);
+  // A load is a new Sound: its matrix (ROUTES), its Part's status and the
+  // box's toast (SETTINGS) come with it, and MAP whole (after its empty line) when the Sound's rows moved (ADR 0289).
+  else if (!load.every((l) => /^$|^(val|panel|part|route|unroute|sound|project|toast|map|row|learn) /.test(l))) {
+    fail("load", "since", `unexpected lines: ${load.filter((l) => !/^$|^(val|panel|part|route|unroute|sound|project|toast|map|row|learn) /.test(l)).join(" | ")}`);
   } else info(`load: INIT ALGO -> ${load.length} lines, FILTER.CUTOFF back to ${cut.stored}`);
   await onPart1();
 
   // a stale number: everything
   await since();
   for (const stale of [0, gen + 1000]) {
-    const all = await ask(`ed since ${stale}`);
+    const all = await since(stale);
     const vals = all.map(parseVal).filter(Boolean);
     const addrs = new Set(vals.map((v) => v.addr));
     if (all[0] !== "" || all[1] !== "part 1 ALGO") fail("since", `stale ${stale}`, `first lines ${JSON.stringify(all.slice(0, 2))}: a full answer opens with an empty line`);
@@ -437,8 +660,8 @@ async function main() {
     if (extra.length) fail("since", `stale ${stale}`, `answered but not described: ${extra.join(" ")}`);
     const ps = all.filter((l) => l.startsWith("panel ")).map((l) => tokens(l)[1]);
     if (ps.length === 0) fail("since", `stale ${stale}`, "no panel lines");
-    info(`stale ${stale}: ${all.length - 1} lines, ${vals.length} vals, ${ps.length} panels`);
-    gen = Number(/^OK (\d+)$/.exec(all.at(-1))?.[1] ?? gen);
+    if (!all.includes("mixer")) fail("since", `stale ${stale}`, "no mixer section");
+    info(`stale ${stale}: ${all.length} lines, ${vals.length} vals, ${ps.length} panels`);
   }
   // and a current one: nothing
   const none = await since();

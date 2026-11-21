@@ -286,7 +286,7 @@ static NO_SEEN: Seen = Seen::new();
 impl MidiSlot {
     /// The state, built on first use at rest: bank 1 never writes it.
     #[inline(always)]
-    fn ui(&mut self) -> &mut MidiUi {
+    pub(in crate::ui) fn ui(&mut self) -> &mut MidiUi {
         if !self.built {
             super::cc::build(self);
         }
@@ -1128,9 +1128,11 @@ impl UiState {
     }
 
     /// MIX + PLUS on MIDI MAP's row 0: KEEP MAP on or off for Part `p`, its
-    /// rows now the ones kept (ADR 0253).
+    /// rows now the ones kept (ADR 0253). Inlined: the page's keys and the
+    /// editor's (`ed_cue`) call it, in two bank-2 groups.
     #[cfg(feature = "midi-map")]
-    pub(super) fn keep_map(&mut self, p: PartId) {
+    #[inline(always)]
+    pub(in crate::ui) fn keep_map(&mut self, p: PartId) {
         let map = self.project.part(p).sound.map;
         let m = self.cc.part(p.index());
         m.keep = !m.keep;
@@ -1139,7 +1141,8 @@ impl UiState {
 
     /// Whether Part `p` keeps its map; before the door first ran, no.
     #[cfg(feature = "midi-map")]
-    pub(super) fn keeps_map(&self, p: PartId) -> bool {
+    #[inline(always)]
+    pub(in crate::ui) fn keeps_map(&self, p: PartId) -> bool {
         self.cc.built().is_some_and(|m| m.parts[p.index()].keep)
     }
 

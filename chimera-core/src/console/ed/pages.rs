@@ -1,78 +1,21 @@
-//! The pages `ed` walks for an engine: its chain's, the Part's first, then
-//! on DRUM each pad's (ADR 0285). One walk, `Pages`, for `describe`,
-//! `get`, `set` and `since`, so they can't disagree on what a page is.
-//! Its counts are `const`: the page number is a `u8` by a compile-time
-//! check, never a silent cast.
+//! The pages `ed` walks for a schema: its shared pages first, then each
+//! round's (each pad's on DRUM, each Part's on the mixer and SETTINGS,
+//! each ring's on ORBIT: ADR 0285, 0289).
+//! One walk, `Pages`, for `describe`, `get`, `set` and `since`, so they
+//! can't disagree on what a page is. Its counts are `const`: the page
+//! number is a `u8` by a compile-time check, never a silent cast.
 
+use super::schema::{Round, RoundKind, Schema};
 use crate::dsp::drum::types::PadId;
 use crate::params::EngineType;
-use crate::ui::block_def::{BlockDef, ChainDef2, SlotBinding};
-use crate::ui::block_registry::{
-    ALGO_FORMANT_CHAIN, DRUM_CHAIN, MODAL_PLUCK_CHAIN, TAPE_CHAIN, VA_CHAIN,
-};
+use crate::project::PartId;
+use crate::ui::block_def::{BlockDef, ChainDef2};
+use chimera_engine::orbit::RingIdx;
 
 /// The chain the editor walks for `engine`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.chain"))]
 pub const fn chain(engine: EngineType) -> &'static ChainDef2 {
-    match engine {
-        EngineType::Algo => &ALGO_FORMANT_CHAIN,
-        EngineType::Modal => &MODAL_PLUCK_CHAIN,
-        EngineType::Tape => &TAPE_CHAIN,
-        EngineType::Va => &VA_CHAIN,
-        EngineType::Drum => &DRUM_CHAIN,
-    }
-}
-
-/// Whether a cell bound `b` resolves against the pad (DRUM's): a pad's
-/// param, its machine's knobs, its filter's panel, its routes. FLT's
-/// sub-pages' panel cells count: on DRUM they read the pad's KIND.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.pages.pad_binding")
-)]
-const fn pad_binding(b: SlotBinding) -> bool {
-    match b {
-        SlotBinding::Param(a) => a.block.is_pad(),
-        SlotBinding::SelectPad
-        | SlotBinding::Knob(_)
-        | SlotBinding::PadFilterPanel(_)
-        | SlotBinding::FilterPanel(_)
-        | SlotBinding::SelectRoute
-        | SlotBinding::SelectedRoute(_) => true,
-        SlotBinding::Empty
-        | SlotBinding::SelectedOp(_)
-        | SlotBinding::SelectOp
-        | SlotBinding::Legacy(_)
-        | SlotBinding::FxPanel(_)
-        | SlotBinding::EnvPanel(..)
-        | SlotBinding::LfoPanel(..)
-        | SlotBinding::ModalPanel(..)
-        | SlotBinding::OpPanel(..)
-        | SlotBinding::Machine(_)
-        | SlotBinding::Source
-        | SlotBinding::ReverbPanel(..)
-        | SlotBinding::SelectedRing(_)
-        | SlotBinding::Orbit(_) => false,
-    }
-}
-
-/// `def` is described once a pad on `engine`: on DRUM, a page with a cell
-/// on the pad.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.per_pad"))]
-pub(super) const fn per_pad(engine: EngineType, def: &BlockDef) -> bool {
-    match engine {
-        EngineType::Drum => {
-            let mut i = 0;
-            while i < def.params.len() {
-                if pad_binding(def.params[i].binding) {
-                    return true;
-                }
-                i += 1;
-            }
-            false
-        }
-        EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => false,
-    }
+    super::schema::engine_chain(engine)
 }
 
 /// Flat page `n` of the chain: each node's home, then its sub-pages.
@@ -94,36 +37,66 @@ const fn def_in(c: &ChainDef2, mut n: usize) -> Option<&'static BlockDef> {
     None
 }
 
-/// The chain's pages, `(the Part's, a pad's)`.
-#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.counts"))]
-const fn counts(engine: EngineType) -> (usize, usize) {
-    let c = chain(engine);
-    let (mut part, mut pad) = (0, 0);
-    let mut n = 0;
-    while let Some(def) = def_in(c, n) {
-        n += 1;
-        if per_pad(engine, def) {
-            pad += 1;
-        } else {
-            part += 1;
+/// Flat page `n` of `s`'s chain or leaves, rounds aside.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.def_of"))]
+const fn def_of(s: Schema, n: usize) -> Option<&'static BlockDef> {
+    match s.chain() {
+        Some(c) => def_in(c, n),
+        None => {
+            let l = s.leaves();
+            if n < l.len() { Some(l[n].def) } else { None }
         }
     }
-    (part, pad)
 }
 
-/// Every page of `engine`, pads included.
+/// The schema's pages, `(shared, a round's)`: the matrix has one page, its
+/// own.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.counts"))]
+const fn counts(s: Schema) -> (usize, usize) {
+    match s {
+        Schema::Matrix(_) => return (1, 0),
+        // MIDI MAP's grammar, with the map's code only.
+        Schema::Map => return (cfg!(feature = "midi-map") as usize, 0),
+        Schema::Engine(_) | Schema::Mixer | Schema::Settings | Schema::Orbit => {}
+    }
+    let (mut shared, mut round) = (0, 0);
+    let mut n = 0;
+    while let Some(def) = def_of(s, n) {
+        n += 1;
+        if s.in_round(def) {
+            round += 1;
+        } else {
+            shared += 1;
+        }
+    }
+    (shared, round)
+}
+
+/// How many rounds a schema's round pages go: each pad, each Part, each
+/// ring.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.rounds_of"))]
+const fn rounds_of(k: RoundKind) -> usize {
+    match k {
+        RoundKind::None => 0,
+        RoundKind::Pads => PadId::ALL.len(),
+        RoundKind::Parts => PartId::ALL.len(),
+        RoundKind::Rings => RingIdx::ALL.len(),
+    }
+}
+
+/// Every page of `s`, every round's included.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.total"))]
-const fn total(engine: EngineType) -> usize {
-    let (part, pad) = counts(engine);
-    part + pad * PadId::ALL.len()
+const fn total(s: Schema) -> usize {
+    let (shared, round) = counts(s);
+    shared + round * rounds_of(s.rounds())
 }
 
 // A page number is one `u8` on the wire and in `EdArg::Describe`: every
-// engine's count fits, checked here, so `pages` never truncates.
+// schema's count fits, checked here, so `pages` never truncates.
 const _: () = {
     let mut i = 0;
-    while i < EngineType::ALL.len() {
-        assert!(total(EngineType::ALL[i]) <= u8::MAX as usize);
+    while i < Schema::ALL.len() {
+        assert!(total(Schema::ALL[i]) <= u8::MAX as usize);
         i += 1;
     }
 };
@@ -131,18 +104,37 @@ const _: () = {
 /// The pages the editor walks for `engine`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.pages"))]
 pub const fn pages(engine: EngineType) -> u8 {
-    total(engine) as u8
+    schema_pages(Schema::Engine(engine))
 }
 
-/// A walk of pages in `describe`'s order: the Part's (`pad` `None`), then
-/// each pad's, or one pad's round alone.
+/// The pages the editor walks for `s`.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.pages.schema_pages")
+)]
+pub const fn schema_pages(s: Schema) -> u8 {
+    total(s) as u8
+}
+
+/// Round `i` of kind `k`, after the shared pages.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.round_at"))]
+fn round_at(k: RoundKind, i: usize) -> Option<Round> {
+    match k {
+        RoundKind::None => None,
+        RoundKind::Pads => PadId::ALL.get(i).map(|&p| Round::Pad(p)),
+        RoundKind::Parts => PartId::ALL.get(i).map(|&p| Round::Part(p)),
+        RoundKind::Rings => RingIdx::ALL.get(i).map(|&r| Round::Ring(r)),
+    }
+}
+
+/// A walk of pages in `describe`'s order: the shared pages, then each
+/// round's, or one round alone.
 pub(super) struct Pages {
-    engine: EngineType,
-    chain: &'static ChainDef2,
-    /// The round walked: the Part's, or a pad's.
-    round: Option<PadId>,
-    /// Stop after this round (one pad's, or the Part's alone).
-    only: bool,
+    schema: Schema,
+    round: Round,
+    /// The next round to walk when this one ends: `None` walking one
+    /// round alone.
+    next: Option<usize>,
     node: usize,
     /// 0: the node's home, then its sub-pages from 1.
     sub: usize,
@@ -151,40 +143,36 @@ pub(super) struct Pages {
 impl Pages {
     /// Every page.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.all"))]
-    pub(super) const fn all(engine: EngineType) -> Pages {
+    pub(super) const fn all(s: Schema) -> Pages {
         Pages {
-            engine,
-            chain: chain(engine),
-            round: None,
-            only: false,
+            schema: s,
+            round: Round::Shared,
+            next: Some(0),
             node: 0,
             sub: 0,
         }
     }
 
-    /// The Part's pages alone.
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.part"))]
-    pub(super) const fn part(engine: EngineType) -> Pages {
+    /// Round `r`'s pages alone (the shared pages for `Round::Shared`).
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.round"))]
+    pub(super) const fn round(s: Schema, r: Round) -> Pages {
         Pages {
-            only: true,
-            ..Pages::all(engine)
+            round: r,
+            next: None,
+            ..Pages::all(s)
         }
     }
 
-    /// Pad `p`'s pages alone.
-    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.pad"))]
-    pub(super) const fn pad(engine: EngineType, p: PadId) -> Pages {
-        Pages {
-            round: Some(p),
-            only: true,
-            ..Pages::all(engine)
-        }
-    }
-
-    /// The next def of the chain in this round, or `None` at its end.
+    /// The next def of the chain (or the leaves) in this round, or `None`
+    /// at its end.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.next_def"))]
     fn next_def(&mut self) -> Option<&'static BlockDef> {
-        let node = self.chain.blocks.get(self.node)?;
+        let Some(c) = self.schema.chain() else {
+            let leaf = self.schema.leaves().get(self.node)?;
+            self.node += 1;
+            return Some(leaf.def);
+        };
+        let node = c.blocks.get(self.node)?;
         let def = match self.sub {
             0 => node.def,
             k => node.sub_pages.get(k - 1)?,
@@ -199,26 +187,22 @@ impl Pages {
 }
 
 impl Iterator for Pages {
-    type Item = (&'static BlockDef, Option<PadId>);
+    type Item = (&'static BlockDef, Round);
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.next"))]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
+            let shared = matches!(self.round, Round::Shared);
             match self.next_def() {
-                Some(def) if per_pad(self.engine, def) == self.round.is_some() => {
+                Some(def) if self.schema.in_round(def) != shared => {
                     return Some((def, self.round));
                 }
                 Some(_) => {}
                 None => {
-                    // The round ends: the next pad's, unless one was asked.
-                    if self.only || counts(self.engine).1 == 0 {
-                        return None;
-                    }
-                    self.round = match self.round {
-                        None => Some(PadId::ALL[0]),
-                        Some(p) if p.index() + 1 == PadId::ALL.len() => return None,
-                        Some(p) => Some(p.next()),
-                    };
+                    // The round ends: the next, unless one was asked.
+                    let i = self.next?;
+                    self.round = round_at(self.schema.rounds(), i)?;
+                    self.next = Some(i + 1);
                     self.node = 0;
                     self.sub = 0;
                 }
@@ -227,8 +211,9 @@ impl Iterator for Pages {
     }
 }
 
-/// Page `n`, in `describe`'s order: its def, and the pad it is a page of.
+/// Page `n` of `s`, in `describe`'s order: its def, and the round it is
+/// a page of.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.pages.page_at"))]
-pub fn page_at(engine: EngineType, n: usize) -> Option<(&'static BlockDef, Option<PadId>)> {
-    Pages::all(engine).nth(n)
+pub fn page_at(s: Schema, n: usize) -> Option<(&'static BlockDef, Round)> {
+    Pages::all(s).nth(n)
 }

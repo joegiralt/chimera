@@ -1,30 +1,118 @@
 module Protocol exposing
-    ( AnswerLine(..)
+    ( ActCell(..)
+    , AddInput(..)
+    , Amount
+    , AnswerLine(..)
+    , Binding
+    , Cell
+    , Clock(..)
     , Command(..)
+    , ControlNo
+    , Degree
+    , Edits(..)
+    , Flags
+    , Generation
+    , Health(..)
     , Kind(..)
+    , Learn(..)
     , Line(..)
+    , MapCommand(..)
+    , MapForm(..)
+    , MapInput(..)
+    , MapKind(..)
+    , MapName
+    , MapRow(..)
+    , Msb
+    , Note
+    , NotePool
+    , NrpnNo
+    , OnOff(..)
     , OptIndex
+    , OrbitCommand(..)
+    , OverEdits(..)
     , PageLabel
     , PageNo
+    , Playback(..)
+    , ProjectFile(..)
+    , ProjectId
+    , ProjectName
+    , Rev
+    , RingNo
+    , RouteKind(..)
+    , RouteTo(..)
+    , RowIndex
+    , RowSetting(..)
+    , RowStatus(..)
+    , SaveInto(..)
     , Scale(..)
+    , ScaleMask
+    , SceneMove
+    , SceneNo
+    , SchemaId(..)
+    , Segment
+    , Slot
+    , SlotState(..)
+    , Song
+    , SoundStatus(..)
+    , SpanPlace
+    , StepNo
     , Value(..)
+    , amount
+    , binding
+    , cell
+    , cellKey
+    , controlNo
+    , degree
+    , degreeToInt
     , encode
     , firstOption
     , firstPage
+    , formKinds
+    , generation
+    , generationToInt
+    , mapName
+    , msb
     , nextPage
+    , note
+    , notePool
+    , noteToInt
+    , nrpnNo
     , optIndex
     , pageLabel
     , pageLabelFrom
     , pageNo
     , pageNoToInt
     , parse
+    , poolNotes
+    , projectId
+    , projectIdToInt
+    , projectName
+    , rev
+    , revToInt
+    , ringNo
+    , ringNoToInt
+    , rowIndex
+    , rowIndexToInt
+    , scaleMask
+    , scaleMaskToInt
+    , sceneMove
+    , sceneNo
+    , sceneNoToInt
+    , schemaToken
+    , segment
+    , segmentToInt
+    , spanPlace
+    , stepNo
+    , stepNoToInt
     )
 
 {-| The unit's text console, `ed` namespace: one command out, answer lines in.
-Parsing never fails: a line that isn't understood is `Unknown` and is ignored.
+Parsing never fails: a line that isn't understood is `Unknown`, which the
+model keeps and shows; it is never dropped.
 -}
 
 import Addr exposing (Addr)
+import Hash exposing (Hash)
 import Unit exposing (Engine, Gen, Part)
 
 
@@ -121,33 +209,843 @@ type Kind
     | Toggle
 
 
+{-| What else may target a parameter, as the unit's rules say (ADR 0289):
+a MIDI map (`m`), the mod matrix (`d`).
+-}
+type alias Flags =
+    { mappable : Bool, modulation : Bool }
+
+
+{-| A matrix cell, `ENV1:FILTER.CUTOFF`, or a jack knob's, `FM3IN`: the
+unit's own text, opaque here. Only `cell` makes one, so it is always one
+word and `ed route` can always send it.
+-}
+type Cell
+    = Cell String
+
+
+{-| A cell off the wire: one word.
+-}
+cell : String -> Maybe Cell
+cell s =
+    word s |> Maybe.map Cell
+
+
+cellKey : Cell -> String
+cellKey (Cell c) =
+    c
+
+
+{-| A route's amount as the box stores it: −127..127.
+-}
+type Amount
+    = Amount Int
+
+
+amount : Int -> Maybe Amount
+amount n =
+    if n >= -127 && n <= 127 then
+        Just (Amount n)
+
+    else
+        Nothing
+
+
+{-| What `ed route` sets a cell to: an amount, or no route (the grid's
+MIX + MINUS).
+-}
+type RouteTo
+    = RouteAmount Amount
+    | RouteOff
+
+
+{-| What a FLT › MOD knob's cell takes: any amount, or KEYBOARD's steps.
+-}
+type RouteKind
+    = KnobRoute
+    | KnobKeybd
+
+
+{-| A schema the unit describes: an engine's pages, the mixer's, an
+engine's mod matrix, SETTINGS' or MIDI MAP's.
+-}
+type SchemaId
+    = EngineSchema Engine
+    | MixerSchema
+    | MatrixSchema Engine
+    | SettingsSchema
+    | MapSchema
+    | OrbitSchema
+
+
+{-| A project file's id on the card, as the listing names it: 1 or more.
+-}
+type ProjectId
+    = ProjectId Int
+
+
+projectId : Int -> Maybe ProjectId
+projectId n =
+    if n >= 1 then
+        Just (ProjectId n)
+
+    else
+        Nothing
+
+
+projectIdToInt : ProjectId -> Int
+projectIdToInt (ProjectId n) =
+    n
+
+
+{-| A file's save generation as `since` said it: a load's witness.
+-}
+type Generation
+    = Generation Int
+
+
+generation : Int -> Maybe Generation
+generation n =
+    if n >= 0 then
+        Just (Generation n)
+
+    else
+        Nothing
+
+
+generationToInt : Generation -> Int
+generationToInt (Generation n) =
+    n
+
+
+{-| A project's name as the box's NAMING types it: A–Z, a–z, 0–9, space and
+`-`, one to sixteen of them, no space at either end.
+-}
+type ProjectName
+    = ProjectName String
+
+
+projectName : String -> Maybe ProjectName
+projectName s =
+    if naming s then
+        Just (ProjectName s)
+
+    else
+        Nothing
+
+
+{-| What the box's NAMING can type: A–Z, a–z, 0–9, space and `-`, one to
+sixteen of them, no space at either end.
+-}
+naming : String -> Bool
+naming s =
+    let
+        named : Char -> Bool
+        named c =
+            (Char.isAlphaNum c && Char.toCode c < 128) || c == ' ' || c == '-'
+    in
+    not (String.isEmpty s) && String.length s <= 16 && String.all named s && String.trim s == s
+
+
+{-| A space on the wire is `_`, a byte NAMING never types.
+-}
+namedOnWire : String -> String
+namedOnWire =
+    String.replace " " "_"
+
+
+{-| A load over a project with unsaved edits: refused, or the user said to
+drop them (`discard`, after the editor's own confirm).
+-}
+type OverEdits
+    = RefuseOverEdits
+    | DiscardEdits
+
+
+{-| The loaded project's file: its id, or a NEW project never saved.
+-}
+type ProjectFile
+    = FileId ProjectId
+    | NewProject
+
+
+{-| Whether the loaded project has edits since its save or load.
+-}
+type Edits
+    = Clean
+    | Edited
+
+
+{-| A Part's Sound against its slot, as the box's PART strip reads it.
+-}
+type SoundStatus
+    = SoundClean
+    | SoundEdited
+    | SoundStale
+
+
+{-| A listed file: loadable, damaged, or for newer firmware.
+-}
+type Health
+    = FileOk
+    | FileBad
+    | FileNewer
+
+
+{-| A MIDI MAP input's form, as MAP's schema lists them (`input <FORM> …`).
+-}
+type MapForm
+    = FormCc
+    | FormCc14
+    | FormNrpn
+    | FormPress
+    | FormSysex
+
+
+{-| How a row reads its control: the box's INPUT cell.
+-}
+type MapKind
+    = Jump
+    | Pickup
+    | ScaleTo
+    | TwosComp
+    | BinaryOffset
+    | SignedBit
+    | SignedBit2
+    | IncDec
+    | Momentary
+    | ToggleButton
+
+
+{-| A control change number: 0..127.
+-}
+type ControlNo
+    = ControlNo Int
+
+
+controlNo : Int -> Maybe ControlNo
+controlNo n =
+    if n >= 0 && n <= 127 then
+        Just (ControlNo n)
+
+    else
+        Nothing
+
+
+{-| A 14-bit pair's MSB CC: 1..31 but 6 (its LSB is MSB + 32).
+-}
+type Msb
+    = Msb Int
+
+
+msb : Int -> Maybe Msb
+msb n =
+    if n >= 1 && n <= 31 && n /= 6 then
+        Just (Msb n)
+
+    else
+        Nothing
+
+
+{-| An NRPN number: 0..16383.
+-}
+type NrpnNo
+    = NrpnNo Int
+
+
+nrpnNo : Int -> Maybe NrpnNo
+nrpnNo n =
+    if n >= 0 && n <= 16383 then
+        Just (NrpnNo n)
+
+    else
+        Nothing
+
+
+{-| A place of a row's span, MIN or MAX: 0..255.
+-}
+type SpanPlace
+    = SpanPlace Int
+
+
+spanPlace : Int -> Maybe SpanPlace
+spanPlace n =
+    if n >= 0 && n <= 255 then
+        Just (SpanPlace n)
+
+    else
+        Nothing
+
+
+{-| A row's number, 1 or more: 1-based as the wire writes it.
+-}
+type RowIndex
+    = RowIndex Int
+
+
+rowIndex : Int -> Maybe RowIndex
+rowIndex n =
+    if n >= 1 then
+        Just (RowIndex n)
+
+    else
+        Nothing
+
+
+rowIndexToInt : RowIndex -> Int
+rowIndexToInt (RowIndex n) =
+    n
+
+
+{-| A row of MIDI MAP: the Sound's own (`S<i>`) or the Part's controller
+map's (`M<i>`).
+-}
+type MapRow
+    = SoundRow RowIndex
+    | MapFileRow RowIndex
+
+
+{-| A row's control as `since` says it.
+-}
+type MapInput
+    = InCc ControlNo
+    | InCc14 Msb
+    | InNrpn NrpnNo
+    | InPress
+    | InSysex
+
+
+{-| A control `ed map add` binds: SysEx is learnt on the box, never added.
+-}
+type AddInput
+    = AddCc ControlNo
+    | AddCc14 Msb
+    | AddNrpn NrpnNo
+    | AddPress
+
+
+{-| An input and a kind its form takes: only `binding` makes one.
+-}
+type Binding
+    = Binding AddInput MapKind
+
+
+binding : AddInput -> MapKind -> Maybe Binding
+binding input kind =
+    if List.member kind (formKinds (addForm input)) then
+        Just (Binding input kind)
+
+    else
+        Nothing
+
+
+addForm : AddInput -> MapForm
+addForm input =
+    case input of
+        AddCc _ ->
+            FormCc
+
+        AddCc14 _ ->
+            FormCc14
+
+        AddNrpn _ ->
+            FormNrpn
+
+        AddPress ->
+            FormPress
+
+
+{-| The kinds a form takes, in the box's cycle order, as MAP's `input` lines
+say: INC-DEC only on NRPN; relative kinds and buttons not on a 14-bit pair,
+pressure or SysEx.
+-}
+formKinds : MapForm -> List MapKind
+formKinds form =
+    case form of
+        FormCc ->
+            [ Jump, Pickup, ScaleTo, TwosComp, BinaryOffset, SignedBit, SignedBit2, Momentary, ToggleButton ]
+
+        FormCc14 ->
+            [ Jump, Pickup, ScaleTo ]
+
+        FormNrpn ->
+            [ Jump, Pickup, ScaleTo, TwosComp, BinaryOffset, SignedBit, SignedBit2, IncDec, Momentary, ToggleButton ]
+
+        FormPress ->
+            [ Jump, Pickup, ScaleTo ]
+
+        FormSysex ->
+            [ Jump ]
+
+
+{-| ECHO and KEEP MAP.
+-}
+type OnOff
+    = On
+    | Off
+
+
+{-| A row's state: it drives its cell, its cell isn't here, or a Sound row
+on the same control wins.
+-}
+type RowStatus
+    = Live
+    | Dead
+    | Shadowed
+
+
+{-| The box's MIDI learn: off, armed on a cell (or one it can't name),
+hearing a control onto a Sound row, or MIDI MAP's pointing.
+-}
+type Learn
+    = NotLearning
+    | Armed (Maybe Addr)
+    | Sensing RowIndex
+    | Pointing
+
+
+{-| A controller map's name as the box's NAMING types it.
+-}
+type MapName
+    = MapName String
+
+
+mapName : String -> Maybe MapName
+mapName s =
+    if naming s then
+        Just (MapName s)
+
+    else
+        Nothing
+
+
+{-| What `ed map set <row>` changes.
+-}
+type RowSetting
+    = RowControl ControlNo
+    | RowMin SpanPlace
+    | RowMax SpanPlace
+    | RowKind MapKind
+    | RowEcho OnOff
+
+
+{-| MIDI MAP's commands, and MIDI learn's.
+-}
+type MapCommand
+    = AddRow Binding Addr (Maybe ( SpanPlace, SpanPlace ))
+    | SetRow MapRow RowSetting
+      -- Witnessed by the row's input and address as `since` said them.
+    | RemoveRow MapRow MapInput (Maybe Addr)
+      -- A map on the card, or none.
+    | PickMap (Maybe MapName)
+    | KeepMap OnOff
+      -- Into the picked map, or into a named one the Part then picks.
+    | SaveMap (Maybe MapName)
+    | RenameMap MapName
+      -- The box lists its maps; `mapfile` lines follow in `since`.
+    | ListMaps
+      -- The box goes to that cell's page, focuses it and arms learn.
+    | LearnAt Addr
+    | StopLearning
+
+
+{-| An ORBIT cell that is no parameter, as `act` lines name it: what a page
+shows beside its knobs.
+-}
+type ActCell
+    = ActRing
+    | ActScene
+    | ActSave
+    | ActSwitch
+    | ActDegree
+    | ActPlay
+    | ActCursor
+    | ActSet
+    | ActNote
+    | ActLearn
+    | ActClear
+
+
+{-| Whether ORBIT's song runs.
+-}
+type Playback
+    = Playing
+    | Stopped
+
+
+{-| What drives ORBIT's clock: its own tempo, or MIDI's.
+-}
+type Clock
+    = ClockInt
+    | ClockExt
+
+
+{-| A scene slot: 1..8.
+-}
+type SceneNo
+    = SceneNo Int
+
+
+sceneNo : Int -> Maybe SceneNo
+sceneNo =
+    within 1 8 SceneNo
+
+
+sceneNoToInt : SceneNo -> Int
+sceneNoToInt (SceneNo n) =
+    n
+
+
+{-| A slot's revision as `since` said it: a destructive scene command's
+witness, 0..4294967295 (the unit's 32-bit count).
+-}
+type Rev
+    = Rev Int
+
+
+rev : Int -> Maybe Rev
+rev =
+    within 0 4294967295 Rev
+
+
+revToInt : Rev -> Int
+revToInt (Rev n) =
+    n
+
+
+{-| A slot holds a saved scene, or none (neutral).
+-}
+type SlotState
+    = SlotSaved
+    | SlotNeutral
+
+
+{-| A chord segment: 1..8.
+-}
+type Segment
+    = Segment Int
+
+
+segment : Int -> Maybe Segment
+segment =
+    within 1 8 Segment
+
+
+segmentToInt : Segment -> Int
+segmentToInt (Segment n) =
+    n
+
+
+{-| A chord's scale degree: 1..12, I..XII.
+-}
+type Degree
+    = Degree Int
+
+
+degree : Int -> Maybe Degree
+degree =
+    within 1 12 Degree
+
+
+degreeToInt : Degree -> Int
+degreeToInt (Degree n) =
+    n
+
+
+{-| CUSTOM's notes: bit i is i semitones above the root, and the root is
+always in (bit 0), so 1..4095 and odd.
+-}
+type ScaleMask
+    = ScaleMask Int
+
+
+scaleMask : Int -> Maybe ScaleMask
+scaleMask n =
+    if n >= 1 && n <= 4095 && modBy 2 n == 1 then
+        Just (ScaleMask n)
+
+    else
+        Nothing
+
+
+scaleMaskToInt : ScaleMask -> Int
+scaleMaskToInt (ScaleMask n) =
+    n
+
+
+{-| An ORBIT ring: 1..5.
+-}
+type RingNo
+    = RingNo Int
+
+
+ringNo : Int -> Maybe RingNo
+ringNo =
+    within 1 5 RingNo
+
+
+ringNoToInt : RingNo -> Int
+ringNoToInt (RingNo n) =
+    n
+
+
+{-| A ring's step: 1..32.
+-}
+type StepNo
+    = StepNo Int
+
+
+stepNo : Int -> Maybe StepNo
+stepNo =
+    within 1 32 StepNo
+
+
+stepNoToInt : StepNo -> Int
+stepNoToInt (StepNo n) =
+    n
+
+
+{-| A MIDI note: 0..127.
+-}
+type Note
+    = Note Int
+
+
+note : Int -> Maybe Note
+note =
+    within 0 127 Note
+
+
+noteToInt : Note -> Int
+noteToInt (Note n) =
+    n
+
+
+{-| A ring's note pool: one to eight notes.
+-}
+type NotePool
+    = NotePool Note (List Note)
+
+
+notePool : List Note -> Maybe NotePool
+notePool ns =
+    case ns of
+        first :: rest ->
+            if List.length rest < 8 then
+                Just (NotePool first rest)
+
+            else
+                Nothing
+
+        [] ->
+            Nothing
+
+
+poolNotes : NotePool -> List Note
+poolNotes (NotePool first rest) =
+    first :: rest
+
+
+{-| `n` as `make n` when it is in `lo..hi`.
+-}
+within : Int -> Int -> (Int -> a) -> Int -> Maybe a
+within lo hi make n =
+    if n >= lo && n <= hi then
+        Just (make n)
+
+    else
+        Nothing
+
+
+{-| ORBIT's song line: running or not, its clock, the playing scene, the one
+queued after it, and whether it has edits since its save or load.
+-}
+type alias Song =
+    { playback : Playback, clock : Clock, scene : SceneNo, queued : Maybe SceneNo, edits : Edits }
+
+
+{-| A scene slot as its `slot` line says it.
+-}
+type alias Slot =
+    { state : SlotState, rev : Rev }
+
+
+{-| Where `ed scene save` writes: a neutral slot, or over a saved one,
+witnessed by its rev.
+-}
+type SaveInto
+    = IntoNeutral
+    | Over Rev
+
+
+{-| A scene from one slot to another, each witnessed by its rev: only
+`sceneMove` makes one, never onto itself.
+-}
+type SceneMove
+    = SceneMove ( SceneNo, Rev ) ( SceneNo, Rev )
+
+
+sceneMove : ( SceneNo, Rev ) -> ( SceneNo, Rev ) -> Maybe SceneMove
+sceneMove ( a, ra ) ( b, rb ) =
+    if a /= b then
+        Just (SceneMove ( a, ra ) ( b, rb ))
+
+    else
+        Nothing
+
+
+{-| ORBIT's commands. The scene ones that change a slot carry its rev; the
+clear and reload ones name the playing slot.
+-}
+type OrbitCommand
+    = PlaySong
+    | StopSong
+    | QueueScene SceneNo
+    | SaveScene SceneNo SaveInto
+    | ClearScene SceneNo Rev
+    | ReloadScene SceneNo Rev
+    | MoveScene SceneMove
+    | SetChord Segment Degree
+    | SetScale ScaleMask
+    | SetStep RingNo StepNo Note
+    | SetPool RingNo NotePool
+
+
+schemaToken : SchemaId -> String
+schemaToken s =
+    case s of
+        EngineSchema e ->
+            Unit.engineName e
+
+        MixerSchema ->
+            "MIXER"
+
+        MatrixSchema e ->
+            "MTX-" ++ Unit.engineName e
+
+        SettingsSchema ->
+            "SETTINGS"
+
+        MapSchema ->
+            "MAP"
+
+        OrbitSchema ->
+            "ORBIT"
+
+
+schemaFromToken : String -> Maybe SchemaId
+schemaFromToken t =
+    if t == "MIXER" then
+        Just MixerSchema
+
+    else if t == "SETTINGS" then
+        Just SettingsSchema
+
+    else if t == "MAP" then
+        Just MapSchema
+
+    else if t == "ORBIT" then
+        Just OrbitSchema
+
+    else if String.startsWith "MTX-" t then
+        Unit.engineFromName (String.dropLeft 4 t) |> Maybe.map MatrixSchema
+
+    else
+        Unit.engineFromName t |> Maybe.map EngineSchema
+
+
 type Command
     = Hello
-    | Describe Engine PageNo
+    | AskSchema SchemaId
+    | Describe SchemaId PageNo
     | Get Addr
     | Set Addr Value
     | Since (Maybe Gen)
     | Follow Part
+    | SetRoute Cell RouteTo
+      -- The card's projects listed again, for `since`'s listing.
+    | ListProjects
+      -- MENU hold's quick save, over the loaded project's own file.
+    | SaveProject
+      -- Into a new id, never over another project.
+    | SaveProjectAs ProjectName
+      -- A listed file, witnessed by its generation.
+    | LoadProject ProjectId Generation OverEdits
+    | MapCmd MapCommand
+    | OrbitCmd OrbitCommand
 
 
 type AnswerLine
     = HelloIs { protocol : Int, build : String, part : Int, engine : String }
+    | SchemaIs { schema : SchemaId, pages : Int, hash : Hash }
     | Page { n : PageNo, label : PageLabel, count : Int }
     | Panel { name : String, variant : String }
-    | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float }
+    | Param { addr : Addr, label : String, kind : Kind, scale : Scale, min : Float, max : Float, step : Float, default : Float, flags : Flags }
     | Opt { addr : Addr, index : OptIndex, name : String }
-    | Route String
+      -- FLT › MOD's knob: the matrix cell it views.
+    | Route { label : String, cell : Cell, kind : RouteKind }
     | Source String
+      -- MTX's schema: a source row, a fixed column, the amounts, the registry's columns.
+    | Src { src : String, label : String }
+    | Col { tag : String, addr : Addr }
+    | AmountRange Int Int
+    | Dests Int
+      -- ROUTES: whole (`routes <n>`, n the followed Part's), a cell's amount
+      -- and the box's text, a cell gone.
+    | RoutesIs
+    | RouteIs { cell : Cell, amount : Int, text : String }
+    | Unroute Cell
     | Val { addr : Addr, norm : Float, stored : Float, text : String }
     | PartIs Int String
+      -- The MIXER section of `since`, whole: what was held for it is dropped.
+    | MixerIs
       -- A set the unit took and then would not apply, and the box's reason
       -- (its own toast's words).
     | Refused Addr String
+      -- A SETTINGS page's place in the box's lists: its list's crumb and its own.
+    | Crumb { list : String, row : String }
+      -- The SETTINGS section of `since`, whole: what was held for it is dropped.
+    | SettingsIs
+    | ProjectIs { name : String, file : ProjectFile, edits : Edits, generation : Maybe Generation }
+    | SoundIs { part : Int, name : String, status : SoundStatus }
+      -- The box's toast, when a new one goes up.
+    | ToastIs String
+      -- The listing, whole: its count, and whether the card has more.
+    | ProjectsIs { count : Int, more : Bool }
+    | Proj { id : ProjectId, name : String, health : Health, generation : Maybe Generation }
+      -- MAP's schema: a form and its kinds, a kind's box words, the CCs a
+      -- binding may take, the 14-bit MSBs, a span's places, a Sound's rows
+      -- and a controller map's.
+    | InputIs { form : MapForm, kinds : List MapKind }
+    | KindIs { kind : MapKind, head : String, tail : String }
+    | CcsAre (List ControlNo)
+    | MsbsAre (List Msb)
+    | SpanIs SpanPlace SpanPlace
+    | RowsAre Int
+    | MapRowsAre Int
+      -- The MAP section of `since`, whole: what was held for it is dropped.
+    | MapIs { part : Part, name : Maybe String, keep : OnOff }
+    | RowIs { row : MapRow, input : MapInput, kind : MapKind, addr : Maybe Addr, min : SpanPlace, max : SpanPlace, echo : OnOff, status : RowStatus }
+    | LearnIs { learn : Learn, note : String }
+    | MapFileIs String
+      -- ORBIT's schema: a cell of its own, no parameter, and its label.
+    | Act { label : String, cell : ActCell }
+      -- The ORBIT section of `since`, whole: what was held for it is dropped.
+    | OrbitIs
+    | SongIs Song
+    | SlotIs { slot : SceneNo, state : SlotState, rev : Rev }
+    | ChordIs Segment Degree
+    | ScaleIs ScaleMask
+    | StepIs RingNo StepNo Note
+    | PoolIs RingNo NotePool
 
 
 type Line
     = Answer AnswerLine
-    | Ok_ (Maybe Int)
+      -- `OK`, a command's; `OK <m>`, a `since` answer and its number.
+    | Ok_ (Maybe Gen)
+      -- `OK <m> more`: a `since` answer with sections still owed; ask again.
+    | OkMore Gen
     | Queued
     | Err_ String
       -- `ERR ed set <addr> <why>`: a set the unit would not take.
@@ -169,8 +1067,11 @@ encode c =
         Hello ->
             Just "ed hello"
 
-        Describe engine (PageNo page) ->
-            Just ("ed describe " ++ Unit.engineName engine ++ " " ++ String.fromInt page)
+        AskSchema s ->
+            Just ("ed schema " ++ schemaToken s)
+
+        Describe s (PageNo page) ->
+            Just ("ed describe " ++ schemaToken s ++ " " ++ String.fromInt page)
 
         Get a ->
             wire a |> Maybe.map (\k -> "ed get " ++ k)
@@ -183,6 +1084,263 @@ encode c =
 
         Follow p ->
             Just ("ed part " ++ String.fromInt (Unit.partNumber p))
+
+        SetRoute (Cell name) to ->
+            Just
+                ("ed route "
+                    ++ name
+                    ++ " "
+                    ++ (case to of
+                            RouteAmount (Amount n) ->
+                                String.fromInt n
+
+                            RouteOff ->
+                                "off"
+                       )
+                )
+
+        ListProjects ->
+            Just "ed projects"
+
+        SaveProject ->
+            Just "ed project save"
+
+        SaveProjectAs (ProjectName n) ->
+            Just ("ed project saveas " ++ namedOnWire n)
+
+        LoadProject (ProjectId id) (Generation g) over ->
+            Just
+                ("ed project load "
+                    ++ String.fromInt id
+                    ++ " "
+                    ++ String.fromInt g
+                    ++ (case over of
+                            RefuseOverEdits ->
+                                ""
+
+                            DiscardEdits ->
+                                " discard"
+                       )
+                )
+
+        MapCmd mc ->
+            encodeMap mc
+
+        OrbitCmd oc ->
+            Just (encodeOrbit oc)
+
+
+encodeOrbit : OrbitCommand -> String
+encodeOrbit c =
+    let
+        ints : String -> List Int -> String
+        ints head ns =
+            String.join " " (head :: List.map String.fromInt ns)
+    in
+    case c of
+        PlaySong ->
+            "ed orbit play"
+
+        StopSong ->
+            "ed orbit stop"
+
+        QueueScene (SceneNo n) ->
+            ints "ed scene queue" [ n ]
+
+        SaveScene (SceneNo n) IntoNeutral ->
+            ints "ed scene save" [ n ]
+
+        SaveScene (SceneNo n) (Over (Rev r)) ->
+            ints "ed scene save" [ n ] ++ " over " ++ String.fromInt r
+
+        ClearScene (SceneNo n) (Rev r) ->
+            ints "ed scene clear" [ n, r ]
+
+        ReloadScene (SceneNo n) (Rev r) ->
+            ints "ed scene reload" [ n, r ]
+
+        MoveScene (SceneMove ( SceneNo a, Rev ra ) ( SceneNo b, Rev rb )) ->
+            ints "ed scene move" [ a, b, ra, rb ]
+
+        SetChord (Segment sg) (Degree d) ->
+            ints "ed chord" [ sg, d ]
+
+        SetScale (ScaleMask m) ->
+            ints "ed scale" [ m ]
+
+        SetStep (RingNo r) (StepNo i) (Note n) ->
+            ints "ed step" [ r, i, n ]
+
+        SetPool (RingNo r) pool ->
+            ints "ed pool" (r :: List.map noteToInt (poolNotes pool))
+
+
+encodeMap : MapCommand -> Maybe String
+encodeMap c =
+    case c of
+        AddRow (Binding input kind) a span ->
+            wire a
+                |> Maybe.map
+                    (\k ->
+                        String.join " "
+                            ([ "ed map add", inputText (addInput input), kindToken kind, k ]
+                                ++ (case span of
+                                        Just ( SpanPlace lo, SpanPlace hi ) ->
+                                            [ String.fromInt lo, String.fromInt hi ]
+
+                                        Nothing ->
+                                            []
+                                   )
+                            )
+                    )
+
+        SetRow r setting ->
+            Just (String.join " " [ "ed map set", rowText r, settingText setting ])
+
+        RemoveRow r input a ->
+            (case a of
+                Just x ->
+                    wire x
+
+                Nothing ->
+                    Just "-"
+            )
+                |> Maybe.map (\k -> String.join " " [ "ed map rm", rowText r, inputText input, k ])
+
+        PickMap (Just (MapName n)) ->
+            Just ("ed map pick " ++ namedOnWire n)
+
+        PickMap Nothing ->
+            Just "ed map pick none"
+
+        KeepMap k ->
+            Just ("ed map keep " ++ onOffText k)
+
+        SaveMap (Just (MapName n)) ->
+            Just ("ed map save " ++ namedOnWire n)
+
+        SaveMap Nothing ->
+            Just "ed map save"
+
+        RenameMap (MapName n) ->
+            Just ("ed map rename " ++ namedOnWire n)
+
+        ListMaps ->
+            Just "ed maps"
+
+        LearnAt a ->
+            wire a |> Maybe.map (\k -> "ed learn " ++ k)
+
+        StopLearning ->
+            Just "ed learn off"
+
+
+addInput : AddInput -> MapInput
+addInput input =
+    case input of
+        AddCc n ->
+            InCc n
+
+        AddCc14 m ->
+            InCc14 m
+
+        AddNrpn n ->
+            InNrpn n
+
+        AddPress ->
+            InPress
+
+
+inputText : MapInput -> String
+inputText input =
+    case input of
+        InCc (ControlNo n) ->
+            "CC" ++ String.fromInt n
+
+        InCc14 (Msb n) ->
+            "CC14:" ++ String.fromInt n
+
+        InNrpn (NrpnNo n) ->
+            "NRPN:" ++ String.fromInt n
+
+        InPress ->
+            "PRESS"
+
+        InSysex ->
+            "SYSEX"
+
+
+rowText : MapRow -> String
+rowText r =
+    case r of
+        SoundRow (RowIndex i) ->
+            "S" ++ String.fromInt i
+
+        MapFileRow (RowIndex i) ->
+            "M" ++ String.fromInt i
+
+
+settingText : RowSetting -> String
+settingText setting =
+    case setting of
+        RowControl (ControlNo n) ->
+            "control " ++ String.fromInt n
+
+        RowMin (SpanPlace n) ->
+            "min " ++ String.fromInt n
+
+        RowMax (SpanPlace n) ->
+            "max " ++ String.fromInt n
+
+        RowKind k ->
+            "input " ++ kindToken k
+
+        RowEcho e ->
+            "echo " ++ onOffText e
+
+
+onOffText : OnOff -> String
+onOffText o =
+    case o of
+        On ->
+            "on"
+
+        Off ->
+            "off"
+
+
+kindToken : MapKind -> String
+kindToken k =
+    case k of
+        Jump ->
+            "JUMP"
+
+        Pickup ->
+            "PICKUP"
+
+        ScaleTo ->
+            "SCALE"
+
+        TwosComp ->
+            "TWOS-COMP"
+
+        BinaryOffset ->
+            "OFFSET"
+
+        SignedBit ->
+            "SIGNED"
+
+        SignedBit2 ->
+            "SIGNED-2"
+
+        IncDec ->
+            "INC-DEC"
+
+        Momentary ->
+            "MOMENTARY"
+
+        ToggleButton ->
+            "TOGGLE"
 
 
 {-| The address, if it is one the unit could write.
@@ -262,15 +1420,30 @@ parse raw =
                 Queued
 
             m ->
-                nat m |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
+                case String.split " " m of
+                    [ n ] ->
+                        nat n |> Maybe.andThen Unit.genFromInt |> Maybe.map (Just >> Ok_) |> Maybe.withDefault Unknown
+
+                    [ n, "more" ] ->
+                        nat n |> Maybe.andThen Unit.genFromInt |> Maybe.map OkMore |> Maybe.withDefault Unknown
+
+                    _ ->
+                        Unknown
 
     else
-        case tokens line of
-            Just ts ->
-                answer ts |> Maybe.map Answer |> Maybe.withDefault Unknown
+        case String.words trimmed of
+            -- `none` bare is no map; a map named "none" is quoted, and the
+            -- tokens drop the quotes.
+            [ "map", n, "none", "keep", k ] ->
+                mapHeader n Nothing k |> Maybe.map Answer |> Maybe.withDefault Unknown
 
-            Nothing ->
-                Unknown
+            _ ->
+                case tokens line of
+                    Just ts ->
+                        answer ts |> Maybe.map Answer |> Maybe.withDefault Unknown
+
+                    Nothing ->
+                        Unknown
 
 
 {-| `<addr> <why>`, or `has no <addr> here`; anything else is a plain `ERR`.
@@ -339,6 +1512,12 @@ answer ts =
         [ "ed", "hello", proto, build, "part", n, engine ] ->
             Maybe.map2 (\pr pt -> HelloIs { protocol = pr, build = build, part = pt, engine = engine }) (nat proto) (nat n)
 
+        [ "schema", token, pages, hash ] ->
+            Maybe.map3 (\sc n h -> SchemaIs { schema = sc, pages = n, hash = h }) (schemaFromToken token) (nat pages) (Hash.fromHex hash)
+
+        [ "mixer" ] ->
+            Just MixerIs
+
         [ "page", n, label, "of", count ] ->
             Maybe.map3 (\a l b -> Page { n = PageNo a, label = l, count = b }) (nat n) (pageLabelFrom label) (nat count)
 
@@ -348,14 +1527,38 @@ answer ts =
         [ "part", n, engine ] ->
             nat n |> Maybe.map (\i -> PartIs i engine)
 
-        [ "param", a, label, kind, scale, lo, hi, step, def ] ->
-            Maybe.andThen (\sc -> param a label kind sc lo hi step def) (scaleOf scale)
+        [ "param", a, label, kind, scale, lo, hi, step, def, flags ] ->
+            Maybe.map2 Tuple.pair (scaleOf scale) (flagsOf flags)
+                |> Maybe.andThen (\( sc, fl ) -> param a label kind sc fl ( lo, hi ) ( step, def ))
 
         [ "opt", a, i, name ] ->
             Maybe.map2 (\x ix -> Opt { addr = x, index = ix, name = name }) (Addr.fromWire a) (nat i |> Maybe.andThen optIndex)
 
-        [ "route", label, "next-slice" ] ->
-            Just (Route label)
+        [ "route", a, b, c ] ->
+            case int b of
+                Just n ->
+                    cell a |> Maybe.map (\x -> RouteIs { cell = x, amount = n, text = c })
+
+                Nothing ->
+                    Maybe.map2 (\x k -> Route { label = a, cell = x, kind = k }) (cell b) (routeKind c)
+
+        [ "unroute", c ] ->
+            cell c |> Maybe.map Unroute
+
+        [ "routes", n ] ->
+            nat n |> Maybe.map (always RoutesIs)
+
+        [ "src", src, label ] ->
+            Just (Src { src = src, label = label })
+
+        [ "col", tag, a ] ->
+            Addr.fromWire a |> Maybe.map (\x -> Col { tag = tag, addr = x })
+
+        [ "amount", lo, hi ] ->
+            Maybe.map2 AmountRange (int lo) (int hi)
+
+        [ "dests", n ] ->
+            nat n |> Maybe.map Dests
 
         [ "source", text ] ->
             Just (Source text)
@@ -366,19 +1569,544 @@ answer ts =
         [ "refused", a, why ] ->
             Addr.fromWire a |> Maybe.map (\x -> Refused x why)
 
+        [ "crumb", list, row ] ->
+            Just (Crumb { list = list, row = row })
+
+        [ "settings" ] ->
+            Just SettingsIs
+
+        [ "project", name, file, edits, "gen", g ] ->
+            Maybe.map3 (\f e gn -> ProjectIs { name = name, file = f, edits = e, generation = gn }) (fileOf file) (editsOf edits) (generationOf g)
+
+        [ "sound", n, name, status ] ->
+            Maybe.map2 (\i st -> SoundIs { part = i, name = name, status = st }) (nat n) (soundStatusOf status)
+
+        [ "toast", text ] ->
+            Just (ToastIs text)
+
+        [ "projects", n ] ->
+            nat n |> Maybe.map (\c -> ProjectsIs { count = c, more = False })
+
+        [ "projects", n, "more" ] ->
+            nat n |> Maybe.map (\c -> ProjectsIs { count = c, more = True })
+
+        [ "proj", id, name, health, "gen", g ] ->
+            Maybe.map3 (\i h gn -> Proj { id = i, name = name, health = h, generation = gn }) (nat id |> Maybe.andThen projectId) (healthOf health) (generationOf g)
+
+        "input" :: form :: kinds ->
+            Maybe.map2 (\f ks -> InputIs { form = f, kinds = ks }) (formOf form) (traverse mapKindOf kinds)
+
+        [ "kind", k, head, tail ] ->
+            mapKindOf k |> Maybe.map (\x -> KindIs { kind = x, head = head, tail = tail })
+
+        "ccs" :: ns ->
+            traverse (nat >> Maybe.andThen controlNo) ns |> Maybe.map CcsAre
+
+        "msbs" :: ns ->
+            traverse (nat >> Maybe.andThen msb) ns |> Maybe.map MsbsAre
+
+        [ "span", lo, hi ] ->
+            Maybe.map2 SpanIs (place lo) (place hi)
+
+        [ "rows", n ] ->
+            nat n |> Maybe.map RowsAre
+
+        [ "maprows", n ] ->
+            nat n |> Maybe.map MapRowsAre
+
+        [ "map", n, name, "keep", k ] ->
+            mapHeader n (Just name) k
+
+        [ "row", r, input, kind, a, lo, hi, echo, status ] ->
+            rowLine r input kind a ( lo, hi ) echo status
+
+        [ "learn", "off", band ] ->
+            Just (LearnIs { learn = NotLearning, note = band })
+
+        [ "learn", "armed", a, band ] ->
+            addrOrNone a |> Maybe.map (\x -> LearnIs { learn = Armed x, note = band })
+
+        [ "learn", "sensing", r, band ] ->
+            rowOf r
+                |> Maybe.andThen
+                    (\x ->
+                        case x of
+                            SoundRow i ->
+                                Just (LearnIs { learn = Sensing i, note = band })
+
+                            MapFileRow _ ->
+                                Nothing
+                    )
+
+        [ "learn", "pointing", band ] ->
+            Just (LearnIs { learn = Pointing, note = band })
+
+        [ "mapfile", name ] ->
+            Just (MapFileIs name)
+
+        [ "act", label, token ] ->
+            actCellOf token |> Maybe.map (\x -> Act { label = label, cell = x })
+
+        [ "orbit" ] ->
+            Just OrbitIs
+
+        [ "song", playback, "clock", clock, "scene", n, "queued", q, "edited", e ] ->
+            Maybe.map3 (\( pb, ck ) ( sc, qd ) ed -> SongIs { playback = pb, clock = ck, scene = sc, queued = qd, edits = ed })
+                (Maybe.map2 Tuple.pair (playbackOf playback) (clockOf clock))
+                (Maybe.map2 Tuple.pair (number sceneNo n) (sceneOrNone q))
+                (yesNoOf e)
+
+        [ "slot", n, state, "rev", r ] ->
+            Maybe.map3 (\sc st rv -> SlotIs { slot = sc, state = st, rev = rv }) (number sceneNo n) (slotStateOf state) (number rev r)
+
+        [ "chord", sg, d ] ->
+            Maybe.map2 ChordIs (number segment sg) (number degree d)
+
+        [ "scale", m ] ->
+            number scaleMask m |> Maybe.map ScaleIs
+
+        [ "step", r, i, n ] ->
+            Maybe.map3 StepIs (number ringNo r) (number stepNo i) (number note n)
+
+        "pool" :: r :: ns ->
+            Maybe.map2 PoolIs (number ringNo r) (traverse (number note) ns |> Maybe.andThen notePool)
+
         _ ->
             Nothing
 
 
-param : String -> String -> String -> Scale -> String -> String -> String -> String -> Maybe AnswerLine
-param a label kind scale lo hi step def =
+{-| A plain whole number off the wire, if `make` takes it.
+-}
+number : (Int -> Maybe a) -> String -> Maybe a
+number make =
+    nat >> Maybe.andThen make
+
+
+{-| A scene, or `-` for none: `Just Nothing`.
+-}
+sceneOrNone : String -> Maybe (Maybe SceneNo)
+sceneOrNone s =
+    if s == "-" then
+        Just Nothing
+
+    else
+        number sceneNo s |> Maybe.map Just
+
+
+actCellOf : String -> Maybe ActCell
+actCellOf s =
+    case s of
+        "RING" ->
+            Just ActRing
+
+        "SCENE" ->
+            Just ActScene
+
+        "SAVE" ->
+            Just ActSave
+
+        "SWITCH" ->
+            Just ActSwitch
+
+        "DEGREE" ->
+            Just ActDegree
+
+        "PLAY" ->
+            Just ActPlay
+
+        "CURSOR" ->
+            Just ActCursor
+
+        "SET" ->
+            Just ActSet
+
+        "NOTE" ->
+            Just ActNote
+
+        "LEARN" ->
+            Just ActLearn
+
+        "CLEAR" ->
+            Just ActClear
+
+        _ ->
+            Nothing
+
+
+playbackOf : String -> Maybe Playback
+playbackOf s =
+    case s of
+        "playing" ->
+            Just Playing
+
+        "stopped" ->
+            Just Stopped
+
+        _ ->
+            Nothing
+
+
+clockOf : String -> Maybe Clock
+clockOf s =
+    case s of
+        "INT" ->
+            Just ClockInt
+
+        "EXT" ->
+            Just ClockExt
+
+        _ ->
+            Nothing
+
+
+{-| The song's `edited yes|no`.
+-}
+yesNoOf : String -> Maybe Edits
+yesNoOf s =
+    case s of
+        "yes" ->
+            Just Edited
+
+        "no" ->
+            Just Clean
+
+        _ ->
+            Nothing
+
+
+slotStateOf : String -> Maybe SlotState
+slotStateOf s =
+    case s of
+        "saved" ->
+            Just SlotSaved
+
+        "neutral" ->
+            Just SlotNeutral
+
+        _ ->
+            Nothing
+
+
+{-| Every item read, or `Nothing`.
+-}
+traverse : (String -> Maybe a) -> List String -> Maybe (List a)
+traverse f =
+    List.foldr (\s acc -> Maybe.map2 (::) (f s) acc) (Just [])
+
+
+place : String -> Maybe SpanPlace
+place =
+    nat >> Maybe.andThen spanPlace
+
+
+mapHeader : String -> Maybe String -> String -> Maybe AnswerLine
+mapHeader n name k =
+    Maybe.map2 (\pt kp -> MapIs { part = pt, name = name, keep = kp }) (nat n |> Maybe.andThen Unit.partFromInt) (onOffOf k)
+
+
+{-| A `row` line: S rows are only live or dead.
+-}
+rowLine : String -> String -> String -> String -> ( String, String ) -> String -> String -> Maybe AnswerLine
+rowLine r input kind a ( lo, hi ) echo status =
+    Maybe.map4
+        (\( rw, st ) inp ( k, x ) ( mn, mx, e ) ->
+            RowIs { row = rw, input = inp, kind = k, addr = x, min = mn, max = mx, echo = e, status = st }
+        )
+        (Maybe.map2 Tuple.pair (rowOf r) (rowStatusOf status)
+            |> Maybe.andThen
+                (\( rw, st ) ->
+                    if statusFits rw st then
+                        Just ( rw, st )
+
+                    else
+                        Nothing
+                )
+        )
+        (inputOf input)
+        (Maybe.map2 Tuple.pair (mapKindOf kind) (addrOrNone a))
+        (Maybe.map3 (\mn mx e -> ( mn, mx, e )) (place lo) (place hi) (onOffOf echo))
+
+
+{-| A Sound row is never shadowed: it is what shadows.
+-}
+statusFits : MapRow -> RowStatus -> Bool
+statusFits rw st =
+    case rw of
+        SoundRow _ ->
+            st /= Shadowed
+
+        MapFileRow _ ->
+            True
+
+
+{-| An address, or `-` for one the unit can't name: `Just Nothing`.
+-}
+addrOrNone : String -> Maybe (Maybe Addr)
+addrOrNone s =
+    if s == "-" then
+        Just Nothing
+
+    else
+        Addr.fromWire s |> Maybe.map Just
+
+
+{-| `S<i>` or `M<i>`, 1-based.
+-}
+rowOf : String -> Maybe MapRow
+rowOf s =
+    case String.uncons s of
+        Just ( 'S', i ) ->
+            nat i |> Maybe.andThen rowIndex |> Maybe.map SoundRow
+
+        Just ( 'M', i ) ->
+            nat i |> Maybe.andThen rowIndex |> Maybe.map MapFileRow
+
+        Just _ ->
+            Nothing
+
+        Nothing ->
+            Nothing
+
+
+{-| `CC74`, `CC14:2`, `NRPN:1234`, `PRESS` or `SYSEX`.
+-}
+inputOf : String -> Maybe MapInput
+inputOf s =
+    if s == "PRESS" then
+        Just InPress
+
+    else if s == "SYSEX" then
+        Just InSysex
+
+    else if String.startsWith "CC14:" s then
+        nat (String.dropLeft 5 s) |> Maybe.andThen msb |> Maybe.map InCc14
+
+    else if String.startsWith "NRPN:" s then
+        nat (String.dropLeft 5 s) |> Maybe.andThen nrpnNo |> Maybe.map InNrpn
+
+    else if String.startsWith "CC" s then
+        nat (String.dropLeft 2 s) |> Maybe.andThen controlNo |> Maybe.map InCc
+
+    else
+        Nothing
+
+
+formOf : String -> Maybe MapForm
+formOf s =
+    case s of
+        "CC" ->
+            Just FormCc
+
+        "CC14" ->
+            Just FormCc14
+
+        "NRPN" ->
+            Just FormNrpn
+
+        "PRESS" ->
+            Just FormPress
+
+        "SYSEX" ->
+            Just FormSysex
+
+        _ ->
+            Nothing
+
+
+mapKindOf : String -> Maybe MapKind
+mapKindOf s =
+    case s of
+        "JUMP" ->
+            Just Jump
+
+        "PICKUP" ->
+            Just Pickup
+
+        "SCALE" ->
+            Just ScaleTo
+
+        "TWOS-COMP" ->
+            Just TwosComp
+
+        "OFFSET" ->
+            Just BinaryOffset
+
+        "SIGNED" ->
+            Just SignedBit
+
+        "SIGNED-2" ->
+            Just SignedBit2
+
+        "INC-DEC" ->
+            Just IncDec
+
+        "MOMENTARY" ->
+            Just Momentary
+
+        "TOGGLE" ->
+            Just ToggleButton
+
+        _ ->
+            Nothing
+
+
+onOffOf : String -> Maybe OnOff
+onOffOf s =
+    case s of
+        "on" ->
+            Just On
+
+        "off" ->
+            Just Off
+
+        _ ->
+            Nothing
+
+
+rowStatusOf : String -> Maybe RowStatus
+rowStatusOf s =
+    case s of
+        "live" ->
+            Just Live
+
+        "dead" ->
+            Just Dead
+
+        "shadowed" ->
+            Just Shadowed
+
+        _ ->
+            Nothing
+
+
+{-| `<id>` or `new`.
+-}
+fileOf : String -> Maybe ProjectFile
+fileOf s =
+    if s == "new" then
+        Just NewProject
+
+    else
+        nat s |> Maybe.andThen projectId |> Maybe.map FileId
+
+
+editsOf : String -> Maybe Edits
+editsOf s =
+    case s of
+        "clean" ->
+            Just Clean
+
+        "edited" ->
+            Just Edited
+
+        _ ->
+            Nothing
+
+
+soundStatusOf : String -> Maybe SoundStatus
+soundStatusOf s =
+    case s of
+        "clean" ->
+            Just SoundClean
+
+        "edited" ->
+            Just SoundEdited
+
+        "stale" ->
+            Just SoundStale
+
+        _ ->
+            Nothing
+
+
+healthOf : String -> Maybe Health
+healthOf s =
+    case s of
+        "ok" ->
+            Just FileOk
+
+        "bad" ->
+            Just FileBad
+
+        "newer" ->
+            Just FileNewer
+
+        _ ->
+            Nothing
+
+
+{-| A generation, or `-` for none: `Just Nothing`; anything else `Nothing`.
+-}
+generationOf : String -> Maybe (Maybe Generation)
+generationOf s =
+    if s == "-" then
+        Just Nothing
+
+    else
+        nat s |> Maybe.map (Generation >> Just)
+
+
+{-| A signed whole number: `-127`, `+42`, `42`.
+-}
+int : String -> Maybe Int
+int s =
+    case String.uncons s of
+        Just ( '-', rest ) ->
+            nat rest |> Maybe.map negate
+
+        Just ( '+', rest ) ->
+            nat rest
+
+        Just _ ->
+            nat s
+
+        Nothing ->
+            Nothing
+
+
+routeKind : String -> Maybe RouteKind
+routeKind s =
+    case s of
+        "route" ->
+            Just KnobRoute
+
+        "keybd" ->
+            Just KnobKeybd
+
+        _ ->
+            Nothing
+
+
+param : String -> String -> String -> Scale -> Flags -> ( String, String ) -> ( String, String ) -> Maybe AnswerLine
+param a label kind scale flags ( lo, hi ) ( step, def ) =
     Maybe.map5
-        (\( x, k ) l h s d -> Param { addr = x, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d })
+        (\( x, k ) l h s d -> Param { addr = x, label = label, kind = k, scale = scale, min = l, max = h, step = s, default = d, flags = flags })
         (Maybe.map2 Tuple.pair (Addr.fromWire a) (kindOf kind))
         (num lo)
         (num hi)
         (num step)
         (num def)
+
+
+{-| `m`, `d`, `md` or `-`: nothing else.
+-}
+flagsOf : String -> Maybe Flags
+flagsOf s =
+    case s of
+        "-" ->
+            Just { mappable = False, modulation = False }
+
+        "m" ->
+            Just { mappable = True, modulation = False }
+
+        "d" ->
+            Just { mappable = False, modulation = True }
+
+        "md" ->
+            Just { mappable = True, modulation = True }
+
+        _ ->
+            Nothing
 
 
 scaleOf : String -> Maybe Scale

@@ -144,6 +144,33 @@ fn with_c_in_slot_2(rig: &mut OrbitRig) -> Scene {
     b
 }
 
+/// The browser editor's yes to a scene (ADR 0289) is the engine's `Held`:
+/// made only while the slot reads the rev the editor sent, and what it
+/// confirms is refused once the slot is written again.
+#[test]
+fn held_is_made_only_at_the_slots_rev() {
+    use chimera_core::orbit::scene::{Refused, SlotRev};
+    use chimera_core::project::Held as SceneHeld;
+    let mut rig = OrbitRig::new();
+    let now = rig.project.orbit().slot_rev(S[1]);
+    let stale = SlotRev::new(now.get().wrapping_add(1));
+    assert!(SceneHeld::check(rig.project.orbit(), S[1], stale).is_none());
+    let held = SceneHeld::check(rig.project.orbit(), S[1], now).expect("the slot's rev");
+    let yes = held.confirmed();
+    assert!(yes.holds(rig.project.orbit()));
+    rig.song().overwrite_scene(yes).expect("nothing queued");
+    // Written: the rev moved, so the same witness is no proof now.
+    assert!(SceneHeld::check(rig.project.orbit(), S[1], now).is_none());
+    let moved = rig.project.orbit().slot_rev(S[1]);
+    let old = SceneHeld::check(rig.project.orbit(), S[1], moved).expect("the new rev");
+    let again = Confirmed::<SceneSlot>::unasked(rig.project.orbit(), S[1]);
+    rig.song().overwrite_scene(again).expect("nothing queued");
+    assert_eq!(
+        rig.song().overwrite_scene(old.confirmed()),
+        Err(Refused::SlotChanged)
+    );
+}
+
 /// A switch queued mid-loop: the old scene plays to the boundary, the new
 /// one's step 0s fire at it, in its key, and its first loop is unmutated;
 /// the song takes it as playing once the view reports it. Stopped, a
@@ -1715,4 +1742,18 @@ fn songs_differ_by_live_alone() {
     let mut d = c;
     d.live_mut_for_test().chords.tonic = a.live().chords.tonic;
     assert_ne!(c, d, "the slot matches, live does not");
+}
+
+/// A slot's rev never comes round in a session: 65,536 writes later (a
+/// 16-bit rev's wrap) a confirmation from before them still refuses.
+#[test]
+fn a_confirmation_does_not_hold_again_after_65536_writes() {
+    let mut ui = in_orbit();
+    let n = ui.project().orbit().current();
+    let c = Confirmed::<SceneSlot>::unasked(ui.project().orbit(), n);
+    let song = ui.project_mut().orbit_mut();
+    for _ in 0..65_536 {
+        song.edit(&mut |_| {});
+    }
+    assert!(!c.holds(song), "the rev wrapped onto the witness");
 }

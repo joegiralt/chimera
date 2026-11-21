@@ -667,6 +667,9 @@ impl MatrixState {
 /// the block's tag (3 letters at most), a space and the param's label,
 /// cut at 8 (`ALG MORP`). One spelling for the unit's priming and the
 /// host's factory Sources; the grid draws its column from the address.
+// Inlined: bank 2's `ed` calls it too, so no out-of-line copy
+// stays in bank 1 for it (ADR 0289).
+#[inline(always)]
 pub fn dest_label(a: ParamAddr) -> [u8; LABEL_LEN] {
     let tag = block_tag(a.block).as_bytes();
     let (prefix, n): ([u8; 4], usize) = match a.block {

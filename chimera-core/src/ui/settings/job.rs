@@ -71,6 +71,11 @@ pub(crate) enum Job {
     LibrarySave(PartId, SoundName),
     /// A confirmed library load: the file, then its source or `adopt`.
     LibraryLoad(Confirmed<LibraryKit>),
+    /// The editor's (ADR 0289): the card listed again, nothing on screen
+    /// moved; with a name, then a save under it into the next free id,
+    /// never over another project (a listed name kept beside it, as KEEP
+    /// BOTH does).
+    Relist(Option<ProjectName>),
 }
 
 /// What card work borrows from the shell.
@@ -244,6 +249,14 @@ impl UiState {
                 self.lib_load(cx.card, cx.store, go);
                 None
             }
+            Job::Relist(name) => match (self.relist(cx.card, cx.store), name) {
+                (Ok(fresh), Some(name)) => Some(Job::Save(SaveTo::Fresh(fresh), name, None)),
+                (Err(n), Some(_)) => {
+                    self.show_note(n);
+                    None
+                }
+                (Ok(_) | Err(_), None) => None,
+            },
         }
     }
 

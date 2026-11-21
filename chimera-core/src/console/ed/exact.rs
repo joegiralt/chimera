@@ -207,7 +207,7 @@ pub(super) fn stored(w: &mut dyn Write, v: f32) -> fmt::Result {
     if v < 0.0 && (whole != 0 || len != 0) {
         w.write_char('-')?;
     }
-    write!(w, "{whole}")?;
+    super::lit::uint(w, whole)?;
     if len != 0 {
         w.write_char('.')?;
         for &d in &digits[..len] {

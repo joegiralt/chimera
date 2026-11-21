@@ -315,9 +315,10 @@ impl MidiUiDoor {
         #[cfg(feature = "midi-map")]
         map_row: UiState::map_row_in,
         #[cfg(feature = "midi-map")]
-        ctl_due: UiState::ctl_due_in,
+        // The editor's map listing rides the layers' card work (ADR 0289).
+        ctl_due: super::ed_cue::ctl_due,
         #[cfg(feature = "midi-map")]
-        ctl_work: UiState::ctl_work_in,
+        ctl_work: super::ed_cue::ctl_work,
         #[cfg(feature = "midi-map")]
         ctl_ask: UiState::ctl_ask_in,
         #[cfg(feature = "midi-map")]

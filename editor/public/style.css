@@ -222,5 +222,6 @@ html, body { margin: 0; background: #121212; }
 .ui .pnote { margin: 8px 2px 0; font: 600 12px/1.4 var(--sans); letter-spacing: .06em; color: var(--mid); }
 /* before the unit is followed: the two links */
 .ui .connect { display: flex; flex-wrap: wrap; gap: 10px; }
+.ui .said { display: grid; gap: 8px; font: 600 12px/1.3 var(--mono); overflow-wrap: anywhere; }
 .ui .connect .hbtn { width: auto; padding: 10px 14px; border-color: var(--ink); color: var(--ink); font: 700 14px/1 var(--sans); letter-spacing: .1em; }
 .ui .connect .hbtn::after { content: none; }

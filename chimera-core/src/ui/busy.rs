@@ -177,6 +177,13 @@ impl ToastTimer {
         self.on.is_some_and(|t| t.text == *text)
     }
 
+    /// The text up now: the editor's `since` reads it (ADR 0289). Inlined
+    /// into its one caller, bank 2's.
+    #[inline(always)]
+    pub fn text(&self) -> Option<&Line> {
+        self.on.as_ref().map(|t| &t.text)
+    }
+
     /// Takes it down early (new input).
     pub fn dismiss(&mut self) {
         self.ended |= self.on.take().is_some();

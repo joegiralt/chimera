@@ -8,8 +8,9 @@ use common::console_fake::{Fake, ask};
 use std::collections::BTreeSet;
 
 use chimera_core::console::{
-    ED_PANELS, ED_REFUSED, ED_SLOTS, EdAddr, EdBlock, MODELS, PadBlock, SoundBlock, ed_pages,
-    ed_panels_used, ed_slots_used, filter_variant, machine_variant, modal_variant, tape_variant,
+    BusBlock, ED_PANELS, ED_REFUSED, ED_SLOTS, EdAddr, EdBlock, GlobalBlock, MODELS, OrbitBlock,
+    PadBlock, PartBlock, Round, Schema, SoundBlock, ed_pages, ed_panels_used, ed_slots_used,
+    filter_variant, machine_variant, modal_variant, tape_variant,
 };
 use chimera_core::project::PartId;
 use chimera_core::ui::block_def::slot_addr;
@@ -21,6 +22,7 @@ use chimera_engine::dsp::drum::types::{Machine, PadId};
 use chimera_engine::dsp::filter::FilterKind;
 use chimera_engine::dsp::tape_engine::params::TapeMachine;
 use chimera_engine::dsp::voice_fx::params::FxType;
+use chimera_engine::midi_map::Mappable;
 use chimera_engine::params::EngineType;
 
 const P1: PartId = PartId::ALL[0];
@@ -116,24 +118,57 @@ const OTHERS: [EngineType; 4] = [
 
 // ---- addresses ----
 
-/// Every block an address can name.
-fn all_blocks() -> Vec<EdBlock> {
-    let mut v: Vec<EdBlock> = BlockRef::ALL
-        .into_iter()
-        .chain([BlockRef::Kit])
-        .filter_map(SoundBlock::new)
-        .map(EdBlock::Sound)
-        .collect();
-    for p in PadId::ALL {
-        v.extend(PadBlock::ALL.map(|b| EdBlock::Pad(p, b)));
+/// The block a box's block is, named by its own token: `None` for the
+/// active Part's (`PART`, reserved), the mirror and a pad's.
+fn named(b: BlockRef) -> Option<EdBlock> {
+    if let Some(s) = SoundBlock::new(b) {
+        return Some(EdBlock::Sound(s));
     }
+    Some(match b {
+        BlockRef::Chorus => EdBlock::Bus(BusBlock::Chorus),
+        BlockRef::Delay => EdBlock::Bus(BusBlock::Delay),
+        BlockRef::Reverb => EdBlock::Bus(BusBlock::Reverb),
+        BlockRef::Tape => EdBlock::Bus(BusBlock::Tape),
+        BlockRef::Comp => EdBlock::Bus(BusBlock::Comp),
+        BlockRef::Theme => EdBlock::Global(GlobalBlock::Theme),
+        BlockRef::Midi => EdBlock::Global(GlobalBlock::Midi),
+        BlockRef::Random => EdBlock::Global(GlobalBlock::Random),
+        BlockRef::OrbitChords => EdBlock::Orbit(OrbitBlock::Chords),
+        BlockRef::OrbitRing(r) => EdBlock::Orbit(OrbitBlock::Ring(r)),
+        BlockRef::Tempo => EdBlock::Orbit(OrbitBlock::Tempo),
+        _ => return None,
+    })
+}
+
+/// Every block an address can name, in the tokens fixture's order: the
+/// box's blocks (`PART`, the active Part's, a reserved token since
+/// protocol 3 and never reachable), the kit, each pad's, then protocol
+/// 4's: each Part's mix and sends, `RANDOM` and `TEMPO`.
+fn all_blocks() -> Vec<Option<EdBlock>> {
+    let mut v: Vec<Option<EdBlock>> = BlockRef::ALL.into_iter().map(named).collect();
+    v.push(Some(EdBlock::Sound(
+        SoundBlock::new(BlockRef::Kit).unwrap(),
+    )));
+    for p in PadId::ALL {
+        v.extend(PadBlock::ALL.map(|b| Some(EdBlock::Pad(p, b))));
+    }
+    for p in PartId::ALL {
+        v.extend(PartBlock::ALL.map(|b| Some(EdBlock::Part(p, b))));
+    }
+    v.push(named(BlockRef::Random));
+    v.push(named(BlockRef::Tempo));
     v
+}
+
+/// Every block an address names.
+fn blocks() -> Vec<EdBlock> {
+    all_blocks().into_iter().flatten().collect()
 }
 
 #[test]
 fn every_address_round_trips() {
     let mut n = 0;
-    for at in all_blocks() {
+    for at in blocks() {
         let mut i = 0;
         while let Some(id) = at.id_at(i) {
             i += 1;
@@ -152,7 +187,7 @@ fn every_address_round_trips() {
 
 #[test]
 fn idents_are_unique_in_every_block() {
-    for at in all_blocks() {
+    for at in blocks() {
         let mut seen = BTreeSet::new();
         let mut i = 0;
         while let Some(id) = at.id_at(i) {
@@ -183,14 +218,23 @@ fn bad_pad_and_kit_tokens_are_refused() {
     }
     // The kit's and a pad's block are never a Sound block.
     assert_eq!(SoundBlock::new(BlockRef::Pad), None);
-    assert!(SoundBlock::new(BlockRef::Chorus).is_some());
+    // Nor a bus, the active Part's or a mirror: those are their own.
+    for b in [
+        BlockRef::Chorus,
+        BlockRef::Part,
+        BlockRef::PartMix(PartId::ALL[2]),
+        BlockRef::Theme,
+        BlockRef::Tempo,
+    ] {
+        assert_eq!(SoundBlock::new(b), None, "{b:?}");
+    }
 }
 
 #[test]
 fn block_tokens_are_frozen() {
     let mut text = String::new();
     for at in all_blocks() {
-        text.push_str(&at.to_string());
+        text.push_str(&at.map_or("PART".to_string(), |b| b.to_string()));
         text.push('\n');
     }
     let path =
@@ -329,14 +373,24 @@ fn every_param_line_says_its_scale() {
     for e in EngineType::ALL {
         let mut f = Fake::new();
         for p in params(&page_texts(&mut f, e)) {
-            // param <addr> "<label>" <kind> <scale> <min> <max> <step> <default>
-            assert_eq!(p.len(), 9, "{p:?}");
+            // param <addr> "<label>" <kind> <scale> <min> <max> <step> <default> <flags>
+            assert_eq!(p.len(), 10, "{p:?}");
             let a = EdAddr::parse(p[1].as_bytes()).unwrap();
             let want = match a.param().spec().unwrap().scale {
                 Scale::Linear => "lin",
                 Scale::Octaves => "oct",
             };
             assert_eq!(p[4], want, "{p:?}");
+            // The flags are the box's own rules (ADR 0289).
+            let m = Mappable::new(a.param()).is_some();
+            let d = a.param().modulatable();
+            let flags = match (m, d) {
+                (true, true) => "md",
+                (true, false) => "m",
+                (false, true) => "d",
+                (false, false) => "-",
+            };
+            assert_eq!(p[9], flags, "{p:?}");
             assert!(
                 ["cont", "choice", "toggle"].contains(&p[3].as_str()),
                 "{p:?}"
@@ -402,7 +456,9 @@ fn check_box_cells(f: &mut Fake, e: EngineType, listed: &BTreeSet<String>) -> us
                         let Some(a) = slot_addr(def, i, &ctx) else {
                             continue;
                         };
-                        let ed = EdAddr::shown(a, p).unwrap().to_string();
+                        let ed = EdAddr::shown(a, p.map_or(Round::Shared, Round::Pad))
+                            .unwrap()
+                            .to_string();
                         assert!(listed.contains(&ed), "{e:?} {ed} on {}", def.short);
                         let want = f.ui.cell_text_for_test(i);
                         let (_, text) = get(f, &ed);
@@ -787,15 +843,50 @@ fn a_choice_is_set_by_its_number() {
 
 // ---- since ----
 
+/// `ed since <n>` as a client asks it: each answer's lines but for its
+/// `OK`, the last answer's number and the largest answer's bytes. An
+/// answer that owes sections (`OK <m> more`: a whole DRUM answer with
+/// 0.4's mixer is within 200 B of the bound) is asked again at once. The
+/// one place these tests read `OK`.
+fn answers(f: &mut Fake, mut n: u32) -> (Vec<Vec<String>>, u32, usize) {
+    let (mut all, mut bytes) = (vec![], 0);
+    loop {
+        let got = ask(f, &format!("ed since {n}\n"));
+        bytes = bytes.max(got.len());
+        let mut lines: Vec<String> = got.lines().map(str::to_string).collect();
+        let last = lines.pop().unwrap();
+        let end = last.strip_prefix("OK ").unwrap_or_else(|| panic!("{got}"));
+        let (m, more) = match end.strip_suffix(" more") {
+            Some(m) => (m, true),
+            None => (end, false),
+        };
+        n = m.parse().unwrap_or_else(|_| panic!("{got}"));
+        all.push(lines);
+        if !more {
+            return (all, n, bytes);
+        }
+    }
+}
+
+/// `ed since <n>`'s PART section (each answer's lines before any other
+/// section's header), its number and its largest answer's bytes.
 fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32, usize) {
-    let got = ask(f, &format!("ed since {n}\n"));
-    let mut lines: Vec<String> = got.lines().map(str::to_string).collect();
-    let last = lines.pop().unwrap();
-    let m = last.strip_prefix("OK ").unwrap().parse().unwrap();
+    let (all, m, bytes) = answers(f, n);
     (
-        lines.into_iter().filter(|l| !l.is_empty()).collect(),
+        all.into_iter()
+            .flat_map(|lines| {
+                lines
+                    .into_iter()
+                    .filter(|l| !l.is_empty())
+                    .take_while(|l| !matches!(l.as_str(), "mixer" | "orbit" | "settings"))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|l| {
+                !l.starts_with("routes ") && !l.starts_with("route ") && !l.starts_with("unroute ")
+            })
+            .collect(),
         m,
-        got.len(),
+        bytes,
     )
 }
 
@@ -825,6 +916,136 @@ fn since_answers_every_engine_whole_and_fits_the_clock() {
         assert!(since(&mut f, m).0.is_empty(), "{e:?}");
         println!("{e:?}: a full answer is {bytes} B");
     }
+}
+
+/// The delay's SYNC is the mixer's: its flip answers MIXER whole and
+/// nothing of PART, whose texts never read it (25 kB on DRUM otherwise).
+#[test]
+fn a_delay_sync_flip_says_nothing_of_the_part() {
+    let mut f = fake(EngineType::Drum);
+    let (_, m, _) = since(&mut f, 0);
+    set(&mut f, "DELAY.SYNC", "SYNC");
+    let (part, _, bytes) = since(&mut f, m);
+    println!("DRUM: a SYNC flip's answer is {bytes} B");
+    assert!(part.is_empty(), "{} PART lines, {bytes} B", part.len());
+}
+
+/// PART's bytes in a whole answer: its lines, each with its newline, up
+/// to the next section's.
+fn part_bytes(f: &mut Fake) -> usize {
+    let (all, _, _) = answers(f, 0);
+    let part = all
+        .iter()
+        .find(|a| a.iter().any(|l| l.starts_with("part ")))
+        .expect("a whole answer holds PART");
+    part.iter()
+        .take_while(|l| {
+            !(l.starts_with("routes ")
+                || l.starts_with("map ")
+                || matches!(l.as_str(), "mixer" | "orbit" | "settings"))
+        })
+        .map(|l| l.len() + 1)
+        .sum()
+}
+
+/// `addr` left on the candidate whose `ed get` line is longest; a
+/// candidate the box refuses or clamps counts as what it reads back.
+fn longest(f: &mut Fake, addr: &str, candidates: &[String]) {
+    let mut best: Option<(usize, &String)> = None;
+    for c in candidates {
+        let _ = ask(f, &format!("ed set {addr} {c}\n"));
+        apply(f);
+        let n = ask(f, &format!("ed get {addr}\n"))
+            .lines()
+            .next()
+            .map_or(0, str::len);
+        if best.is_none_or(|(b, _)| n > b) {
+            best = Some((n, c));
+        }
+    }
+    if let Some((_, c)) = best {
+        let _ = ask(f, &format!("ed set {addr} {c}\n"));
+        apply(f);
+    }
+}
+
+/// The DRUM kit with every value where its `val` line is longest, each
+/// pad on `machine`: every choice on its longest option's line, then
+/// every continuous value on the longest of its ends and two off-grid
+/// places between (a long stored number). Greedy, a param at a time.
+fn longest_drum(machine: usize) -> Fake {
+    let mut f = fake(EngineType::Drum);
+    let texts = page_texts(&mut f, EngineType::Drum);
+    let all = texts.join("");
+    let mut seen = BTreeSet::new();
+    let ps: Vec<Vec<String>> = params(&texts)
+        .into_iter()
+        .filter(|p| seen.insert(p[1].clone()))
+        .collect();
+    for p in ps.iter().filter(|p| p[1].ends_with(".MACHINE")) {
+        set(&mut f, &p[1], &format!("#{machine}"));
+    }
+    for cont in [false, true] {
+        for p in ps.iter().filter(|p| !p[1].ends_with(".MACHINE")) {
+            let (addr, kind) = (&p[1], p[3].as_str());
+            if (kind == "cont") != cont {
+                continue;
+            }
+            let candidates: Vec<String> = match cont {
+                true => {
+                    let (lo, hi): (f32, f32) = (p[5].parse().unwrap(), p[6].parse().unwrap());
+                    let at = |k: f32| (lo + (hi - lo) * k).to_string();
+                    vec![p[5].clone(), p[6].clone(), at(0.333_71), at(0.987_13)]
+                }
+                false => all
+                    .lines()
+                    .filter_map(|l| l.strip_prefix(&format!("opt {addr} ")))
+                    .map(|rest| format!("#{}", rest.split(' ').next().unwrap()))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+            };
+            longest(&mut f, addr, &candidates);
+        }
+    }
+    f
+}
+
+/// What DRUM's PART must leave of the bound: the empty line and `OK <m>
+/// more`, and room for a Sound the greedy search doesn't find (it found
+/// 25,298 B of 32,000 when written; INIT is 21,409).
+const PART_MARGIN: usize = 4_000;
+
+/// DRUM's PART, the largest section there is, fits one answer at its
+/// worst: past the bound it is `ERR ed since too large` and the editor
+/// has nothing. Every machine, each pad on it, every value on its
+/// longest line.
+#[test]
+fn drums_longest_part_fits_one_answer() {
+    let mut worst = (0, 0);
+    for m in 0..Machine::ALL.len() {
+        let mut f = longest_drum(m);
+        let n = part_bytes(&mut f);
+        println!("DRUM, every pad on machine {m}: PART is {n} B");
+        worst = worst.max((n, m));
+        assert!(
+            !ask(&mut f, "ed since 0\n").starts_with("ERR"),
+            "machine {m}"
+        );
+    }
+    let init = part_bytes(&mut fake(EngineType::Drum));
+    println!(
+        "DRUM INIT: PART is {init} B; the longest found {} B (machine {})",
+        worst.0, worst.1
+    );
+    assert!(worst.0 > init, "the search found nothing longer than INIT");
+    assert!(
+        worst.0 + PART_MARGIN <= ANSWER_BYTES_MAX,
+        "DRUM's longest PART is {} B (machine {}): {} B of the bound's {ANSWER_BYTES_MAX} left",
+        worst.0,
+        worst.1,
+        ANSWER_BYTES_MAX.saturating_sub(worst.0)
+    );
 }
 
 #[test]
@@ -877,11 +1098,11 @@ fn a_pad_edit_is_a_diff_and_choosing_a_pad_is_nothing() {
 #[test]
 fn the_copy_holds_every_engine() {
     for e in EngineType::ALL {
-        assert!(ed_slots_used(e) <= ED_SLOTS, "{e:?}");
+        assert!(ed_slots_used(Schema::Engine(e)) <= ED_SLOTS, "{e:?}");
         assert!(ed_panels_used(e) <= ED_PANELS, "{e:?}");
     }
     // DRUM, the most, sets both: nothing held for nothing.
-    assert_eq!(ed_slots_used(EngineType::Drum), ED_SLOTS);
+    assert_eq!(ed_slots_used(Schema::Engine(EngineType::Drum)), ED_SLOTS);
     assert_eq!(ed_panels_used(EngineType::Drum), ED_PANELS);
 }
 
@@ -1101,21 +1322,16 @@ fn a_refused_ed_set_says_why_as_a_cc_does() {
 
 // ---- refusals over the protocol: `refused <ADDR> "<reason>"` in since ----
 
-/// `since`'s `refused` lines, each checked to come before its `OK`, and
-/// the answer's number.
+/// `since`'s `refused` lines, each a line of its own (no other line says
+/// the word), and the last answer's number (`answers`).
 fn refused_lines(f: &mut Fake, n: u32) -> (Vec<String>, u32) {
-    let got = ask(f, &format!("ed since {n}\n"));
-    let ok = got.rfind("OK ").unwrap();
-    let lines: Vec<String> = got
-        .lines()
+    let (all, m, _) = answers(f, n);
+    let lines: Vec<String> = all
+        .into_iter()
+        .flatten()
+        .inspect(|l| assert!(l.starts_with("refused ") || !l.contains("refused "), "{l}"))
         .filter(|l| l.starts_with("refused "))
-        .map(str::to_string)
         .collect();
-    assert!(
-        got[..ok].matches("refused ").count() == lines.len(),
-        "{got}"
-    );
-    let m = got[ok + 3..].trim_end().parse().unwrap();
     (lines, m)
 }
 

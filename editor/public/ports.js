@@ -123,14 +123,66 @@ var ChimeraPorts = (function () {
     });
   }
 
+  // The schema cache (ADR 0289): IndexedDB, one store, a schema's describe
+  // lines under "<protocol>/<SCHEMA>/<hash>". Every failure is a miss: the
+  // editor describes the schema again. Never a timer, never a guess.
+  var DB = 'chimera-editor', STORE = 'schemas';
+
+  function openDb(idb) {
+    return new Promise(function (res, rej) {
+      var r = idb.open(DB, 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore(STORE); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+
+  function idbOf() { return typeof indexedDB !== 'undefined' ? indexedDB : null; }
+
+  async function recall(key) {
+    var lines = null;
+    try {
+      var idb = idbOf();
+      if (idb) {
+        var db = await openDb(idb);
+        lines = await new Promise(function (res, rej) {
+          var g = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+          g.onsuccess = function () { res(Array.isArray(g.result) ? g.result : null); };
+          g.onerror = function () { rej(g.error); };
+        });
+        db.close();
+      }
+    } catch (e) { lines = null; }
+    app.ports.got.send({ key: key, lines: lines });
+  }
+
+  async function keep(entry) {
+    try {
+      var idb = idbOf();
+      if (!idb) return;
+      var db = await openDb(idb);
+      await new Promise(function (res, rej) {
+        var t = db.transaction(STORE, 'readwrite');
+        t.objectStore(STORE).put(entry.lines, entry.key);
+        t.oncomplete = res;
+        t.onerror = function () { rej(t.error); };
+      });
+      db.close();
+    } catch (e) { /* a store that fails keeps nothing: the next connect describes again */ }
+  }
+
   return {
     release: release,
     liner: liner,
+    recall: recall,
+    keep: keep,
     attach: function (a) {
       app = a;
       app.ports.connectSerial.subscribe(connectSerial);
       app.ports.connectSocket.subscribe(connectSocket);
       app.ports.send.subscribe(send);
+      app.ports.recall.subscribe(recall);
+      app.ports.keep.subscribe(keep);
     },
   };
 })();

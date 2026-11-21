@@ -3,7 +3,7 @@
 use core::fmt;
 
 pub const MAX_LINE: usize = 64;
-pub const PROTOCOL: u8 = 3;
+pub const PROTOCOL: u8 = 4;
 /// An answer gives up after this long with no byte taken…
 pub const STALL_MS: u32 = 250;
 /// …or after this long in all, however the bytes dribble out.
@@ -284,11 +284,16 @@ impl Console {
 mod ed;
 pub(crate) use ed::answer_in as ed_answer_in;
 pub use ed::{
-    ED_PANELS, ED_REFUSED, ED_SLOTS, EdAddr, EdArg, EdBlock, EdSince, EdState, EdValue, Gen,
-    MODELS, OptIndex, PadBlock, Pushed, SetRefusal, SoundBlock, chain as ed_chain, ed_panels_used,
-    ed_slots_used, env_variant, filter_variant, fx_variant, lfo_variant, machine_variant,
-    modal_variant, op_variant, page_at as ed_page_at, pages as ed_pages, tape_variant,
+    BusBlock, ED_MIXER_SLOTS, ED_PANELS, ED_REFUSED, ED_SETTINGS_SLOTS, ED_SLOTS, EdAddr, EdArg,
+    EdBlock, EdDiscard, EdName, EdSince, EdState, EdValue, Gen, GlobalBlock, MODELS, OptIndex,
+    OrbitBlock, OverEdits, PadBlock, PartBlock, ProjectCmd, Pushed, Round, Schema, SetRefusal,
+    SoundBlock, chain as ed_chain, ed_panels_used, ed_slots_used, env_variant, filter_variant,
+    fx_variant, lfo_variant, machine_variant, modal_variant, op_variant, page_at as ed_page_at,
+    pages as ed_pages, reverb_variant, schema_pages as ed_schema_pages, tape_variant,
 };
+#[cfg(feature = "midi-map")]
+pub(crate) use ed::{KeepMap as EdKeepMap, RowIx as EdRowIx};
+pub(crate) use ed::{OrbitCmd, OrbitNotNow, OrbitSeen, orbit_check, orbit_holds};
 #[cfg(any(test, feature = "test-support"))]
 pub use ed::{StoredRefusal, stored as ed_stored};
 mod status;

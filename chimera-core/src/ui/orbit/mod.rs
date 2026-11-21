@@ -298,10 +298,17 @@ impl OrbitUi {
 
     /// A segment capture past the progression's SEGS is dropped: SEGS
     /// shrank under it.
+    #[inline(always)]
     pub fn fit(&mut self, c: &ChordRing) {
         if matches!(self.capture, Capture::Segment(s) if s >= c.segs.get()) {
             self.disarm();
         }
+    }
+
+    /// The load epoch of the project held: it moves when one is loaded.
+    #[inline(always)]
+    pub(in crate::ui) fn epoch(&self) -> u32 {
+        self.epoch
     }
 
     /// A project was loaded at `epoch`, before its publish: views from
@@ -341,6 +348,7 @@ impl OrbitUi {
     /// SCENE turned to `s`: queued in the song, and the switch (or, back
     /// on the playing scene, its cancel) sent to the runner, which lands
     /// it on the loop (at once when stopped).
+    #[inline(always)]
     pub fn queue(&mut self, s: SceneIdx, song: &mut OrbitSong) {
         song.queue(s);
         self.issue_scene(song);
@@ -355,6 +363,7 @@ impl OrbitUi {
     }
 
     /// Every command sent is applied.
+    #[inline(always)]
     pub fn idle(&self) -> bool {
         self.chan.idle()
     }

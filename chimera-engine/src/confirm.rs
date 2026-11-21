@@ -10,8 +10,8 @@ use core::marker::PhantomData;
 use crate::boot::RomDfu;
 use crate::orbit::RINGS;
 use crate::project::{
-    DeleteTarget, LibraryKit, LibraryPart, OverwriteTarget, PartSource, ProjectSource, SceneSlot,
-    Witnessed,
+    DeleteTarget, Held, LibraryKit, LibraryPart, OverwriteTarget, PartSource, ProjectSource,
+    SceneSlot, Witnessed,
 };
 
 /// A key's press: a tap acts on release, a hold fires once while down.
@@ -230,5 +230,50 @@ pub struct Said<T>(PhantomData<T>);
 impl<T> Said<T> {
     fn new() -> Self {
         Said(PhantomData)
+    }
+}
+
+/// Proof that the browser editor's own confirm said to drop a project's
+/// unsaved edits (ADR 0289): the way to a `Said<ProjectSource>` that is
+/// no key's. The engine can't name the token, which is the `ed` command
+/// path's (`chimera_core::console::ed::project::Discard`, made only by
+/// parsing a load's `discard` word, its field private to its module), so
+/// the gate is this trait, and a test holds every naming of it in the
+/// workspace to that one implementor
+/// (`only_the_ed_path_proves_an_editors_yes`). A scene's yes needs no
+/// trait: it takes the engine's own `Held`. Without a proof there is no
+/// yes:
+///
+/// ```compile_fail,E0061
+/// use chimera_engine::confirm::Said;
+/// use chimera_engine::project::SceneSlot;
+/// let _ = Said::<SceneSlot>::editor_confirm();
+/// ```
+///
+/// ```compile_fail,E0061
+/// use chimera_engine::confirm::Said;
+/// use chimera_engine::project::ProjectSource;
+/// let _ = Said::<ProjectSource>::editor_discard();
+/// ```
+pub trait EditorProof<T: Witnessed> {}
+
+impl Said<SceneSlot> {
+    /// The browser editor's yes to a scene's SAVE OVER, CLEAR, RELOAD or
+    /// MOVE (ADR 0289): its own confirm dialog's, proven by the slot's
+    /// rev as `since` said it, read off the slot by `Held::check`
+    /// (`SceneAsk::seen` carries the same rev). Only a `Held` is a proof.
+    #[inline(always)]
+    pub fn editor_confirm(_: &Held) -> Self {
+        Said::new()
+    }
+}
+
+impl Said<ProjectSource> {
+    /// The browser editor's `discard` (ADR 0289): its own confirm dialog's
+    /// yes to a load over unsaved edits, as LOAD ANYWAY's pill is the
+    /// box's. Only `ed project load … discard` holds a proof.
+    #[inline(always)]
+    pub fn editor_discard(_: &impl EditorProof<ProjectSource>) -> Self {
+        Said::new()
     }
 }

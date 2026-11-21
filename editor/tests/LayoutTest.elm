@@ -94,7 +94,7 @@ dupes xs =
 
 withExtra : Schema
 withExtra =
-    [ "page 0 ALG of 1", "panel ALG -", "param ALGO.MORPH \"MORPH\" cont lin 0 127 1 0", "param ALGO.NEW \"NEW\" cont lin 0 1 1 0" ]
+    [ "page 0 ALG of 1", "panel ALG -", "param ALGO.MORPH \"MORPH\" cont lin 0 127 1 0 m", "param ALGO.NEW \"NEW\" cont lin 0 1 1 0 -" ]
         |> List.foldl
             (\raw s ->
                 case Protocol.parse raw of
@@ -102,6 +102,9 @@ withExtra =
                         Schema.add a s
 
                     Protocol.Ok_ _ ->
+                        s
+
+                    Protocol.OkMore _ ->
                         s
 
                     Protocol.Queued ->

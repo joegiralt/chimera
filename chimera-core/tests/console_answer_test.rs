@@ -28,7 +28,7 @@ fn audio() -> AudioStats {
 #[test]
 fn help_lists_the_table_in_order() {
     let mut u = Fake::new();
-    let mut want = String::from("chimera console 3\n");
+    let mut want = String::from("chimera console 4\n");
     for c in Command::ALL {
         want += &format!("{:<8}{}\n", c.name(), c.about());
     }
@@ -42,7 +42,7 @@ fn help_is_the_specs_text() {
     let mut u = Fake::new();
     assert_eq!(
         ask(&mut u, "help\n"),
-        "chimera console 3\n\
+        "chimera console 4\n\
          help    this list\n\
          status  firmware, project, Part and where the UI is\n\
          stats   AUDIO LOAD and the UI loop's time\n\

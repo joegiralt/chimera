@@ -6,6 +6,7 @@ import Dict
 import Expect
 import Fixture
 import FixtureData
+import Hash
 import Html.Attributes exposing (attribute)
 import Json.Encode as Encode
 import Layout.Algo
@@ -61,15 +62,48 @@ pagesOf ls =
         |> Tuple.second
 
 
-{-| Connected over a link, greeted, and the whole ALGO schema described the
-way the model reads it, then one `since` answer: following Part 1.
+{-| Connected over a link, greeted, and the engine's, the MIXER's, a
+one-page matrix schema, SETTINGS', a one-page MAP schema and ORBIT's read the
+way the model reads them (no cache), then one `since` answer: following Part 1.
 -}
 connected : List String -> String -> Model.Model
 connected answer engine =
-    List.foldl (\( k, chunk ) m -> m |> tick (100 + 33 * k) |> feed chunk)
-        (Model.init |> Model.step (Model.LinkChanged Open) |> Tuple.first |> tick 0 |> feed [ "ed hello 3 b part 1 " ++ engine, "OK" ])
-        (List.indexedMap Tuple.pair (pagesOf answer))
+    Model.init
+        |> Model.step (Model.LinkChanged Open)
+        |> Tuple.first
+        |> tick 0
+        |> feed [ "ed hello 4 b part 1 " ++ engine, "OK" ]
+        |> readSchema 1 engine answer
+        |> readSchema 2 "MIXER" FixtureData.mixer
+        |> readSchema 3 ("MTX-" ++ engine) [ "page 0 MTX of 1", "OK" ]
+        |> readSchema 4 "SETTINGS" FixtureData.settings
+        |> readSchema 5 "MAP" FixtureData.map
+        |> readSchema 6 "ORBIT" FixtureData.orbit
         |> tick 50000
+
+
+{-| `ed schema` answered with the hash of the answer's own text, the cache
+missing, then every page described.
+-}
+readSchema : Int -> String -> List String -> Model.Model -> Model.Model
+readSchema k token answer m0 =
+    let
+        hash : String
+        hash =
+            Hash.toHex (Hash.ofLines (List.filter (\l -> l /= "OK") answer))
+
+        pages : List (List String)
+        pages =
+            pagesOf answer
+    in
+    List.foldl (\( i, chunk ) m -> m |> tick (10000 * k + 33 * (i + 1)) |> feed chunk)
+        (m0
+            |> tick (10000 * k)
+            |> feed [ "schema " ++ token ++ " " ++ String.fromInt (List.length pages) ++ " " ++ hash, "OK" ]
+            |> Model.step (Model.Recalled { key = "4/" ++ token ++ "/" ++ hash, lines = Nothing })
+            |> Tuple.first
+        )
+        (List.indexedMap Tuple.pair pages)
 
 
 model : Model.Model
@@ -274,6 +308,32 @@ suite =
                         |> Query.fromHtml
                         |> Query.findAll [ Sel.class "c", Sel.class "refused", Sel.containing [ Sel.text "FREQ" ] ]
                         |> Query.count (Expect.equal 1)
+            , test "a_refusal_that_is_no_controls_is_said_on_the_page_in_the_units_words" <|
+                \_ ->
+                    Page.view (feed [ "ERR busy", "ERR busy", "wibble 3" ] model) (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.find [ Sel.class "said" ]
+                        |> Query.has [ Sel.text "THE UNIT REFUSED: busy", Sel.text "×2", Sel.text "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: wibble 3" ]
+            , test "seeing_the_notices_tells_the_model" <|
+                \_ ->
+                    Page.view (feed [ "ERR busy" ] model) (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.find [ Sel.class "said" ]
+                        |> Query.find [ Sel.tag "button" ]
+                        |> Event.simulate Event.click
+                        |> Event.expect (Unit Model.SeenNotices)
+            , test "nothing_kept_says_nothing" <|
+                \_ ->
+                    Page.view model (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.findAll [ Sel.class "said" ]
+                        |> Query.count (Expect.equal 0)
+            , test "a_notice_is_said_on_the_connect_page_too_with_how_many_were_lost" <|
+                \_ ->
+                    Page.view (feed (List.range 1 17 |> List.map (\n -> "wibble " ++ String.fromInt n)) Model.init) (Page.init Day)
+                        |> Query.fromHtml
+                        |> Query.find [ Sel.class "said" ]
+                        |> Query.has [ Sel.text "THE UNIT SAID A LINE THIS EDITOR CAN'T READ: wibble 17", Sel.text "AND 1 MORE NO LONGER KEPT" ]
             , test "the_next_value_clears_the_refusal" <|
                 \_ ->
                     Page.view (feed [ "refused FILTER.CUTOFF \"FILTER IS OFF\"", "OK 2", "val FILTER.CUTOFF 0.5 632.4555 \"632 Hz\"", "OK 3" ] model) (Page.init Day)
@@ -381,6 +441,29 @@ suite =
                         |> Maybe.andThen Screen.spec
                         |> Maybe.map (.page >> Protocol.pageNoToInt)
                         |> Expect.equal (Just 22)
+            , test "the_algo_page_stays_in_params_order_whatever_the_units_algo_pages_setting" <|
+                \_ ->
+                    -- PERSONALIZE › ALGO PAGES (THEME.ALGO_FIRST) orders the
+                    -- unit's own page walk; the editor's is PARAMS first by design.
+                    let
+                        opsFirst : Model.Model
+                        opsFirst =
+                            feed [ "settings", "val THEME.ALGO_FIRST 1 1 \"OPS\"", "OK 2" ] model
+                    in
+                    Expect.all
+                        [ \_ -> Expect.equal (Just [ "PARAMS", "OPS" ]) (Schema.param (addr "THEME.ALGO_FIRST") opsFirst.settings |> Maybe.map (.options >> List.map Tuple.second))
+                        , \_ -> Expect.equal (Just "OPS") (Model.shown (addr "THEME.ALGO_FIRST") opsFirst |> Maybe.map .text)
+                        , \_ ->
+                            Page.view opsFirst (Page.init Day)
+                                |> Query.fromHtml
+                                |> Query.findAll [ Sel.tag "h2" ]
+                                |> Expect.all
+                                    [ Query.index 0 >> Query.has [ Sel.text "ALGORITHM" ]
+                                    , Query.index 1 >> Query.has [ Sel.text "PITCH" ]
+                                    , Query.index 2 >> Query.has [ Sel.text "OP 1" ]
+                                    ]
+                        ]
+                        ()
             , test "before_following_it_offers_the_links" <|
                 \_ ->
                     Page.view Model.init (Page.init Night)

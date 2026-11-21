@@ -3,7 +3,7 @@
 //! each pad's on DRUM. `tests/screen.rs` holds it to every page
 //! `ed describe` names.
 
-use chimera_core::console::ed_page_at;
+use chimera_core::console::{Schema, ed_page_at};
 use chimera_core::dsp::drum::types::PadId;
 use chimera_core::params::EngineType;
 use chimera_core::ui::block_def::BlockDef;
@@ -14,5 +14,5 @@ pub struct PageNo(pub u16);
 
 /// Page `n` of `engine`: its def, and the pad it is a page of.
 pub fn page_at(engine: EngineType, n: PageNo) -> Option<(&'static BlockDef, Option<PadId>)> {
-    ed_page_at(engine, usize::from(n.0))
+    ed_page_at(Schema::Engine(engine), usize::from(n.0)).map(|(def, round)| (def, round.pad()))
 }

@@ -1,44 +1,56 @@
-//! `ed describe <ENGINE> <page>`: one page's static schema, from the
-//! engine's chain and the box's own cell resolver (`view::view`), never the
+//! `ed describe <SCHEMA> <page>`: one page's static schema, from the
+//! schema's chain and the box's own cell resolver (`view::view`), never the
 //! Sound. A page lists its panels, each a variant of what a cell resolves
-//! against (`FILTER LADDER`, `ENV1 B-LFO`, `OP3 FORMANT`, `PAD3_MCH TOM`);
-//! `-` for cells no variant changes.
+//! against (`FILTER LADDER`, `ENV1 B-LFO`, `OP3 FORMANT`, `PAD3_MCH TOM`,
+//! `REVERB HALL`); `-` for cells no variant changes.
 //!
 //! ```text
 //! page <n> <LABEL> of <count>
+//! crumb "<LIST>" "<ROW>"                   (SETTINGS' pages: the tree's crumbs)
 //! panel <name> <variant>
-//! param <addr> "<label>" <cont|choice|toggle> <lin|oct> <min> <max> <step> <default>
+//! param <addr> "<label>" <cont|choice|toggle> <lin|oct> <min> <max> <step> <default> <flags>
 //! opt <addr> <index> "<name>"
-//! route "<cell label>" next-slice
+//! route "<cell label>" <cell> <route|keybd>
 //! source "<cell label>"
+//! act "<cell label>" <CELL>               (ORBIT's own cells: `orbit::act_line`)
 //! ```
+//!
+//! `flags` is `m` (a MIDI map may target it), `d` (a mod destination),
+//! both, or `-` (ADR 0289).
 //!
 //! ALGO's chain is `ALGO_FORMANT_CHAIN`, so the editor has every page any
 //! operator mix can show. On DRUM a page that edits the pad is described
-//! once a pad (`PAD3_KIT`), after the Part's pages (ADR 0285).
+//! once a pad (`PAD3_KIT`), on the mixer one that edits the Part once a
+//! Part (`PART3_PRT`), after the shared pages (ADR 0285, 0289).
 
 use core::fmt::{self, Write};
 
 use super::EdAddr;
+use super::lit::{PANEL, QUOTE, QUOTE_SHUT, SOURCE, UNQUOTE, lit, quoted, uint};
+use super::schema::{Round, Schema};
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{Block, ParamSpec, Scale, ValFmt};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::WaveId;
+use crate::dsp::delay::DelaySync;
 use crate::dsp::drum::sound::RouteId;
 use crate::dsp::drum::types::{Machine, PadId};
 use crate::dsp::filter::{FilterKind, KIND_NAMES};
 use crate::dsp::modal::ResonatorMode;
 use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, Func, LfoForm, LfoSlot};
+use crate::dsp::reverb::ReverbType;
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::voice_fx::params::FxType;
 use crate::params::{EngineType, FilterParams};
 use crate::ui::block_def::{BlockDef, SlotBinding};
+use crate::ui::reverb_panel;
 use crate::ui::view::{self, EnvKind, LfoKind, SlotCtx, View};
 use chimera_engine::addr::{BlockRead, BlockView};
 use chimera_engine::dsp::drum::params::PadParams;
 use chimera_engine::dsp::modal::ModalParams;
+use chimera_engine::midi_map::Mappable;
 
-use super::pages::Pages;
+use super::pages::{Pages, schema_pages};
 pub use super::pages::{chain, page_at, pages};
 
 /// A variant as one token: a name's spaces as `-` (`TONE KICK` is
@@ -73,6 +85,27 @@ pub fn fx_variant(t: FxType) -> &'static str {
     FxType::NAMES[i]
 }
 
+/// The delay's TIME cell's panel, by SYNC's option name.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.delay_variant")
+)]
+pub fn delay_variant(s: DelaySync) -> &'static str {
+    match s {
+        DelaySync::Free => DelaySync::NAMES[0],
+        DelaySync::Sync => DelaySync::NAMES[1],
+    }
+}
+
+/// A reverb TYPE's panel, by its option name.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.reverb_variant")
+)]
+pub fn reverb_variant(t: ReverbType) -> &'static str {
+    ReverbType::NAMES.get(t.index()).copied().unwrap_or("-")
+}
+
 /// One name for each panel `mod_panel::env_panel` has.
 #[cfg_attr(
     target_os = "none",
@@ -80,13 +113,13 @@ pub fn fx_variant(t: FxType) -> &'static str {
 )]
 pub fn env_variant(k: EnvKind) -> &'static str {
     match k {
-        EnvKind::A(EnvSpeed::Fast) => "A-FAST",
-        EnvKind::A(EnvSpeed::Med) => "A-MED",
-        EnvKind::A(EnvSpeed::Slow) => "A-SLOW",
-        EnvKind::B(Func::Env(_)) => "B-ENV",
-        EnvKind::B(Func::Lfo(LfoForm::Lfv)) => "B-LFV",
-        EnvKind::B(Func::Lfo(_)) => "B-LFO",
-        EnvKind::B(Func::Burst(_)) => "B-BURST",
+        EnvKind::A(EnvSpeed::Fast) => A_FAST.get(),
+        EnvKind::A(EnvSpeed::Med) => A_MED.get(),
+        EnvKind::A(EnvSpeed::Slow) => A_SLOW.get(),
+        EnvKind::B(Func::Env(_)) => B_ENV.get(),
+        EnvKind::B(Func::Lfo(LfoForm::Lfv)) => B_LFV.get(),
+        EnvKind::B(Func::Lfo(_)) => B_LFO.get(),
+        EnvKind::B(Func::Burst(_)) => B_BURST.get(),
     }
 }
 
@@ -97,8 +130,8 @@ pub fn env_variant(k: EnvKind) -> &'static str {
 pub fn lfo_variant(k: LfoKind) -> &'static str {
     match k {
         LfoKind::Classic => "CLASSIC",
-        LfoKind::Func(LfoForm::Lfv) => "FUNC-LFV",
-        LfoKind::Func(_) => "FUNC",
+        LfoKind::Func(LfoForm::Lfv) => FUNC_LFV.get(),
+        LfoKind::Func(_) => FUNC.get(),
     }
 }
 
@@ -108,7 +141,7 @@ pub fn lfo_variant(k: LfoKind) -> &'static str {
 )]
 pub fn op_variant(k: OpKind) -> &'static str {
     match k {
-        OpKind::Table(_) => "TABLE",
+        OpKind::Table(_) => TABLE.get(),
         OpKind::Formant => "FORMANT",
         OpKind::Noise => "NOISE",
     }
@@ -183,16 +216,18 @@ pub const MODELS: [ResonatorMode; 4] = [
     ResonatorMode::Sympathetic,
 ];
 
-/// A cell of a panel: a parameter under the cell's label, a matrix route
-/// (slice 2's), or TAPE's SOURCE, read-only.
+/// A cell of a panel: a parameter under the cell's label, a FLT › MOD
+/// route knob (the matrix cell it views, ADR 0289), TAPE's SOURCE,
+/// read-only, or one of ORBIT's own cells, a command's job.
 enum Cell {
     Param {
         addr: EdAddr,
         label: &'static str,
         fmt: ValFmt,
     },
-    Route(&'static str),
+    Route(&'static str, crate::ui::filter_panel::RouteView),
     Source(&'static str),
+    Act(crate::ui::orbit::OrbitCell),
 }
 
 /// `a`'s range: a filter's is its kind's (`FilterParams::spec`), MODE's
@@ -247,9 +282,9 @@ pub(super) fn spec_under(a: ParamAddr, ctx: &SlotCtx) -> Option<&'static ParamSp
 )]
 fn kind_word(fmt: ValFmt) -> &'static str {
     match names(fmt) {
-        Some(["OFF", "ON"]) => "toggle",
-        Some(_) => "choice",
-        None => "cont",
+        Some(["OFF", "ON"]) => TOGGLE.get(),
+        Some(_) => CHOICE.get(),
+        None => CONT.get(),
     }
 }
 
@@ -270,8 +305,8 @@ pub(super) fn names(fmt: ValFmt) -> Option<&'static [&'static str]> {
 )]
 fn scale_word(s: Scale) -> &'static str {
     match s {
-        Scale::Linear => "lin",
-        Scale::Octaves => "oct",
+        Scale::Linear => LIN.get(),
+        Scale::Octaves => OCT.get(),
     }
 }
 
@@ -279,29 +314,61 @@ impl Cell {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.write"))]
     fn write(&self, ctx: &SlotCtx, w: &mut dyn Write) -> fmt::Result {
         let (addr, label, fmt) = match *self {
-            Cell::Route(label) => return writeln!(w, "route \"{label}\" next-slice"),
-            Cell::Source(label) => return writeln!(w, "source \"{label}\""),
+            Cell::Route(label, r) => return super::route::knob_line(label, r, w),
+            Cell::Source(label) => {
+                w.write_str(SOURCE.get())?;
+                w.write_str(label)?;
+                return w.write_str(UNQUOTE.get());
+            }
+            Cell::Act(c) => return super::orbit::act_line(c, w),
             Cell::Param { addr, label, fmt } => (addr, label, fmt),
         };
         let Some(spec) = spec_under(addr.param(), ctx) else {
             return Ok(());
         };
-        write!(
-            w,
-            "param {addr} \"{label}\" {} {}",
-            kind_word(fmt),
-            scale_word(spec.scale)
-        )?;
+        w.write_str(PARAM.get())?;
+        addr.write(w)?;
+        w.write_str(QUOTE.get())?;
+        w.write_str(label)?;
+        w.write_str(QUOTE_SHUT.get())?;
+        w.write_str(kind_word(fmt))?;
+        w.write_char(' ')?;
+        w.write_str(scale_word(spec.scale))?;
         for v in [spec.min, spec.max, spec.step, spec.default] {
             w.write_char(' ')?;
             num(w, v)?;
         }
+        w.write_char(' ')?;
+        flags(addr.param(), w)?;
         w.write_char('\n')?;
         for (i, name) in names(fmt).unwrap_or(&[]).iter().enumerate() {
-            writeln!(w, "opt {addr} {i} \"{name}\"")?;
+            w.write_str(OPT.get())?;
+            addr.write(w)?;
+            w.write_char(' ')?;
+            uint(w, u32::try_from(i).map_err(|_| fmt::Error)?)?;
+            quoted(w, name)?;
         }
         Ok(())
     }
+}
+
+/// What else may target `a`: `m` a MIDI map (`Mappable`), `d` the mod
+/// matrix (`modulatable`), `-` neither. Read from the box's own rules, so
+/// MIDI MAP's and MTX's pickers need no list of their own.
+#[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.flags"))]
+fn flags(a: ParamAddr, w: &mut dyn Write) -> fmt::Result {
+    let m = Mappable::new(a).is_some();
+    let d = a.modulatable();
+    if m {
+        w.write_char('m')?;
+    }
+    if d {
+        w.write_char('d')?;
+    }
+    if !m && !d {
+        w.write_char('-')?;
+    }
+    Ok(())
 }
 
 /// `v` to seven decimals, trailing zeros dropped. Core's float `Display`
@@ -317,7 +384,7 @@ pub(super) fn num(w: &mut dyn Write, v: f32) -> fmt::Result {
     if v < 0.0 && (whole, frac) != (0, 0) {
         w.write_char('-')?;
     }
-    write!(w, "{whole}")?;
+    uint(w, whole)?;
     if frac != 0 {
         // Seven places, zero-padded; the trailing zeros dropped.
         let mut digits = [b'0'; 7];
@@ -350,17 +417,25 @@ enum Axis {
     Tape,
     Machine,
     Route,
+    Reverb,
+    Delay,
 }
 
 /// The axis a cell bound `b` resolves on; `None` for a cell the editor
-/// never shows (a selector, ORBIT's, the mixer's).
+/// never shows (a selector). The selected ring's cells are fixed: a
+/// ring's round names the ring (ADR 0289).
 #[cfg_attr(
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.axis_of")
 )]
 fn axis_of(b: SlotBinding) -> Option<Axis> {
     Some(match b {
-        SlotBinding::Param(_) | SlotBinding::Source => Axis::Fixed,
+        // The delay's TIME cell: the ms, or under SYNC the note (ADR 0302).
+        SlotBinding::Param(a) if a == view::DELAY_TIME => Axis::Delay,
+        SlotBinding::Param(_)
+        | SlotBinding::Source
+        | SlotBinding::SelectedRing(_)
+        | SlotBinding::Orbit(_) => Axis::Fixed,
         SlotBinding::FilterPanel(_) | SlotBinding::PadFilterPanel(_) => Axis::Filter,
         SlotBinding::FxPanel(_) => Axis::Fx,
         SlotBinding::EnvPanel(s, _) => Axis::Env(s),
@@ -370,17 +445,25 @@ fn axis_of(b: SlotBinding) -> Option<Axis> {
         SlotBinding::Machine(_) => Axis::Tape,
         SlotBinding::Knob(_) => Axis::Machine,
         SlotBinding::SelectedRoute(_) => Axis::Route,
+        SlotBinding::ReverbPanel(..) => Axis::Reverb,
         SlotBinding::Empty
         | SlotBinding::SelectedOp(_)
         | SlotBinding::SelectOp
         | SlotBinding::SelectPad
         | SlotBinding::SelectRoute
-        | SlotBinding::Legacy(_)
-        | SlotBinding::ReverbPanel(..)
-        | SlotBinding::SelectedRing(_)
-        | SlotBinding::Orbit(_) => return None,
+        | SlotBinding::Legacy(_) => return None,
     })
 }
+
+lit!(
+    /// The reverb's panel's name.
+    REVERB = "REVERB"
+);
+
+lit!(
+    /// The delay's TIME cell's panel's name.
+    DELAY = "DELAY"
+);
 
 /// A panel's name, as `describe` lists it and `since` reports its
 /// variant: one table for both.
@@ -396,30 +479,50 @@ pub(super) enum PanelName {
     PadFilter(PadId),
     PadMachine(PadId),
     PadRoute(PadId, RouteId),
-    /// A page's own cells, a pad's when it has one.
-    Page(&'static str, Option<PadId>),
+    Reverb,
+    /// The delay's TIME cell, by its SYNC.
+    Delay,
+    /// A page's own cells, a round's when it is one.
+    Page(&'static str, Round),
 }
 
 impl PanelName {
+    /// `panel <name> <variant>`, newline-ended: the one writer of the
+    /// line, `describe`'s and `since`'s.
+    #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.line"))]
+    pub(super) fn line(self, variant: &str, w: &mut dyn Write) -> fmt::Result {
+        w.write_str(PANEL.get())?;
+        self.write(w)?;
+        w.write_char(' ')?;
+        variant_token(variant, w)?;
+        w.write_char('\n')
+    }
+
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.describe.write.1")
     )]
     pub(super) fn write(self, w: &mut dyn Write) -> fmt::Result {
-        let (pad, name) = match self {
-            PanelName::Filter => (None, "FILTER"),
-            PanelName::Fx => (None, "FX"),
-            PanelName::Env(s) => (None, env_name(s)),
-            PanelName::Lfo(s) => (None, lfo_name(s)),
-            PanelName::Op(o) => (None, op_name(o)),
-            PanelName::Resonator => (None, "RESONATOR"),
-            PanelName::Machine => (None, "MACHINE"),
-            PanelName::PadFilter(p) => (Some(p), "FLT"),
-            PanelName::PadMachine(p) => (Some(p), "MCH"),
-            PanelName::PadRoute(p, r) => (Some(p), route_name(r)),
-            PanelName::Page(short, p) => (p, short),
+        let (round, name) = match self {
+            PanelName::Filter => (Round::Shared, "FILTER"),
+            PanelName::Fx => (Round::Shared, "FX"),
+            PanelName::Env(s) => (Round::Shared, env_name(s)),
+            PanelName::Lfo(s) => (Round::Shared, lfo_name(s)),
+            PanelName::Op(o) => (Round::Shared, op_name(o)),
+            PanelName::Resonator => (Round::Shared, "RESONATOR"),
+            PanelName::Machine => (Round::Shared, "MACHINE"),
+            PanelName::PadFilter(p) => (Round::Pad(p), "FLT"),
+            PanelName::PadMachine(p) => (Round::Pad(p), "MCH"),
+            PanelName::PadRoute(p, r) => {
+                Round::Pad(p).prefix(w)?;
+                w.write_str(ROUTE_NAME.get())?;
+                return uint(w, u32::from(r.number()));
+            }
+            PanelName::Reverb => (Round::Shared, REVERB.get()),
+            PanelName::Delay => (Round::Shared, DELAY.get()),
+            PanelName::Page(short, r) => (r, short),
         };
-        pad_prefix(pad, w)?;
+        round.prefix(w)?;
         w.write_str(name)
     }
 }
@@ -463,17 +566,10 @@ const fn op_name(o: Op) -> &'static str {
     }
 }
 
-/// `RT1`–`RT4`: a route is a number, 1–4.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.describe.route_name")
-)]
-fn route_name(r: RouteId) -> &'static str {
-    ["RT1", "RT2", "RT3", "RT4"]
-        .get(r.index())
-        .copied()
-        .unwrap_or("RT")
-}
+lit!(
+    /// A pad's route's panel, before its number, 1–4: `RT1`–`RT4`.
+    ROUTE_NAME = "RT"
+);
 
 /// A page's panels: what its cells resolve against, one per variant.
 #[derive(Clone, Copy)]
@@ -488,18 +584,8 @@ enum Group {
     Tape(TapeMachine),
     Machine(Machine),
     Route(RouteId),
-}
-
-/// A pad's panel names start `PAD<n>_`.
-#[cfg_attr(
-    target_os = "none",
-    unsafe(link_section = ".bank2_ed.describe.pad_prefix")
-)]
-fn pad_prefix(pad: Option<PadId>, w: &mut dyn Write) -> fmt::Result {
-    match pad {
-        Some(p) => write!(w, "PAD{}_", p.number()),
-        None => Ok(()),
-    }
+    Reverb(ReverbType),
+    Delay(DelaySync),
 }
 
 impl Group {
@@ -516,6 +602,8 @@ impl Group {
             Group::Tape(_) => Axis::Tape,
             Group::Machine(_) => Axis::Machine,
             Group::Route(_) => Axis::Route,
+            Group::Reverb(_) => Axis::Reverb,
+            Group::Delay(_) => Axis::Delay,
         }
     }
 
@@ -525,19 +613,15 @@ impl Group {
         unsafe(link_section = ".bank2_ed.describe.write_head")
     )]
     fn write_head(self, name: PanelName, w: &mut dyn Write) -> fmt::Result {
-        w.write_str("panel ")?;
-        name.write(w)?;
-        w.write_char(' ')?;
-        variant_token(self.variant(), w)?;
-        w.write_char('\n')
+        name.line(self.variant(), w)
     }
 
-    /// Its panel's name on `def`, a pad's page when `pad`; `None` for a
-    /// pad's group off a pad's page (no chain has one).
+    /// Its panel's name on `def`, a page of round `r`; `None` for a pad's
+    /// group off a pad's page (no chain has one).
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.name"))]
-    fn name(self, def: &'static BlockDef, pad: Option<PadId>) -> Option<PanelName> {
-        Some(match (self, pad) {
-            (Group::Fixed, _) => PanelName::Page(def.short, pad),
+    fn name(self, def: &'static BlockDef, r: Round) -> Option<PanelName> {
+        Some(match (self, r.pad()) {
+            (Group::Fixed, _) => PanelName::Page(def.short, r),
             (Group::Filter(_), Some(p)) => PanelName::PadFilter(p),
             (Group::Filter(_), None) => PanelName::Filter,
             (Group::Fx(_), _) => PanelName::Fx,
@@ -547,8 +631,10 @@ impl Group {
             (Group::Modal(_), _) => PanelName::Resonator,
             (Group::Tape(_), _) => PanelName::Machine,
             (Group::Machine(_), Some(p)) => PanelName::PadMachine(p),
-            (Group::Route(r), Some(p)) => PanelName::PadRoute(p, r),
+            (Group::Route(rt), Some(p)) => PanelName::PadRoute(p, rt),
             (Group::Machine(_) | Group::Route(_), None) => return None,
+            (Group::Reverb(_), _) => PanelName::Reverb,
+            (Group::Delay(_), _) => PanelName::Delay,
         })
     }
 
@@ -567,6 +653,8 @@ impl Group {
             Group::Modal(m) => modal_variant(m),
             Group::Tape(t) => tape_variant(t),
             Group::Machine(m) => machine_variant(m),
+            Group::Reverb(t) => reverb_variant(t),
+            Group::Delay(s) => delay_variant(s),
         }
     }
 
@@ -588,13 +676,15 @@ impl Group {
             Group::Tape(t) => c.tape = t,
             Group::Machine(m) => c.pad = Some(m),
             Group::Route(r) => c.route = r,
+            Group::Reverb(t) => c.rev = t,
+            Group::Delay(s) => c.delay_sync = s,
         }
         c
     }
 
-    /// Slot `i` of `def` under this group, on pad `pad`'s page.
+    /// Slot `i` of `def` under this group, on a page of round `r`.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.cell"))]
-    fn cell(self, def: &BlockDef, i: usize, ctx: &SlotCtx, pad: Option<PadId>) -> Option<Cell> {
+    fn cell(self, def: &BlockDef, i: usize, ctx: &SlotCtx, r: Round) -> Option<Cell> {
         let slot = def.params.get(i)?;
         if axis_of(slot.binding)? != self.axis() {
             return None;
@@ -603,19 +693,19 @@ impl Group {
             View::Param {
                 addr, label, fmt, ..
             } => Some(Cell::Param {
-                addr: EdAddr::shown(addr, pad)?,
+                addr: EdAddr::shown(addr, r)?,
                 label,
                 fmt,
             }),
-            View::Route { label, .. } => Some(Cell::Route(label)),
+            View::Route { label, route } => Some(Cell::Route(label, route)),
             View::Source(_) => Some(Cell::Source(slot.label())),
+            View::Orbit(c) => Some(Cell::Act(c)),
             View::Empty
             | View::SelectOp
             | View::SelectPad
             | View::SelectRoute
             | View::Legacy { .. }
-            | View::Text { .. }
-            | View::Orbit(_) => None,
+            | View::Text { .. } => None,
         }
     }
 }
@@ -665,8 +755,21 @@ fn group_at(mut i: usize) -> Option<Group> {
         return Some(Group::Machine(m));
     }
     i -= Machine::ALL.len();
-    RouteId::ALL.get(i).map(|&r| Group::Route(r))
+    if let Some(&r) = RouteId::ALL.get(i) {
+        return Some(Group::Route(r));
+    }
+    i -= RouteId::ALL.len();
+    let revs = reverb_panel::types_on_screen();
+    if let Some(&t) = revs.get(i) {
+        return Some(Group::Reverb(t));
+    }
+    i -= revs.len();
+    DELAY_SYNCS.get(i).map(|&s| Group::Delay(s))
 }
+
+/// The delay's TIME cell's variants, in SYNC's option order: the
+/// engine's list, in a static of this crate's so its bytes are bank 2's.
+static DELAY_SYNCS: [DelaySync; DelaySync::ALL.len()] = DelaySync::ALL;
 
 /// A `BlockRead` with no blocks: the context every param at its zero.
 struct NoBlocks;
@@ -684,12 +787,33 @@ impl BlockRead for NoBlocks {
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.base_ctx")
 )]
-fn base_ctx(engine: EngineType) -> SlotCtx {
+fn base_ctx(s: Schema) -> SlotCtx {
     let c = SlotCtx::read(&NoBlocks, Op::A);
-    match engine {
-        EngineType::Drum => c.on_drum(),
-        EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => c,
+    match s {
+        Schema::Engine(EngineType::Drum) => c.on_drum(),
+        Schema::Engine(
+            EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va,
+        )
+        | Schema::Mixer
+        | Schema::Matrix(_)
+        | Schema::Settings
+        | Schema::Map
+        | Schema::Orbit => c,
     }
+}
+
+/// `base` on round `r`: a ring's round reads its ring, as the box's
+/// location selects it.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.round_ctx")
+)]
+fn round_ctx(base: SlotCtx, r: Round) -> SlotCtx {
+    let mut c = base;
+    if let Some(ring) = r.ring() {
+        c.ring = ring;
+    }
+    c
 }
 
 /// `page`'s answer, but for the closing `OK`; `None` past the last page.
@@ -697,9 +821,52 @@ fn base_ctx(engine: EngineType) -> SlotCtx {
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.describe")
 )]
-pub(super) fn describe(engine: EngineType, page: u8, w: &mut dyn Write) -> Option<fmt::Result> {
-    let (def, pad) = page_at(engine, usize::from(page))?;
-    Some(write_page(engine, def, pad, page, w))
+pub(super) fn describe(s: Schema, page: u8, w: &mut dyn Write) -> Option<fmt::Result> {
+    if let Schema::Matrix(e) = s {
+        return (page == 0).then(|| super::route::describe(e, w));
+    }
+    if let Schema::Map = s {
+        return (page < schema_pages(s)).then(|| map_page(w));
+    }
+    let (def, round) = page_at(s, usize::from(page))?;
+    Some(write_page(s, def, round, page, w))
+}
+
+/// Every page of `s`, in order, into `w`: what `ed schema` hashes, so the
+/// hash is describe's own bytes.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.describe_all")
+)]
+pub(super) fn describe_all(s: Schema, w: &mut dyn Write) -> fmt::Result {
+    if let Schema::Matrix(e) = s {
+        return super::route::describe(e, w);
+    }
+    if let Schema::Map = s {
+        return match schema_pages(s) {
+            0 => Ok(()),
+            _ => map_page(w),
+        };
+    }
+    for (n, (def, round)) in Pages::all(s).enumerate() {
+        write_page(s, def, round, u8::try_from(n).map_err(|_| fmt::Error)?, w)?;
+    }
+    Ok(())
+}
+
+/// MIDI MAP's page: the map's own, without `midi-map` never asked.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.map_page")
+)]
+fn map_page(w: &mut dyn Write) -> fmt::Result {
+    #[cfg(feature = "midi-map")]
+    return super::map::describe(w);
+    #[cfg(not(feature = "midi-map"))]
+    {
+        let _ = w;
+        Ok(())
+    }
 }
 
 #[cfg_attr(
@@ -707,16 +874,26 @@ pub(super) fn describe(engine: EngineType, page: u8, w: &mut dyn Write) -> Optio
     unsafe(link_section = ".bank2_ed.describe.write_page")
 )]
 fn write_page(
-    engine: EngineType,
+    s: Schema,
     def: &'static BlockDef,
-    pad: Option<PadId>,
+    round: Round,
     page: u8,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    write!(w, "page {page} ")?;
-    pad_prefix(pad, w)?;
-    writeln!(w, "{} of {}", def.short, pages(engine))?;
-    let base = base_ctx(engine);
+    w.write_str(PAGE.get())?;
+    uint(w, u32::from(page))?;
+    w.write_char(' ')?;
+    round.prefix(w)?;
+    w.write_str(def.short)?;
+    w.write_str(OF.get())?;
+    uint(w, u32::from(schema_pages(s)))?;
+    w.write_char('\n')?;
+    if let Schema::Settings = s
+        && let Some(l) = super::settings::leaf_of(def)
+    {
+        super::settings::crumb(l, w)?;
+    }
+    let base = round_ctx(base_ctx(s), round);
     let mut g = 0;
     while let Some(group) = group_at(g) {
         g += 1;
@@ -729,13 +906,13 @@ fn write_page(
         if !on {
             continue;
         }
-        let Some(name) = group.name(def, pad) else {
+        let Some(name) = group.name(def, round) else {
             continue;
         };
         group.write_head(name, w)?;
         let ctx = group.ctx(base);
         for i in 0..def.params.len() {
-            if let Some(c) = group.cell(def, i, &ctx, pad) {
+            if let Some(c) = group.cell(def, i, &ctx, round) {
                 c.write(&ctx, w)?;
             }
         }
@@ -743,24 +920,44 @@ fn write_page(
     Ok(())
 }
 
-/// Note in `d` every param `describe` lists for `engine`: `write_page`'s
+/// Note in `d` every param `describe` lists for `s`: `write_page`'s
 /// walk, to a mask and not a writer.
 #[cfg_attr(
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.mark_described")
 )]
-pub(super) fn mark_described(engine: EngineType, d: &mut super::since::Described) {
-    let base = base_ctx(engine);
-    for (def, pad) in Pages::all(engine) {
+pub(super) fn mark_described(s: Schema, d: &mut super::since::Described) {
+    for (def, round) in Pages::all(s) {
+        let base = round_ctx(base_ctx(s), round);
         let mut g = 0;
         while let Some(group) = group_at(g) {
             g += 1;
             let ctx = group.ctx(base);
             for i in 0..def.params.len() {
-                if let Some(Cell::Param { addr, .. }) = group.cell(def, i, &ctx, pad) {
+                if let Some(Cell::Param { addr, .. }) = group.cell(def, i, &ctx, round) {
                     d.mark(addr);
                 }
             }
         }
     }
 }
+
+lit!(A_FAST = "A-FAST");
+lit!(A_MED = "A-MED");
+lit!(A_SLOW = "A-SLOW");
+lit!(B_ENV = "B-ENV");
+lit!(B_LFV = "B-LFV");
+lit!(B_LFO = "B-LFO");
+lit!(B_BURST = "B-BURST");
+lit!(FUNC_LFV = "FUNC-LFV");
+lit!(FUNC = "FUNC");
+lit!(TABLE = "TABLE");
+lit!(TOGGLE = "toggle");
+lit!(CHOICE = "choice");
+lit!(CONT = "cont");
+lit!(LIN = "lin");
+lit!(OCT = "oct");
+lit!(PARAM = "param ");
+lit!(OPT = "opt ");
+lit!(PAGE = "page ");
+lit!(OF = " of ");
