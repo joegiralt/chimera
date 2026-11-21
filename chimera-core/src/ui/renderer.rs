@@ -1284,15 +1284,23 @@ impl Renderer {
     /// (`off_page`); never `anim` or anything modulated, so the glyph only
     /// ever moves by its own animation.
     fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
-        let stored = stored_set(&Stored(f), addrs);
-        core::array::from_fn(|i| {
-            (0..f.def.params.len())
-                .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
-                .map_or_else(
-                    || self.off_page(addrs[i], stored[i]),
-                    |s| self.set[s].current(),
-                )
-        })
+        let mut out = [0.0; N];
+        self.eased_into(f, &addrs, &mut out);
+        out
+    }
+
+    /// `eased_set` once for every size, out of line.
+    #[inline(never)]
+    fn eased_into(&self, f: &Frame, addrs: &[ParamAddr], out: &mut [f32]) {
+        for (o, &a) in out.iter_mut().zip(addrs) {
+            let stored = Stored(f)
+                .block(a.block)
+                .map_or(0.0, |b| b.normalized(a.param));
+            *o = match (0..f.def.params.len()).find(|&s| slot_addr(f.def, s, &f.ctx) == Some(a)) {
+                Some(s) => self.set[s].current(),
+                None => self.off_page(a, stored),
+            };
+        }
     }
 
     /// `at`'s value in its lane off the page, `stored` until it has one
@@ -1481,12 +1489,6 @@ impl Renderer {
 /// line would reach (ADR 0154).
 fn hint_right(gauge: &Gauge) -> i32 {
     components::focus_label_slot(gauge).right
-}
-
-/// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
-/// the page has no slot for.
-fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) -> [f32; N] {
-    addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
 }
 
 /// The edited Part's stored blocks and the FX's, read-only.

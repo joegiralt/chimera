@@ -151,10 +151,11 @@ const LANES: usize = TAPE_GLYPH_PARAMS.len() + 1;
 
 /// The params a glyph reads that its page has no cell for, each eased in
 /// a lane of its own (#284): a CC on one moves the glyph over frames, as
-/// a turn does, and the band redraws as it eases (#365).
+/// a turn does, and the band redraws as it eases (#365). Each lane is its
+/// param and its value, eased as `AnimatedValue` eases a knob.
 pub struct Lanes {
     at: [Option<ParamAddr>; LANES],
-    lane: [AnimatedValue; LANES],
+    now: [f32; LANES],
     /// The params the last draw asked for: the lanes the next pass keeps.
     asked: Cell<[Option<ParamAddr>; LANES]>,
 }
@@ -162,7 +163,7 @@ pub struct Lanes {
 impl Lanes {
     pub const EMPTY: Lanes = Lanes {
         at: [None; LANES],
-        lane: [AnimatedValue::new(0.0); LANES],
+        now: [0.0; LANES],
         asked: Cell::new([None; LANES]),
     };
 
@@ -174,23 +175,26 @@ impl Lanes {
         }
         self.asked.set(asked);
         let i = self.at.iter().position(|&a| a == Some(at))?;
-        Some(self.lane[i].current())
+        Some(self.now[i])
     }
 
     /// A UI pass: each param the last draw asked for eases to `stored`'s
     /// value; a new one starts there.
     fn ease(&mut self, stored: impl Fn(ParamAddr) -> f32) {
         let asked = self.asked.replace([None; LANES]);
-        for ((at, lane), want) in self.at.iter_mut().zip(&mut self.lane).zip(asked) {
-            match want {
-                Some(a) if *at == Some(a) => {
-                    lane.set_target(stored(a));
+        for i in 0..LANES {
+            if let Some(a) = asked[i] {
+                let to = stored(a);
+                self.now[i] = if self.at[i] == asked[i] {
+                    let mut lane = AnimatedValue::new(self.now[i]).with_speed(KNOB_SPEED);
+                    lane.set_target(to);
                     lane.update();
-                }
-                Some(a) => *lane = AnimatedValue::new(stored(a)).with_speed(KNOB_SPEED),
-                None => {}
+                    lane.current()
+                } else {
+                    to
+                };
             }
-            *at = want;
+            self.at[i] = asked[i];
         }
     }
 }
