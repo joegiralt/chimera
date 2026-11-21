@@ -60,8 +60,8 @@ fn a_push_settles_after_three_ticks_and_ignores_a_bounce() {
 /// the bootloader's MIXER slot) reads up until it is released once (#1000).
 #[test]
 fn a_switch_held_from_the_first_read_waits_for_its_release() {
-    let (mut d, mut s) = (Debounce::new(), StartHold::new());
-    let mut read = |raw| s.step(raw, d.step(raw));
+    let (mut d, mut s, mut first) = (Debounce::new(), StartHold::NONE, true);
+    let mut read = |raw| s.step(3, core::mem::take(&mut first), raw, d.step(raw));
     for _ in 0..50 {
         assert!(!read(true), "held from the first read: never a press");
     }
@@ -79,8 +79,8 @@ fn a_switch_held_from_the_first_read_waits_for_its_release() {
 /// Up at the first read: the switch is live from there, as before.
 #[test]
 fn a_switch_up_at_the_first_read_is_live() {
-    let (mut d, mut s) = (Debounce::new(), StartHold::new());
-    let mut read = |raw| s.step(raw, d.step(raw));
+    let (mut d, mut s, mut first) = (Debounce::new(), StartHold::NONE, true);
+    let mut read = |raw| s.step(3, core::mem::take(&mut first), raw, d.step(raw));
     assert!(!read(false));
     for _ in 1..DEBOUNCE_TICKS {
         assert!(!read(true));

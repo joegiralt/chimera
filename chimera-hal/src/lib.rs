@@ -264,35 +264,30 @@ impl Debounce {
     }
 }
 
-/// A switch from its first read: one down then (the key held at power-on
-/// that picked the bootloader's slot) reads up until it is released once,
-/// press and release alike (#1000).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StartHold {
-    #[default]
-    Unread,
-    Held,
-    Free,
-}
+/// The switches down at the controls' first read (the key held at power-on
+/// that picked the bootloader's slot), one bit each: each reads up, press
+/// and release alike, until it is released once (#1000).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartHold(u32);
 
 impl StartHold {
-    pub const fn new() -> Self {
-        StartHold::Unread
-    }
+    /// None held: before the first read.
+    pub const NONE: StartHold = StartHold(0);
 
-    /// One tick's raw level and `Debounce`'s settled one in; the level
-    /// the UI sees out.
-    pub fn step(&mut self, raw: bool, settled: bool) -> bool {
-        match *self {
-            StartHold::Unread if raw => *self = StartHold::Held,
-            StartHold::Held if !raw && !settled => *self = StartHold::Free,
-            StartHold::Unread => *self = StartHold::Free,
-            StartHold::Held | StartHold::Free => {}
+    /// Switch `i`'s tick: its raw level and `Debounce`'s settled one in,
+    /// `first` on the controls' first read; the level the UI sees out.
+    pub fn step(&mut self, i: usize, first: bool, raw: bool, settled: bool) -> bool {
+        let bit = 1 << i;
+        if first && raw {
+            self.0 |= bit;
         }
-        match self {
-            StartHold::Free => settled,
-            StartHold::Unread | StartHold::Held => false,
+        if self.0 & bit == 0 {
+            return settled;
         }
+        if !raw && !settled {
+            self.0 &= !bit;
+        }
+        false
     }
 }
 

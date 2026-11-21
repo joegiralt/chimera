@@ -79,8 +79,8 @@ static mut LATCHES: [Latch; NUM_SWITCHES] = [Latch::new(); NUM_SWITCHES];
 static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut DEBOUNCE: [Debounce; NUM_SWITCHES] = [Debounce::new(); NUM_SWITCHES];
-/// A switch down at the first tick waits for its release (#1000).
-static mut START: [StartHold; NUM_SWITCHES] = [StartHold::new(); NUM_SWITCHES];
+/// The switches down at the first tick, waiting for their release (#1000).
+static mut START: StartHold = StartHold::NONE;
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
 /// The console's hand: switches it holds, one bit each in `LATCHES`'
@@ -152,9 +152,9 @@ pub unsafe fn isr_tick() {
     if !READY.load(Ordering::Acquire) {
         return;
     }
-    let now_ms = Ms(tick_ms(
-        ISR_TICK.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
-    ));
+    let tick = ISR_TICK.fetch_add(1, Ordering::Relaxed);
+    let first = tick == 0;
+    let now_ms = Ms(tick_ms(tick.wrapping_add(1)));
 
     let d = HC165_DELAY.load(Ordering::Relaxed);
     // Five loads a tick, then the same register writes as fixed pins.
@@ -194,18 +194,13 @@ pub unsafe fn isr_tick() {
         let raw = BTN_BITS.iter().map(|&m| bits & m == 0).chain(pushes);
         // A push the scan does not read, the hand cannot press either.
         let live = (0..NUM_SWITCHES).map(|i| i < NUM_BUTTONS || push);
-        for (i, ((raw, live), ((d, s), latch))) in raw
+        for (i, ((raw, live), (d, latch))) in raw
             .zip(live)
-            .zip(
-                debounce
-                    .iter_mut()
-                    .zip(start.iter_mut())
-                    .zip(latches.iter_mut()),
-            )
+            .zip(debounce.iter_mut().zip(latches.iter_mut()))
             .enumerate()
         {
             let raw = raw || (live && by_hand(i));
-            latch.level(s.step(raw, d.step(raw)), now_ms);
+            latch.level(start.step(i, first, raw, d.step(raw)), now_ms);
         }
     }
 
