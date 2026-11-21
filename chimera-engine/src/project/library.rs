@@ -288,11 +288,11 @@ fn save_library<S: Store>(
                 | SideState::Present { err: Some(e), .. } => Err(LibNote::File(e)),
                 SideState::Missing => Err(LibNote::File(FileError::Truncated)),
             }
-        })
-        .and_then(|()| match put {
-            KitPut::Closed => Err(LibNote::KitClosed),
-            KitPut::Written(_) | KitPut::NotDrum => Ok(()),
         });
+        let saved = match (saved, put) {
+            (Ok(()), KitPut::Closed) => Err(LibNote::KitClosed),
+            (saved, KitPut::Closed | KitPut::Written(_) | KitPut::NotDrum) => saved,
+        };
         if saved.is_err() {
             // Best effort: nothing else names this id.
             let _ = st.delete(r.volume(), file.side(Side::A));
