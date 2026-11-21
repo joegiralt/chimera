@@ -787,6 +787,15 @@ impl UiState {
         }
     }
 
+    /// Bank 2 closed at boot, after the project's note: the reverb, TAPE
+    /// and the rest of bank 2 play nothing, so the boot says so in
+    /// ABOUT's words (`NEEDS UPDATE`, `SLOT IN USE`, #544).
+    pub fn note_bank2(&mut self) {
+        if let Some(s) = self.bank2.filter(|s| !s.is_open()) {
+            self.show_boot_fault(s.label());
+        }
+    }
+
     /// A project note as a toast: a save's time for SAVED, else an error's.
     pub fn show_note(&mut self, n: ProjectNote) {
         let ms = match n {

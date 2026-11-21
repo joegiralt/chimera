@@ -611,6 +611,7 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     ui.boot_project(&mut card, store, settings.last_project);
     ui.show_system_note(system);
     ui.note_sweep(&swept);
+    ui.note_bank2();
     // The splash again in the card's theme; it stays up until PART 1.
     // The Yellow Sign ignores INVERT (`splash_palette`).
     display.set_palette(chimera_core::ui::theme_settings::splash_palette(&theme));

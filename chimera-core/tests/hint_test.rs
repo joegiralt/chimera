@@ -641,6 +641,76 @@ fn reverb_hint_names_the_type() {
     }
 }
 
+/// Bank 2 closed, the reverb plays nothing: its send's hint says so
+/// instead of naming a TYPE (#547). Open, or a build without bank 2, the
+/// TYPE.
+#[test]
+fn reverb_hint_needs_the_update_while_bank_2_is_closed() {
+    use chimera_core::bank2::{Bank2Status, NEEDS_UPDATE, Version};
+    use chimera_core::ui::view::closed_words;
+    let c = SlotCtx {
+        rev: ReverbType::Hall,
+        ..ctx0()
+    };
+    let (def, i) = (0..reg::SENDS.params.len())
+        .find(|&i| {
+            view(&reg::SENDS, i, &c).addr() == Some(ParamAddr::new(BlockRef::Out, OutParams::SEND3))
+        })
+        .map(|i| (&reg::SENDS, i))
+        .expect("SEND3 on SENDS");
+    let v = view(def, i, &c);
+    let stale = Bank2Status::Stale {
+        have: Version::new("0.2.0"),
+    };
+    assert_eq!(
+        closed_words(&v, v.words(&c), Some(stale)).hint(),
+        &[Gesture("REVERB ▸", NEEDS_UPDATE)][..]
+    );
+    let named = &[Gesture(
+        "REVERB ▸",
+        ReverbType::NAMES[ReverbType::Hall.index()],
+    )][..];
+    assert_eq!(closed_words(&v, v.words(&c), None).hint(), named);
+    let open = Bank2Status::Open {
+        version: Version::new("0.2.0"),
+        seal: [0; 8],
+    };
+    assert_eq!(closed_words(&v, v.words(&c), Some(open)).hint(), named);
+    // Another cell keeps its own words.
+    let other = view(def, (i + 1) % def.params.len(), &c);
+    assert_eq!(
+        closed_words(&other, other.words(&c), Some(stale)).hint(),
+        other.hint(&c)
+    );
+}
+
+/// Bank 2 closed at boot: the toast says the unit needs the update, in
+/// ABOUT's words (#544). Open: nothing.
+#[test]
+fn a_closed_bank_2_toasts_at_boot() {
+    use chimera_core::bank2::{Bank2Status, Version};
+    use chimera_core::ui::busy::ToastStep;
+    let mut ui = UiState::new();
+    ui.set_bank2(Bank2Status::Stale {
+        have: Version::new("0.2.0"),
+    });
+    ui.note_bank2();
+    assert_eq!(
+        ui.step_toast(0),
+        ToastStep::Show(chimera_core::project::Line::new("NEEDS UPDATE"))
+    );
+    let mut ui = UiState::new();
+    ui.set_bank2(Bank2Status::Open {
+        version: Version::new("0.2.0"),
+        seal: [0; 8],
+    });
+    ui.note_bank2();
+    assert_eq!(ui.step_toast(0), ToastStep::Idle);
+    let mut ui = UiState::new();
+    ui.note_bank2();
+    assert_eq!(ui.step_toast(0), ToastStep::Idle, "no bank 2 in the build");
+}
+
 #[test]
 fn chorus_hint_names_the_mode() {
     for (i, name) in chorus::MODE_NAMES.iter().enumerate() {

@@ -1056,7 +1056,7 @@ impl Renderer {
             return (f.hint(o.hint), false);
         }
         let view = view::view(f.def, f.focus, &f.ctx);
-        let words = view::cell_words(f.def, &view, &f.ctx);
+        let words = view::closed_words(&view, view::cell_words(f.def, &view, &f.ctx), f.bank2);
         let band = match f.head {
             Head::Mix(_) => crate::ui::feel::Band::Mixer { mix: f.mix },
             Head::Sound(_) => crate::ui::feel::Band::Sound,
