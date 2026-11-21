@@ -272,7 +272,8 @@ fn the_master_stages_scaling_is_bit_for_bit_the_full_path() {
     counts();
     for (ratio, vol, pan) in [(3, 1.0, 0.0), (0, 0.6, 0.3)] {
         let mut f = fx();
-        (f.comp.ratio, f.comp.vol, f.comp.pan) = (ratio, vol, pan);
+        f.comp.ratio = chimera_core::dsp::comp::Ratio::ALL[ratio];
+        (f.comp.vol, f.comp.pan) = (vol, pan);
         same(f, 0.5, DacPair::P2, false);
     }
 }

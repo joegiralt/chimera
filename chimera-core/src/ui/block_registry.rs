@@ -627,13 +627,16 @@ pub static MASTER: BlockDef = BlockDef {
         ParamSlot::param(BlockRef::Comp, CompParams::RATIO),
         ParamSlot::param(BlockRef::Comp, CompParams::ATTACK),
         ParamSlot::param(BlockRef::Comp, CompParams::RELEASE),
-        ParamSlot::param(BlockRef::Comp, CompParams::MAKEUP),
+        // KEY (ADR 0303), beside the curve and the meter it moves; MAKEUP
+        // is a level, on MST › LVL.
+        ParamSlot::param(BlockRef::Comp, CompParams::KEY),
         ParamSlot::param(BlockRef::Comp, CompParams::MIX),
     ],
 };
 
 /// MST › LEVEL: the legacy VOL and PAN, off the compressor's page (FX diet
-/// spec § UI; an assumed default, pending the owner's word); and SMART EQ
+/// spec § UI; an assumed default, pending the owner's word); the
+/// compressor's MAKEUP, a level, moved here for KEY (ADR 0303); and SMART EQ
 /// and AMOUNT (ADR 0296), the master's own mix settings, and the reverb
 /// return's role in it (cell F, `LevelCell::WashRole`); its band every
 /// Part's live SMART EQ cuts and the return's. A page of their own would take a new page
@@ -647,7 +650,7 @@ pub static MASTER_LEVEL: BlockDef = BlockDef {
     params: [
         ParamSlot::param(BlockRef::Comp, CompParams::VOL),
         ParamSlot::param(BlockRef::Comp, CompParams::PAN),
-        EMPTY,
+        ParamSlot::param(BlockRef::Comp, CompParams::MAKEUP),
         ParamSlot::param(BlockRef::Comp, CompParams::SMART_EQ),
         ParamSlot::param(BlockRef::Comp, CompParams::AMOUNT),
         ParamSlot::param(BlockRef::Reverb, ReverbParams::ROLE),

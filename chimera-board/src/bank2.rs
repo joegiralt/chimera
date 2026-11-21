@@ -682,6 +682,7 @@ fn open_door(seal: &chimera_image::Seal) -> (Bank2Status, Verdict) {
                 && chimera_core::part_eq::door::door_ok(j)
                 && chimera_core::part_peaks::door::door_ok(j)
                 && chimera_core::stereo::door::door_ok(j)
+                && chimera_core::comp_key::door::door_ok(j)
                 && chimera_core::project::kit_door_ok(j)
         })
     });

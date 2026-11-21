@@ -755,8 +755,9 @@ pub const GR_W: i32 = 6;
 pub const GR_RANGE_DB: f32 = 24.0;
 
 /// MST: the compressor's static curve at `thresh_db` and `ratio`, input and
-/// output over −48..0 dB, and the GR meter at `gr_db`.
-pub fn compressor<D>(d: &mut D, thresh_db: f32, ratio: f32, gr_db: f32)
+/// output over −48..0 dB, the GR meter at `gr_db`, and under the curve
+/// what moves it: `key`, KEY's choice (ADR 0303).
+pub fn compressor<D>(d: &mut D, thresh_db: f32, ratio: f32, gr_db: f32, key: &str)
 where
     D: DrawTarget<Color = Rgb565>,
 {
@@ -783,6 +784,8 @@ where
         PLOT_TOP + 8,
         theme::MID,
     );
+    let key_x = x1 - 4 - draw::text_width(&theme::FONT_LABEL, key, 0);
+    draw::text(d, &theme::FONT_LABEL, key, key_x, PLOT_BASE - 4, theme::MID);
     let lit = (h * clampf(gr_db / GR_RANGE_DB, 0.0, 1.0) + 0.5) as i32;
     draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, PLOT_BASE - PLOT_TOP, theme::FAINT);
     draw::fill_rect(d, GR_X, PLOT_TOP, GR_W, lit, theme::ACCENT);

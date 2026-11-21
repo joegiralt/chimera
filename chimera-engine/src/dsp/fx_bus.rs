@@ -14,6 +14,7 @@ use chimera_hal::BLOCK_SIZE;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
+use crate::comp_key::Pairs;
 use crate::dsp::Stereo;
 use crate::dsp::chorus::{ChorusMode, ChorusParams, JunoChorus};
 use crate::dsp::comp::{CompParams, MasterComp};
@@ -243,16 +244,50 @@ impl FxBus {
 
     /// The master section, after every pair is summed: the compressor, one
     /// gain on every pair; with `master-tape`, the tape on pair 1 first.
-    /// Whether the compressor ran (it scales every pair).
+    /// Whether the compressor scaled the pairs. No Parts given: KEY's
+    /// PART n hears silence.
     pub fn master(
         &mut self,
         out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
         params: &FxParams,
         sample_rate: u32,
-    ) -> bool {
+    ) -> Pairs {
+        self.master_keyed(out, params, sample_rate, None)
+    }
+
+    /// `master` with the Parts as the mix has them, for KEY's PART n (ADR
+    /// 0303). Any KEY but FULL is bank 2's block behind KEY's door; FULL,
+    /// or the door closed, is the compressor as it was, bit for bit.
+    pub(crate) fn master_keyed(
+        &mut self,
+        out: &mut [[f32; 2 * BLOCK_SIZE]; DAC_PAIRS],
+        params: &FxParams,
+        sample_rate: u32,
+        tap: Option<&crate::comp_key::Tap<'_>>,
+    ) -> Pairs {
         #[cfg(feature = "master-tape")]
         self.tape.process(&mut out[0], &params.tape, sample_rate);
-        self.comp.process(out, &params.comp, sample_rate)
+        if crate::comp_key::asked(&params.comp, &self.comp) {
+            use crate::comp_key::{Ask, door::through};
+            let ask = Ask {
+                comp: &mut self.comp,
+                out,
+                params: &params.comp,
+                sample_rate,
+                tap,
+            };
+            match through(|d| d.key().run(ask)) {
+                Some(pairs) => return pairs,
+                None => self.comp.rest_key(),
+            }
+        }
+        Pairs::of(self.comp.process(out, &params.comp, sample_rate))
+    }
+
+    /// KEY's state: for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn comp_key(&self) -> &crate::comp_key::KeyState {
+        self.comp.key_state()
     }
 
     /// The output stage, after the master section: the output gain and the

@@ -46,6 +46,7 @@ const _: () =
     assert!(size_of::<crate::dsp::va::osc::solo::SoloDoor>() <= DOOR_TABLE_STRIDE as usize);
 const _: () = assert!(size_of::<crate::part_eq::door::EqDoor>() <= DOOR_TABLE_STRIDE as usize);
 const _: () = assert!(size_of::<crate::part_peaks::door::PeakDoor>() <= DOOR_TABLE_STRIDE as usize);
+const _: () = assert!(size_of::<crate::comp_key::door::KeyDoor>() <= DOOR_TABLE_STRIDE as usize);
 // On the chip: a host's pointers are twice as wide.
 #[cfg(target_pointer_width = "32")]
 const _: () = assert!(size_of::<crate::project::KitDoor>() <= KIT_DOOR_ROOM as usize);
