@@ -315,8 +315,10 @@ pub(crate) mod door {
             // from this poll's context, never concurrently.
             unsafe {
                 let v = p.read_volatile();
-                if uac::armed(v) {
-                    p.write_volatile(uac::aim(v, now()));
+                if uac::armed(v)
+                    && let Some(w) = uac::reaim(v, now())
+                {
+                    p.write_volatile(w);
                     s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
                 }
             }

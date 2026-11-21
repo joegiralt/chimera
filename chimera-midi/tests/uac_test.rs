@@ -73,6 +73,19 @@ fn aim_sets_the_next_frames_parity_only() {
     assert_eq!(uac::frame(0x0007_FF00 | 0xFF), 0x7FF);
 }
 
+/// An incomplete frame is any isochronous IN's: a packet already held for
+/// the next frame's parity (EONUM) is no re-aim, so `reaimed` counts only
+/// the packets that moved (#943).
+#[test]
+fn reaim_moves_only_a_packet_on_the_wrong_parity() {
+    let odd = EPENA | uac::EONUM | 576;
+    let even = EPENA | 576;
+    assert_eq!(uac::reaim(odd, 10), None, "held odd, the next frame odd");
+    assert_eq!(uac::reaim(even, 11), None, "held even, the next frame even");
+    assert_eq!(uac::reaim(even, 10), Some(uac::aim(even, 10)));
+    assert_eq!(uac::reaim(odd, 11), Some(uac::aim(odd, 11)));
+}
+
 #[test]
 fn pacer_primes_then_sends_a_frames_worth() {
     let mut p = Pacer::new();
