@@ -1202,6 +1202,15 @@ class Bank2(unittest.TestCase):
         self.assertEqual(u.requests[-2:], [b"bank2 install", b"status"])
         self.assertIn(b"restarting", r.stderr)
 
+    def test_unsaved_changes_refuse_plainly(self):
+        answers = self.status(bytes(8), "empty")
+        answers[b"bank2 install"] = b"ERR bank2: unsaved changes, save first\n"
+        with PutUnit(answers=answers) as u:
+            r = self.run_bank2(u)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stderr.strip().splitlines()[-1], b"ERR bank2: unsaved changes, save first")
+        self.assertNotIn(b"status", u.requests)
+
     def test_a_seal_that_differs_installs(self):
         answers = self.status(bytes(range(9, 17)))
         answers[b"bank2 install"] = b"OK bank2 open v\n"

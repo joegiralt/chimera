@@ -938,6 +938,11 @@ fn bank2_install_answers() {
             "ERR bank2: firmware unsealed\n",
         ),
         (refused(Bank2Refusal::Busy), "ERR bank2: busy\n"),
+        // As `sweep`'s: the restart an install ends in would lose them.
+        (
+            refused(Bank2Refusal::Unsaved),
+            "ERR bank2: unsaved changes, save first\n",
+        ),
         // The words `chimera-usb update` matches: `status`'s line after ERR.
         (
             refused(Bank2Refusal::SlotForeign(chimera_image::Slot::Mixer)),
@@ -1225,6 +1230,17 @@ fn only_an_install_that_opens_the_door_restarts() {
     ] {
         assert!(!a.restarts(), "{a:?}");
     }
+}
+
+/// Before anything is written: card work pending is busy, unsaved
+/// changes (the install's restart would lose them) refuse (#1064).
+#[test]
+fn an_install_waits_for_card_work_and_refuses_unsaved_changes() {
+    use chimera_core::console::install_guard;
+    assert_eq!(install_guard(false, false), None);
+    assert_eq!(install_guard(true, false), Some(Bank2Refusal::Busy));
+    assert_eq!(install_guard(false, true), Some(Bank2Refusal::Unsaved));
+    assert_eq!(install_guard(true, true), Some(Bank2Refusal::Busy));
 }
 
 #[test]

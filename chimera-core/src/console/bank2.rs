@@ -308,6 +308,9 @@ pub enum Bank2Refusal {
     Unsealed,
     /// Card work is pending in the UI.
     Busy,
+    /// The project has unsaved changes the install's restart would lose
+    /// (#1064): nothing written.
+    Unsaved,
     /// No staged file.
     Nothing,
     Card(StoreError),
@@ -390,6 +393,17 @@ impl Bank2Answer {
     }
 }
 
+/// `bank2 install`'s first refusal, before anything is read or written:
+/// card work pending, then unsaved changes, which the restart an opening
+/// install ends in (`Bank2Answer::restarts`) would lose, as `sweep`'s.
+pub const fn install_guard(pending: bool, unsaved: bool) -> Option<Bank2Refusal> {
+    match (pending, unsaved) {
+        (true, _) => Some(Bank2Refusal::Busy),
+        (false, true) => Some(Bank2Refusal::Unsaved),
+        (false, false) => None,
+    }
+}
+
 /// The staged file's verdict, and the card error behind an unreadable one,
 /// before anything is written: its header if it is to be installed. `open`:
 /// bank 2 is open, so with this build's seal, the staged one's.
@@ -465,6 +479,8 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
             match r {
                 Bank2Refusal::Unsealed => t.write_str(": firmware unsealed"),
                 Bank2Refusal::Busy => t.write_str(": busy"),
+                // `sweep`'s words: its restart loses them too.
+                Bank2Refusal::Unsaved => t.write_str(": unsaved changes, save first"),
                 Bank2Refusal::Nothing => t.write_str(": nothing staged"),
                 Bank2Refusal::Card(e) => write!(t, ": {}", e.message()),
                 Bank2Refusal::Stale(v) => write!(t, ": staged: needs firmware {}", v.as_str()),
