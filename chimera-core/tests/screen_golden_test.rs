@@ -345,9 +345,13 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_sync", 0xf9941b61166b8fde),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master", 0xaa7cc5f71d43600a),
+    ("mixer_master", 0x2c1caa95b850f464),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_level", 0xd74cd0e47b3abd6c),
+    ("mixer_master_level", 0x5c5b82ab2dbb8965),
+    // KEY in MST's cell E, MAKEUP on LVL's C, the key under the curve
+    // (ADR 0303).
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_master_key", 0x05c86ee37859fd39),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
@@ -395,9 +399,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xd56bc8774f6193e4),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x7b0e9395aaa4c7f8),
+    ("mixer_master", 0x12b206f30ca45442),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_level", 0x302de6272919c31a),
+    ("mixer_master_level", 0xa5a46e80ff7ebc77),
+    #[cfg(feature = "master-tape")]
+    ("mixer_master_key", 0xb048ca6dae9fc183),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]

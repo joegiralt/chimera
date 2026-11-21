@@ -1472,11 +1472,12 @@ fn the_tape_is_on_pair_1_only() {
 /// pair 2 is ducked by a loud Part on pair 1.
 #[test]
 fn the_master_comp_ducks_pair_2_with_pair_1() {
-    let render = |ratio: u8| {
+    let render = |ratio: usize| {
         let mut shared = AudioShared::default();
         shared.parts[0].mix.output = DacPair::P1;
         shared.parts[1].mix.output = DacPair::P2;
-        (shared.fx.comp.thresh, shared.fx.comp.ratio) = (0.25, ratio);
+        (shared.fx.comp.thresh, shared.fx.comp.ratio) =
+            (0.25, chimera_core::dsp::comp::Ratio::ALL[ratio]);
         let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|p| match p {
             0 => [0.9; BLOCK_SIZE],
             1 => core::array::from_fn(|i| 0.01 * (i as f32 * 0.3).sin()),

@@ -24,6 +24,7 @@ pub mod board;
 pub mod boot;
 pub mod budget;
 pub mod clock_plan;
+pub mod comp_key;
 pub mod confirm;
 pub mod dsp;
 pub mod factory;

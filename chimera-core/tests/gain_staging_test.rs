@@ -82,7 +82,7 @@ fn max() -> FxParams {
             ..Default::default()
         },
         comp: CompParams {
-            ratio: 7,
+            ratio: chimera_core::dsp::comp::Ratio::ALL[7],
             makeup: 1.0,
             ..Default::default()
         },
