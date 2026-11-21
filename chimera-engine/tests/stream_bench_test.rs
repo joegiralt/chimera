@@ -166,12 +166,20 @@ struct FakeCard {
     /// A UI waits on the bus all the while: wants are served as `pick`
     /// hands them out, and the UI has the bus whenever it doesn't.
     ui_waiting: bool,
+    /// The UI's turns (#569): every `.0` blocks the card serves nothing
+    /// for `.1` blocks.
+    turns: Option<(u32, u32)>,
     claimed: Vec<(usize, u32)>,
 }
 
 impl FakeCard {
     fn serve(&mut self, beds: Beds, bench: &BenchStreams, now: AudioBlocks) {
         if self.stall.contains(&now.get()) {
+            return;
+        }
+        if let Some((every, len)) = self.turns
+            && now.get() % every < len
+        {
             return;
         }
         if self.ui_waiting {
@@ -252,6 +260,7 @@ impl Rig {
                 skip: None,
                 stall: 0..0,
                 ui_waiting: false,
+                turns: None,
                 claimed: Vec::new(),
             },
             now: AudioBlocks::new(1_000),
@@ -392,6 +401,26 @@ fn a_waiting_ui_never_holds_back_the_spare_slot() {
         let rep = r.bench.report();
         assert_eq!((rep.empties, rep.order_errors), (0, 0), "stall from {from}");
     }
+}
+
+/// #569: the streams at the bench's heaviest load (eight at 24 kHz and
+/// 1.2×) while a UI waits on the bus throughout and takes a turn every
+/// `UI_TURN_MS`, each holding the card 40 ms (a cluster's write, slow
+/// card): no stream runs dry.
+#[test]
+fn the_ui_s_turns_leave_every_stream_on_time() {
+    use chimera_hal::card_bus::UI_TURN_MS;
+    // 128 frames at 48 kHz a block: 8 / 3 ms.
+    let every = UI_TURN_MS.get() * 3 / 8;
+    let hold = 40 * 3 / 8;
+    let mut r = Rig::new(beds8());
+    r.card.ui_waiting = true;
+    r.card.turns = Some((every, hold));
+    r.arm(24_000, 1_200, 8, Listen::Off);
+    r.run(20_000);
+    let rep = r.bench.report();
+    assert_eq!((rep.empties, rep.order_errors), (0, 0));
+    assert_eq!(rep.check_errors, [0; 8]);
 }
 
 #[test]

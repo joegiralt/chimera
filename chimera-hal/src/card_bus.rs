@@ -24,6 +24,10 @@ pub const QUIET_SPIN_MS: Millis = Millis::new(50);
 /// A `Stream` hold this long since its take or its last burst (`renew`)
 /// is stuck: the UI asks an abort.
 pub const WATCHDOG_MS: Millis = Millis::new(200);
+/// A UI that has waited this long for the bus asks a turn: the streams'
+/// next give leaves it free for the UI (#569, ADR 0307). Slower under a
+/// saturated load, never `Busy`; the ring's spare slot covers the turn.
+pub const UI_TURN_MS: Millis = Millis::new(100);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -121,6 +125,8 @@ pub struct CardBus {
     since: AtomicU32,
     wanted: AtomicBool,
     abort: AtomicBool,
+    /// The UI asked a turn (`UI_TURN_MS`): `take_or_want` parks.
+    turn: AtomicBool,
     /// The asked abort's `Hold`, stored before `abort`'s release.
     abort_for: AtomicU32,
     quiet: AtomicU8,
@@ -139,6 +145,7 @@ macro_rules! fresh {
             since: AtomicU32::new(0),
             wanted: AtomicBool::new(false),
             abort: AtomicBool::new(false),
+            turn: AtomicBool::new(false),
             abort_for: AtomicU32::new(0),
             quiet: AtomicU8::new(Quiet::Off as u8),
             asked: AtomicU32::new(0),
@@ -186,6 +193,10 @@ impl CardBus {
             // An abort asked as the last transfer ended is not this one's.
             self.abort.store(false, Ordering::Release);
         }
+        if took && t == Taker::Ui {
+            // The turn, if asked, is this take.
+            self.turn.store(false, Ordering::Release);
+        }
         took
     }
 
@@ -195,6 +206,11 @@ impl CardBus {
     /// retry that takes leaves `wanted` set, so the IRQ's next give may
     /// answer a spurious `Pend`: rule 1 allows it.
     pub fn take_or_want(&self, now: Ms) -> Took {
+        // The UI's turn: wanted, so the UI's give pends (rule 3).
+        if self.turn_asked() {
+            self.wanted.store(true, Ordering::SeqCst);
+            return Took::Wanted;
+        }
         if self.try_take(Taker::Stream, now) {
             return Took::Taken;
         }
@@ -247,6 +263,22 @@ impl CardBus {
         if self.owner() == Owner::Stream {
             self.since.store(now.0, Ordering::Relaxed);
         }
+    }
+
+    /// The UI, waited `UI_TURN_MS`: the streams park at their next take
+    /// until the UI's take ends the turn.
+    pub fn ask_turn(&self) {
+        self.turn.store(true, Ordering::Release);
+    }
+
+    /// A UI that gave up before its take: the streams go on (the caller
+    /// pends the IRQ).
+    pub fn cancel_turn(&self) {
+        self.turn.store(false, Ordering::Release);
+    }
+
+    pub fn turn_asked(&self) -> bool {
+        self.turn.load(Ordering::Acquire)
     }
 
     /// An abort of hold `h`, asked only if `h` is still the hold: one a

@@ -445,6 +445,8 @@ impl Held {
         let _ = BUS.give();
         match BUS.take_or_want(now_ms()) {
             Took::Taken => Some(self),
+            // The UI's turn, asked since `next` looked (#569): no fault.
+            Took::Wanted if BUS.turn_asked() => None,
             Took::Wanted => {
                 STATS.faults.fetch_add(1, Ordering::Relaxed);
                 None
@@ -1548,6 +1550,14 @@ impl IrqState {
     /// The bus kept for the next read while any stream wants a fill it
     /// can read (a waiting UI gets it only then: `serve_step`).
     fn next(&mut self, h: Held) {
+        // The UI waited `UI_TURN_MS`: the bus is its now. The pended entry
+        // finds the turn and stores its want, so the UI's give wakes the
+        // wants again (#569).
+        if BUS.turn_asked() {
+            give(h, &self.line);
+            pend();
+            return;
+        }
         match self.work() {
             Work::Nothing => give(h, &self.line),
             work => match h.keep() {

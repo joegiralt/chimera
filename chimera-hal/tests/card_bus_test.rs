@@ -262,3 +262,29 @@ fn an_ask_on_a_hold_already_moved_is_not_made() {
     assert!(b.ask_abort(b.held().unwrap()));
     assert!(b.take_abort());
 }
+
+/// #569: a UI that has waited `UI_TURN_MS` asks a turn; the card IRQ then
+/// parks (`Wanted`) instead of taking the bus, the UI takes it, and its
+/// give wakes the IRQ. Taking ends the turn; a UI that gives up cancels it.
+#[test]
+fn a_ui_turn_parks_the_streams_until_the_ui_has_had_the_bus() {
+    use chimera_hal::card_bus::{UI_TURN_MS, Wake};
+    assert_eq!(UI_TURN_MS.get(), 100);
+    let b = CardBus::new();
+    assert!(!b.turn_asked());
+    b.ask_turn();
+    assert!(b.turn_asked());
+    assert_eq!(b.take_or_want(Ms(0)), Took::Wanted, "the streams wait");
+    assert!(b.try_take(Taker::Ui, Ms(1)));
+    assert!(!b.turn_asked(), "the turn is the UI's take");
+    assert_eq!(b.give(), Wake::Pend, "its give wakes the IRQ");
+    assert_eq!(b.take_or_want(Ms(2)), Took::Taken);
+    b.give();
+    b.ask_turn();
+    b.cancel_turn();
+    assert_eq!(
+        b.take_or_want(Ms(3)),
+        Took::Taken,
+        "cancelled: the streams go on"
+    );
+}
