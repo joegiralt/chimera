@@ -590,6 +590,8 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo test -p chimera-screen
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    # The whole page walks, normal and LARGE (~15 s): ignored by `test` for their time (#637).
+    cargo test -p chimera-core --test all_pages_walk_test -- --ignored
     # WALK's kept glyph styles (ADR 0209): host only, never in firmware.
     cargo test -p chimera-core --features walk-styles --test tape_walk_glyph_test
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
