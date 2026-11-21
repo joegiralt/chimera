@@ -885,20 +885,31 @@ pub fn peek_note<S: Store>(
     }
 }
 
-/// A library Part file's check, with no target: the Sound's, and its kit
-/// records' through `KitDoor` (ADR 0305). A save's read-back.
-struct PartCheck {
+/// A library Sound file's check, with no target: the Sound's
+/// (`SoundCheck`), and a DRUM Part's kit records' through `KitDoor` (ADR
+/// 0305). The one checker of every library file that is not being
+/// loaded: a save's read-back, the console's `put`, its delete and its
+/// pair judge. `SoundCheck` itself refuses a kit record, so only here
+/// and in a load's `PartDecoder` is one accepted.
+pub struct PartCheck {
     sound: SoundCheck,
     scan: KitScan,
 }
 
 impl PartCheck {
     #[optimize(size)]
-    fn new() -> Self {
+    pub fn new() -> Self {
         PartCheck {
             sound: SoundCheck::new(),
             scan: KitScan::NEW,
         }
+    }
+}
+
+impl Default for PartCheck {
+    #[optimize(size)]
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -907,7 +918,9 @@ impl Check for PartCheck {
 
     #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        KitDoor::scan(&mut self.scan, &e, None)?;
+        if KitDoor::scan(&mut self.scan, &e, None)? {
+            return Ok(());
+        }
         self.sound.event(e)
     }
 
@@ -916,12 +929,18 @@ impl Check for PartCheck {
         KitDoor::found(&self.scan)?;
         self.sound.end()
     }
+
+    #[optimize(size)]
+    fn side(&mut self, s: Side) {
+        self.sound.side(s)
+    }
 }
 
 /// A library file as a Part's load reads it: the Sound onto the pool's
 /// scratch (`LibraryDecoder`) and a DRUM Sound's kit onto the scratch
 /// kit (ADR 0305). Pass 1 checks every kit record and touches nothing;
-/// pass 2 writes the scratch, which only `adopt` reads.
+/// pass 2 writes the scratch, which only `adopt` reads. A kit record is
+/// the kit's alone: the Sound's decoder never sees it.
 struct PartDecoder<'a> {
     sound: LibraryDecoder<'a>,
     kit: &'a mut Kit,
@@ -934,7 +953,9 @@ impl Check for PartDecoder<'_> {
 
     #[optimize(size)]
     fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        KitDoor::scan(&mut self.scan, &e, None)?;
+        if KitDoor::scan(&mut self.scan, &e, None)? {
+            return Ok(());
+        }
         self.sound.event(e)
     }
 
@@ -948,7 +969,9 @@ impl Check for PartDecoder<'_> {
 impl DecodeInPlace for PartDecoder<'_> {
     #[optimize(size)]
     fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
-        KitDoor::scan(&mut self.scan, &e, Some(&mut *self.kit))?;
+        if KitDoor::scan(&mut self.scan, &e, Some(&mut *self.kit))? {
+            return Ok(());
+        }
         self.sound.apply(e)
     }
 

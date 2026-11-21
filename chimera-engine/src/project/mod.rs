@@ -36,8 +36,8 @@ pub use kit_library::{
 pub use kits::{FollowHold, Kits, PadLights};
 pub use library::{
     AdoptError, Adopted, LibEntry, LibFile, LibNote, LibPage, LibRead, LibSeen, LibraryPart,
-    PageAt, PartSave, ReadPart, SavedPart, Shelf, SourceNeed, Staged, list_library, peek_note,
-    read_library_sound, save_library_part, save_library_sound,
+    PageAt, PartCheck, PartSave, ReadPart, SavedPart, Shelf, SourceNeed, Staged, list_library,
+    peek_note, read_library_sound, save_library_part, save_library_sound,
 };
 pub use marks::{
     ActionRefused, Edits, PartAction, PartActionKind, PartActions, PartStatus, ProjectStatus,

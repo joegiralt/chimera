@@ -26,10 +26,10 @@ use chimera_core::storage::{
     BuildStamp, Card, FileError, FileKind, Generation, Header, LibId, RecordTag,
     encode_library_sound, write_file,
 };
-use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store};
+use chimera_hal::store::{ByteSink, Dir, FileName, ReadSink, Store, StoreError, VolumeId};
 use chimera_hal::testkit::MemStore;
 use chimera_midi::value::U7;
-use common::codec_util::{VecSink, record_offsets};
+use common::codec_util::{VecSink, fix_crc, record_offsets};
 
 const ST: BuildStamp = BuildStamp::new("0.4.0", "02e440e2", false);
 const P1: PartId = PartId::ALL[0];
@@ -638,4 +638,109 @@ fn a_kit_with_pad_sounds_missing_takes_the_sounds() {
     assert_ne!(*q.kit(P1).pad(PadId::ALL[2]).sound(), from_sound);
     // The library holds this kit: it asks nothing more.
     assert!(ask(&q, t, P1, file).is_ok());
+}
+
+/// MemStore, each library file's second `KitSound` rewritten as its
+/// first pad's as it is written: a file whose Sound is whole and whose
+/// kit is not.
+struct BadKit(MemStore);
+
+impl Store for BadKit {
+    fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.0.mount()
+    }
+    fn list(
+        &mut self,
+        v: VolumeId,
+        d: Dir,
+        f: &mut dyn FnMut(FileName, u32),
+    ) -> Result<(), StoreError> {
+        self.0.list(v, d, f)
+    }
+    fn read(&mut self, v: VolumeId, f: FileName, s: &mut dyn ReadSink) -> Result<(), StoreError> {
+        self.0.read(v, f, s)
+    }
+    fn read_at(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        at: u32,
+        s: &mut dyn ReadSink,
+    ) -> Result<(), StoreError> {
+        self.0.read_at(v, f, at, s)
+    }
+    fn write(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+        b: &mut dyn FnMut(&mut dyn ByteSink) -> Result<(), StoreError>,
+    ) -> Result<u32, StoreError> {
+        let mut sink = VecSink(Vec::new());
+        b(&mut sink)?;
+        let mut bytes = sink.0;
+        let pads: Vec<usize> = record_offsets(&bytes)
+            .into_iter()
+            .filter(|&o| {
+                bytes.len() > o + 4 && u16::from_le_bytes([bytes[o], bytes[o + 1]]) == KIT_SOUND
+            })
+            .collect();
+        if let [first, second, ..] = pads[..] {
+            bytes[second + 4] = bytes[first + 4];
+            fix_crc(&mut bytes);
+        }
+        self.0
+            .write(v, f, &mut |s: &mut dyn ByteSink| s.put(&bytes))
+    }
+    fn delete(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.0.delete(v, f)
+    }
+    fn make_dir(&mut self, v: VolumeId, d: Dir) -> Result<(), StoreError> {
+        self.0.make_dir(v, d)
+    }
+    fn seal(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
+        self.0.seal(v, f)
+    }
+}
+
+/// T6: a save reads its file back with the kit's check too. A kit that
+/// reached the card malformed fails the save and leaves no file, where
+/// the Sound's check alone would pass it.
+#[test]
+fn a_saves_read_back_checks_the_kit() {
+    let (mut p, _) = drum_project();
+    edit_kit(&mut p, P1);
+    let mut st = BadKit(card());
+    let name = SoundName::new("BAD KIT").unwrap();
+    let out = save_library_part(&mut Card::new(), &mut st, &p, P1, name, &ST).out;
+    assert_eq!(out.unwrap_err(), LibNote::File(FileError::Corrupt));
+    let v = st.0.mount().unwrap();
+    let mut left = 0;
+    st.0.list(v, Dir::Sounds, &mut |_, _| left += 1).unwrap();
+    assert_eq!(left, 0, "the failed save's file is deleted");
+    // Another engine's Part has no kit to spoil: it saves.
+    assert!(
+        save_library_part(&mut Card::new(), &mut st, &p, P2, name, &ST)
+            .out
+            .is_ok()
+    );
+}
+
+/// T9: only a library Part's readers accept a kit record: the Sound's
+/// own check refuses one, as it always did.
+#[test]
+fn the_sounds_own_check_still_refuses_a_kit_record() {
+    let drum = named(EngineType::Drum);
+    let h = Header {
+        kind: FileKind::Sound,
+        generation: Generation::FIRST,
+        name: Some(drum.name),
+    };
+    let mut sink = VecSink(Vec::new());
+    write_file(&mut sink, &h, &mut |w| {
+        encode_library_sound(&drum, &ST, None, w)?;
+        w.put(RecordTag::Kit, &[0; 157])
+    })
+    .unwrap();
+    let r = common::codec_util::pass(&mut Sound::init(EngineType::Algo), &sink.0, false);
+    assert_eq!(r, Err(FileError::Corrupt));
 }

@@ -229,7 +229,7 @@ const fn once_bit(tag: RecordTag) -> u16 {
         RecordTag::Bindings => 1 << 9,
         RecordTag::PerfRoutes => 1 << 10,
         // Skipped before `once` is asked.
-        RecordTag::Build | RecordTag::Note | RecordTag::Kit | RecordTag::KitSound => 0,
+        RecordTag::Build | RecordTag::Note => 0,
         // A project's own records: refused before `once` is asked.
         RecordTag::Slot
         | RecordTag::Part
@@ -247,6 +247,8 @@ const fn once_bit(tag: RecordTag) -> u16 {
         | RecordTag::SourceZones
         | RecordTag::Controller
         | RecordTag::Scala
+        | RecordTag::Kit
+        | RecordTag::KitSound
         | RecordTag::MapSection => 0,
     }
 }
@@ -458,6 +460,8 @@ impl SoundCheck {
                 | RecordTag::Origin
                 | RecordTag::Controller
                 | RecordTag::Scala
+                | RecordTag::Kit
+                | RecordTag::KitSound
                 | RecordTag::MapSection
         ) || tag.is_orbit()
         {
@@ -467,13 +471,8 @@ impl SoundCheck {
         if (tag == RecordTag::Engine) == self.engine {
             return Err(FileError::Corrupt);
         }
-        // Informational: any build, any repeat, any length. A DRUM
-        // Part's kit, after its library Sound (ADR 0305), is not the
-        // Sound's: its reader checks it (`project::KitDoor`).
-        if matches!(
-            tag,
-            RecordTag::Build | RecordTag::Note | RecordTag::Kit | RecordTag::KitSound
-        ) {
+        // Informational: any build, any repeat, any length.
+        if matches!(tag, RecordTag::Build | RecordTag::Note) {
             return Ok(());
         }
         let once = match tag {
@@ -616,8 +615,10 @@ impl SoundCheck {
             | RecordTag::SourceZones
             | RecordTag::Controller
             | RecordTag::Scala
+            | RecordTag::Kit
+            | RecordTag::KitSound
             | RecordTag::MapSection => Err(FileError::Corrupt),
-            RecordTag::Build | RecordTag::Note | RecordTag::Kit | RecordTag::KitSound => Ok(()),
+            RecordTag::Build | RecordTag::Note => Ok(()),
         }
     }
 

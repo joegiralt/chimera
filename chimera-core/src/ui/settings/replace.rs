@@ -25,13 +25,13 @@ pub mod said {
 use chimera_hal::Controls;
 
 use crate::project::{
-    Confirmed, LibraryPart, NeedsConfirm, PartSource, Pending, Project, ProjectSource, Target,
-    TemplateCrc,
+    Confirmed, LibraryKit, LibraryPart, NeedsConfirm, PartSource, Pending, Project, ProjectSource,
+    Target, TemplateCrc,
 };
 use crate::ui::hold::Presses;
 use crate::ui::list_turn;
 
-use super::prompt::{Choice, LibraryAnswer, LoadAnswer, ReloadAnswer, ReplaceAnswer};
+use super::prompt::{Choice, KitAnswer, LibraryAnswer, LoadAnswer, ReloadAnswer, ReplaceAnswer};
 
 pub use chimera_engine::confirm::{Commits, Guarded, said};
 
@@ -46,8 +46,57 @@ pub struct Asked<R, A> {
 pub type PartAsk = Asked<PartSource, ReplaceAnswer>;
 /// SAVE PART FIRST / RELOAD / CANCEL.
 pub type ReloadAsk = Asked<PartSource, ReloadAnswer>;
-/// A library Sound: SAVE PART FIRST / REPLACE / CANCEL.
-pub type LibraryAsk = Asked<LibraryPart, LibraryAnswer>;
+/// A library Sound's prompt, one state for its two questions (ADR
+/// 0305): why it asks is data, so the prompts' dispatch has one arm.
+#[derive(Debug)]
+pub enum LibraryAsk {
+    /// The Part's Sound is edited: SAVE PART FIRST / REPLACE / CANCEL.
+    Sound(Asked<LibraryPart, LibraryAnswer>),
+    /// The Part's kit is in no library file: REPLACE / CANCEL, opening
+    /// on CANCEL. No save first: a slot holds no kit.
+    Kit(Pending<LibraryKit>, Choice<KitAnswer>),
+}
+
+/// What a library prompt's answer leaves.
+#[derive(Debug)]
+pub enum LibraryReply {
+    Sound(Reply<LibraryPart, LibraryAnswer>),
+    /// REPLACE's confirmation, or CANCEL.
+    Kit(Option<Confirmed<LibraryKit>>),
+}
+
+impl LibraryAsk {
+    pub fn new(n: NeedsConfirm<LibraryPart>) -> Self {
+        LibraryAsk::Sound(Asked::new(n))
+    }
+
+    pub fn kit(n: NeedsConfirm<LibraryKit>) -> Self {
+        LibraryAsk::Kit(n.into_pending(), Choice::new())
+    }
+
+    /// A frame's keys: still open, or answered against the target as it
+    /// is now. Out of line: one call from the prompts' dispatch.
+    #[inline(never)]
+    pub fn input(
+        self,
+        c: &impl Controls,
+        p: &Presses,
+        project: &Project,
+    ) -> Result<LibraryReply, Self> {
+        match self {
+            LibraryAsk::Sound(a) => a
+                .input(c, p, project)
+                .map(LibraryReply::Sound)
+                .map_err(LibraryAsk::Sound),
+            LibraryAsk::Kit(n, mut choice) => match choice.input(i32::from(list_turn(c, &[])), p) {
+                Some(a) => Ok(LibraryReply::Kit(
+                    said(a).map(|yes| n.confirm(project, yes)),
+                )),
+                None => Err(LibraryAsk::Kit(n, choice)),
+            },
+        }
+    }
+}
 /// SAVE THEN LOAD / LOAD ANYWAY / CANCEL.
 pub type ProjectAsk = Asked<ProjectSource, LoadAnswer>;
 

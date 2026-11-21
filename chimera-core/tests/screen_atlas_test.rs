@@ -513,25 +513,6 @@ fn prompt(k: AskKind, ui: &mut UiState) {
             r.feed(Input::turn(EncoderId::B, 1));
             r.feed(Input::press(ButtonId::Edit));
         }
-        AskKind::KitUnsaved => {
-            use chimera_core::dsp::drum::types::{Machine, PadId};
-            let mut s = MemStore::new(1);
-            let snd = chimera_core::preset::Sound::init(chimera_core::params::EngineType::Drum);
-            let stamp = &chimera_core::ui::about_page::THIS;
-            let mut card = chimera_core::storage::Card::new();
-            let saved =
-                chimera_core::project::save_library_sound(&mut card, &mut s, &snd, snd.name, stamp);
-            saved.out.unwrap();
-            // A kit in no library file, whatever the Part plays.
-            ui.project_mut()
-                .kit_mut(P1)
-                .pad_mut(PadId::ALL[0])
-                .set_machine(Machine::PlainSine);
-            let mut r = Rig::new(ui, s);
-            r.feed(Input::chord(ButtonId::Edit, ButtonId::B1));
-            r.feed(Input::turn(EncoderId::B, 1));
-            r.feed(Input::press(ButtonId::Edit));
-        }
         AskKind::UpdateStale => {
             load_slot(ui, P1, S3);
             load_slot(ui, P4, S3);

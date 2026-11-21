@@ -7,7 +7,7 @@ mod kern;
 use chimera_hal::store::StoreError;
 
 use crate::dsp::drum::types::{Kit, PadSet};
-use crate::storage::{Event, FileError, RecordWriter};
+use crate::storage::{Event, FileError, ReadTag, RecordTag, RecordWriter};
 
 use super::codec::KitRead;
 use super::{PartId, Project};
@@ -226,18 +226,25 @@ impl KitDoor {
         Self::with(|d| (d.put)(kit, w)).transpose()
     }
 
-    /// One event of a library file, either pass: the header starts
-    /// `scan` anew (and resets `kit`, pass 2's scratch); a `Kit` or
-    /// `KitSound` record is checked, and lands on `kit` if given. Closed,
-    /// nothing. Out of line: every reader shares the one call.
+    /// One event of a library Part's file, either pass: the header
+    /// starts `scan` anew (and resets `kit`, pass 2's scratch); a `Kit` or
+    /// `KitSound` record is checked, and lands on `kit` if given. Whether
+    /// the event was a kit record: the kit's alone, which the Sound's own
+    /// check would refuse. Closed, it is still the kit's, unread. Out of
+    /// line: every reader shares the one call.
     #[inline(never)]
     #[optimize(size)]
     pub(super) fn scan(
         scan: &mut KitScan,
         e: &Event<'_>,
         kit: Option<&mut Kit>,
-    ) -> Result<(), FileError> {
-        Self::with(|d| (d.scan)(scan, e, kit)).unwrap_or(Ok(()))
+    ) -> Result<bool, FileError> {
+        let mine = matches!(
+            e,
+            Event::Record(ReadTag::Known(RecordTag::Kit | RecordTag::KitSound), _)
+        );
+        Self::with(|d| (d.scan)(scan, e, kit)).unwrap_or(Ok(()))?;
+        Ok(mine)
     }
 
     /// The file's kit at a pass's end; a kit in part is `Corrupt`.

@@ -1362,6 +1362,12 @@ fn kit_rig() -> Rig {
     r
 }
 
+/// Whether the open prompt is the kit's question (`None`: no prompt).
+fn kit_asked(r: &Rig) -> Option<bool> {
+    let (_, why) = r.ui.prompt_words_for_test()?;
+    Some(why.as_str() == "KIT NOT IN LIBRARY")
+}
+
 /// I-a (#949): a kit-only edit under a DRUM library load asks about the
 /// kit, REPLACE or CANCEL: no SAVE PART FIRST, which a slot can't keep,
 /// so no slot is saved however it is answered.
@@ -1371,7 +1377,8 @@ fn a_kit_only_edit_asks_about_the_kit_not_the_sound() {
     let mut r = kit_rig();
     let slots = r.ui.project().pool().sound_count();
     r.start_load();
-    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::KitUnsaved));
+    // The library's one prompt state, its reason the kit.
+    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::LoadLibrary));
     let (q, why) = r.ui.prompt_words_for_test().unwrap();
     assert_eq!(
         (q.as_str(), why.as_str()),
@@ -1385,7 +1392,7 @@ fn a_kit_only_edit_asks_about_the_kit_not_the_sound() {
     assert_eq!(r.ui.project().pool().sound_count(), slots);
     // Asked again, REPLACE: the one load's slot, the file's kit.
     r.press(ButtonId::Edit);
-    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::KitUnsaved));
+    assert_eq!(kit_asked(&r), Some(true));
     r.turn(EncoderId::A, -1);
     tap(&mut r.ui, ButtonId::Edit);
     r.work();
@@ -1403,11 +1410,12 @@ fn save_part_first_then_the_kits_question() {
     r.edit_part();
     let slots = r.ui.project().pool().sound_count();
     r.start_load();
-    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::LoadLibrary));
+    assert_eq!(kit_asked(&r), Some(false));
     // SAVE PART FIRST is the pill it opens on.
     tap(&mut r.ui, ButtonId::Edit);
     assert_eq!(r.ui.project().pool().sound_count(), slots + 1);
-    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::KitUnsaved));
+    assert_eq!(kit_asked(&r), Some(true));
+    // A second EDIT on its opening pill, CANCEL, saves no second slot.
     r.turn(EncoderId::A, -1);
     tap(&mut r.ui, ButtonId::Edit);
     r.work();
