@@ -6,20 +6,33 @@ pub mod builtin;
 pub mod codec;
 pub mod ctl;
 
-use core::sync::atomic::{AtomicU8, Ordering};
-
 /// Controller map files a console `put` or `rm` has changed, wrapping.
-static MAPS_PUT: AtomicU8 = AtomicU8::new(0);
+/// The unit's one card: a static.
+#[cfg(target_os = "none")]
+static MAPS_PUT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+// A host's: each thread its own (a test is a thread, a card of its own:
+// #1053), as the desktop runs its console and UI on one.
+#[cfg(not(target_os = "none"))]
+extern crate std;
+#[cfg(not(target_os = "none"))]
+std::thread_local!(static MAPS_PUT: core::cell::Cell<u8> = const { core::cell::Cell::new(0) });
 
 /// How many map files the console has changed: a move says every layer
 /// reads the card again (ADR 0226).
 pub fn maps_put() -> u8 {
-    MAPS_PUT.load(Ordering::Relaxed)
+    #[cfg(target_os = "none")]
+    return MAPS_PUT.load(core::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(target_os = "none"))]
+    MAPS_PUT.with(core::cell::Cell::get)
 }
 
 /// The console changed a map file.
 pub fn map_put() {
-    MAPS_PUT.fetch_add(1, Ordering::Relaxed);
+    #[cfg(target_os = "none")]
+    MAPS_PUT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    #[cfg(not(target_os = "none"))]
+    MAPS_PUT.with(|n| n.set(n.get().wrapping_add(1)));
 }
 
 /// The file stem for `n`: up to four of its letters and digits, upper

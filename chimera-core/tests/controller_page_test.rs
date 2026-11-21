@@ -25,13 +25,6 @@ use screen::{Input as Key, Rig};
 
 const P1: PartId = PartId::ALL[0];
 
-/// `map_put` is global: a test that moves it, or that reads a map gone
-/// from its card (which a move would take to NONE), holds this.
-static PUTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn puts() -> std::sync::MutexGuard<'static, ()> {
-    PUTS.lock().unwrap_or_else(|e| e.into_inner())
-}
 const CUTOFF: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
 const RESO: ParamAddr = ParamAddr::new(BlockRef::Filter, FilterParams::RESONANCE);
 
@@ -92,6 +85,17 @@ fn place(ui: &UiState, a: ParamAddr) -> f32 {
     a.spec().unwrap().normalize(v)
 }
 
+/// A `map_put` on another thread is another test's card: this one's
+/// layers and listing never see it (#1053).
+#[test]
+fn a_put_on_another_thread_is_not_this_one_s() {
+    let was = chimera_core::midi_map::maps_put();
+    std::thread::spawn(chimera_core::midi_map::map_put)
+        .join()
+        .unwrap();
+    assert_eq!(chimera_core::midi_map::maps_put(), was);
+}
+
 /// A picked map is read from the card and plays under the Sound's rows:
 /// its CC 21 moves the cutoff, but CC 74 is the Sound's (cutoff), not the
 /// map's (resonance).
@@ -121,7 +125,6 @@ fn a_picked_map_plays_under_the_sound_s_rows() {
 /// only on that engine.
 #[test]
 fn a_missing_map_plays_nothing() {
-    let _g = puts();
     let s = MemStore::new(1);
     let mut ui = ui();
     let mut rig = Rig::new(&mut ui, s);
@@ -280,7 +283,6 @@ fn a_project_load_reads_its_map_again() {
 /// is refused, and nothing is written in the map's place.
 #[test]
 fn a_row_of_a_map_gone_from_the_card_is_not_dropped() {
-    let _g = puts();
     use chimera_hal::store::{Dir, FileName, Store};
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF), (22, RESO)]);
@@ -356,7 +358,6 @@ fn an_engine_change_swaps_the_layer() {
 /// it: every layer reads the card again.
 #[test]
 fn a_map_put_over_usb_plays_at_once() {
-    let _g = puts();
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
     let mut ui = ui();
@@ -380,7 +381,6 @@ fn a_map_put_over_usb_plays_at_once() {
 /// on it to NONE, as a delete on the unit does (#905, ADR 0255).
 #[test]
 fn a_map_removed_over_usb_leaves_its_parts_on_none() {
-    let _g = puts();
     use chimera_hal::store::{Dir, FileName, Store};
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
@@ -413,7 +413,6 @@ fn a_map_removed_over_usb_leaves_its_parts_on_none() {
 /// (ADR 0226) and plays nothing from it.
 #[test]
 fn another_card_without_the_map_keeps_the_name() {
-    let _g = puts();
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
     let mut ui = ui();
@@ -436,7 +435,6 @@ fn another_card_without_the_map_keeps_the_name() {
 /// again, after a map put over USB or an engine change, it stays.
 #[test]
 fn a_missing_name_read_again_stays() {
-    let _g = puts();
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
     let mut ui = ui();
@@ -467,7 +465,6 @@ fn a_missing_name_read_again_stays() {
 /// B down from it reaches NONE.
 #[test]
 fn b_down_from_a_missing_map_reaches_none() {
-    let _g = puts();
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
     let mut ui = ui();
