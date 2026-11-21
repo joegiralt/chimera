@@ -112,8 +112,10 @@ pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     // 64 B more for PRT's meters' UI state (ADR 0293); 128 B more for
     // AMP › STEREO, 96 B over: PAN a knob a Part, the WIDTHs' state and
     // each voice's played WIDTH (ADR 0294); 128 B more, 96 B over: each
-    // voice's last PAN and BASE, kept from a retrigger (ADR 0294).
-    5184
+    // voice's last PAN and BASE, kept from a retrigger (ADR 0294); 32 B
+    // more, 16 B over: the editor's 32-bit scene revs (ADR 0289) beside
+    // the LIBRARY kit's state (ADR 0305). The report runs about 2.2 KB.
+    5152
 } else {
     6144
 };
