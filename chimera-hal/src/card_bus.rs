@@ -110,12 +110,19 @@ pub enum CardFault {
     Read = 1,
 }
 
+/// A `Stream` hold as the watchdog judged it: its stamp. An abort carries
+/// it, so one judged on a transfer never stops the next (#766).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hold(u32);
+
 pub struct CardBus {
     owner: AtomicU8,
     /// A `Stream` take's `Ms`, for the watchdog.
     since: AtomicU32,
     wanted: AtomicBool,
     abort: AtomicBool,
+    /// The asked abort's `Hold`, stored before `abort`'s release.
+    abort_for: AtomicU32,
     quiet: AtomicU8,
     /// The quiet's ask, for its length.
     asked: AtomicU32,
@@ -132,6 +139,7 @@ macro_rules! fresh {
             since: AtomicU32::new(0),
             wanted: AtomicBool::new(false),
             abort: AtomicBool::new(false),
+            abort_for: AtomicU32::new(0),
             quiet: AtomicU8::new(Quiet::Off as u8),
             asked: AtomicU32::new(0),
             wrote: AtomicU32::new(0),
@@ -216,12 +224,17 @@ impl CardBus {
         Owner::from_bits(self.owner.load(Ordering::Acquire))
     }
 
-    /// The bus is `Stream`'s and has been for over `WATCHDOG_MS`. A take
-    /// stamped after `now` was read (the IRQ preempted the caller) is not.
-    pub fn stuck(&self, now: Ms) -> bool {
-        self.owner() == Owner::Stream
-            && now.signed_since(Ms(self.since.load(Ordering::Relaxed)))
-                > WATCHDOG_MS.get().cast_signed()
+    /// The bus is `Stream`'s and has been for over `WATCHDOG_MS`: the hold
+    /// judged. A take stamped after `now` was read (the IRQ preempted the
+    /// caller) is not.
+    pub fn stuck(&self, now: Ms) -> Option<Hold> {
+        self.held()
+            .filter(|h| now.signed_since(Ms(h.0)) > WATCHDOG_MS.get().cast_signed())
+    }
+
+    /// The `Stream` hold now, if the bus is `Stream`'s.
+    pub fn held(&self) -> Option<Hold> {
+        (self.owner() == Owner::Stream).then(|| Hold(self.since.load(Ordering::Relaxed)))
     }
 
     /// The `Stream` hold's stamp moved to `now`: the card IRQ's, at each
@@ -236,13 +249,18 @@ impl CardBus {
         }
     }
 
-    pub fn ask_abort(&self) {
+    /// An abort of hold `h`.
+    pub fn ask_abort(&self, h: Hold) {
+        self.abort_for.store(h.0, Ordering::Relaxed);
         self.abort.store(true, Ordering::Release);
     }
 
-    /// The IRQ's read of an abort: once per ask.
+    /// The IRQ's read of an abort: once per ask, and only one asked of
+    /// the hold it is in (a renew moves the stamp, a take starts a new
+    /// one).
     pub fn take_abort(&self) -> bool {
         self.abort.swap(false, Ordering::AcqRel)
+            && self.abort_for.load(Ordering::Relaxed) == self.since.load(Ordering::Relaxed)
     }
 
     /// Off → Asked, stamped `now`; otherwise nothing. Only the UI asks,

@@ -1069,8 +1069,8 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
             }
         };
         wait();
-        if BUS.owner() == Owner::Stream {
-            BUS.ask_abort();
+        if let Some(h) = BUS.held() {
+            BUS.ask_abort(h);
             crate::card_dma::pend();
             wait();
         }

@@ -123,8 +123,8 @@ impl<D: Medium> SharedCard<D> {
                     pend: self.hooks.pend,
                 });
             }
-            if !asked && self.bus.stuck(now) {
-                self.bus.ask_abort();
+            if let Some(h) = self.bus.stuck(now).filter(|_| !asked) {
+                self.bus.ask_abort(h);
                 (self.hooks.pend)();
                 asked = true;
             }
