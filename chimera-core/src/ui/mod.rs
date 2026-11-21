@@ -2399,7 +2399,7 @@ impl UiState {
     /// store beside each drop's `closed`, not a call of its own.
     #[inline(always)]
     pub(crate) fn dropped(&mut self) {
-        self.lib.after = None;
+        self.lib.drop_after();
         self.closed();
     }
 

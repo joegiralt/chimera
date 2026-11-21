@@ -392,6 +392,9 @@ isChoice p =
         Cont ->
             False
 
+        Stepped ->
+            False
+
         Choice ->
             True
 
@@ -425,6 +428,9 @@ intend m intent s =
     case intent of
         SetNorm a t ->
             on a (\p -> want p.addr (Number (Control.atNorm p t)) s)
+
+        Nudge a n ->
+            on a (\p -> want p.addr (Number (Control.nudged p n)) s)
 
         SetOption a i ->
             want a (Option i) s

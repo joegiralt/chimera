@@ -43,6 +43,7 @@ module Ui.Control exposing
     , nonEmpty
     , norm
     , notInList
+    , nudged
     , optionList
     , options
     , polarity
@@ -85,7 +86,7 @@ import Html exposing (Html, div)
 import Html.Attributes exposing (attribute, class, classList, style, tabindex, title)
 import Html.Events as Events
 import Json.Decode as Decode exposing (Decoder)
-import Protocol exposing (OptIndex, Scale(..))
+import Protocol exposing (Kind(..), OptIndex, Scale(..))
 import Schema exposing (Param)
 import Ui.Tokens as Tokens exposing (Chars, Face(..))
 
@@ -463,10 +464,12 @@ type Target
 
 
 {-| What a hand asks for. A page turns `SetNorm` into the stored value
-(`atNorm`); `Restore` is the param's default.
+(`atNorm`) and a wheel's `Nudge` too (`nudged`); `Restore` is the
+param's default.
 -}
 type Intent
     = SetNorm Addr Float
+    | Nudge Addr { from : Float, by : Int, wheel : Float }
     | SetOption Addr OptIndex
     | Restore Addr
 
@@ -528,7 +531,7 @@ update lookup msg held =
             ( held
             , case lookup a of
                 Just (Continuous c) ->
-                    [ SetNorm a (clamp 0 1 (c.norm + toFloat sign * c.wheel)) ]
+                    [ Nudge a { from = c.norm, by = sign, wheel = c.wheel } ]
 
                 Just (Discrete o) ->
                     positionOf o.current o.options
@@ -666,45 +669,111 @@ scaleOf p =
     p.scale
 
 
-{-| The stored value at knob position `t`, 0 to 1, kept to four decimals so
-it is always a plain number the unit reads. A linear param lands on its
-steps from its bottom, as the box's turns store it (#1055: DELAY's note
-is the step it is on), or on its top, which a turn reaches by the clamp.
-An octave param (CUTOFF) has no grid of its own to land on: the box's
-turns step from wherever it is.
+{-| The value at knob position `t`, 0 to 1, along the param's travel.
+-}
+valueAt : Param -> Float -> Float
+valueAt p t =
+    case scaleOf p of
+        Linear ->
+            p.min + t * (p.max - p.min)
+
+        Octaves ->
+            p.min * (2 ^ (t * logBase 2 (p.max / p.min)))
+
+
+{-| The stored value at knob position `t`, 0 to 1, in range, kept to four
+decimals so it is always a plain number the unit reads. A stepped param
+lands on the multiple of its step the unit's `quantize` would store
+(rounded half away from zero, from zero, not from its bottom: #1055); a
+continuous one is never snapped (the box turns it by its step from
+wherever it is).
 -}
 atNorm : Param -> Float -> Float
-atNorm p t0 =
+atNorm p t =
     let
-        t : Float
-        t =
-            clamp 0 1 t0
-
-        range : Float
-        range =
-            p.max - p.min
-
-        steps : Float -> Float
-        steps x =
-            if p.step <= 0 then
-                x
-
-            else if x >= range - p.step / 2 then
-                range
-
-            else
-                toFloat (round (x / p.step)) * p.step
-
         v : Float
         v =
-            case scaleOf p of
-                Linear ->
-                    p.min + steps (t * range)
-
-                Octaves ->
-                    p.min * (2 ^ (t * logBase 2 (p.max / p.min)))
+            valueAt p (clamp 0 1 t)
     in
+    stored p
+        (case p.kind of
+            Stepped ->
+                onStep p v
+
+            Cont ->
+                v
+
+            Choice ->
+                v
+
+            Toggle ->
+                v
+        )
+
+
+{-| `v` on `p`'s nearest step, as `quantize` rounds (`roundf`); a step of
+0 leaves it.
+-}
+onStep : Param -> Float -> Float
+onStep p v =
+    if p.step > 0 then
+        toFloat (roundAway (v / p.step)) * p.step
+
+    else
+        v
+
+
+roundAway : Float -> Int
+roundAway x =
+    if x >= 0 then
+        floor (x + 0.5)
+
+    else
+        -(floor (-x + 0.5))
+
+
+{-| `v` in range, to four decimals.
+-}
+stored : Param -> Float -> Float
+stored p v =
     toFloat (round (clamp p.min p.max v * 10000)) / 10000
+
+
+{-| One wheel notch `by` from knob position `from`: a stepped param to its
+next step that way, never past it (from an off-step top, the step under
+it); a continuous one by `wheel` of its travel.
+-}
+nudged : Param -> { from : Float, by : Int, wheel : Float } -> Float
+nudged p n =
+    let
+        notch : () -> Float
+        notch () =
+            atNorm p (n.from + toFloat n.by * n.wheel)
+    in
+    case ( p.kind, p.step > 0 ) of
+        ( Stepped, True ) ->
+            let
+                g : Float
+                g =
+                    valueAt p (clamp 0 1 n.from) / p.step
+            in
+            if n.by > 0 then
+                stored p (toFloat (floor (g + 1.0e-6) + n.by) * p.step)
+
+            else
+                stored p (toFloat (ceiling (g - 1.0e-6) + n.by) * p.step)
+
+        ( Stepped, False ) ->
+            notch ()
+
+        ( Cont, _ ) ->
+            notch ()
+
+        ( Choice, _ ) ->
+            notch ()
+
+        ( Toggle, _ ) ->
+            notch ()
 
 
 {-| A position moved by dragging from `startY` to `y`: up raises it, `px`

@@ -367,6 +367,47 @@ fn every_engine_variant_is_a_panel() {
     );
 }
 
+/// DELAY's note is a place in its list, stored `i / 10` (ADR 0302): a
+/// stepped param, so a number between two notes lands on one, on the box
+/// and from `ed set` alike (#1055).
+#[test]
+fn the_delays_note_is_stored_on_a_note() {
+    let mut f = fake(EngineType::Algo);
+    set(&mut f, "DELAY.NOTE", "0.55");
+    let (stored, _) = get(&mut f, "DELAY.NOTE");
+    assert!((stored - 0.6).abs() < 1e-6, "{stored}");
+}
+
+/// A param line's kind is its spec's: a named one (`choice`, `toggle`)
+/// picks by name; else `cont` a `ParamKind::Continuous`, `stepped` one
+/// `quantize` rounds to its step (`Stepped`, `Enum`). The editor snaps
+/// only a stepped one (#1055).
+#[test]
+fn every_param_line_says_its_specs_kind() {
+    use chimera_core::console::ed_schema_pages;
+    use chimera_engine::block::ParamKind;
+    let mut f = Fake::new();
+    let mut texts: Vec<String> = (0..ed_schema_pages(Schema::Mixer))
+        .map(|n| ask(&mut f, &format!("ed describe MIXER {n}\n")))
+        .collect();
+    for e in EngineType::ALL {
+        texts.extend(page_texts(&mut f, e));
+    }
+    let mut stepped = 0;
+    for p in params(&texts) {
+        let a = EdAddr::parse(p[1].as_bytes()).unwrap();
+        let named = ["choice", "toggle"].contains(&p[3].as_str());
+        let want = match (named, a.param().spec().unwrap().kind) {
+            (true, _) => p[3].as_str(),
+            (false, ParamKind::Continuous) => "cont",
+            (false, ParamKind::Stepped | ParamKind::Enum) => "stepped",
+        };
+        assert_eq!(p[3], want, "{p:?}");
+        stepped += usize::from(p[3] == "stepped");
+    }
+    assert!(stepped > 0);
+}
+
 #[test]
 fn every_param_line_says_its_scale() {
     let mut oct = 0;
@@ -392,7 +433,7 @@ fn every_param_line_says_its_scale() {
             };
             assert_eq!(p[9], flags, "{p:?}");
             assert!(
-                ["cont", "choice", "toggle"].contains(&p[3].as_str()),
+                ["cont", "stepped", "choice", "toggle"].contains(&p[3].as_str()),
                 "{p:?}"
             );
             oct += usize::from(want == "oct");

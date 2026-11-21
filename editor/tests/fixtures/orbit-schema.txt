@@ -26,9 +26,9 @@ opt ORBIT.SCALE 7 "HARM MIN"
 opt ORBIT.SCALE 8 "PENT MAJ"
 opt ORBIT.SCALE 9 "PENT MIN"
 opt ORBIT.SCALE 10 "CUSTOM"
-param ORBIT.BARS "BARS" cont lin 0 7 1 0 -
+param ORBIT.BARS "BARS" stepped lin 0 7 1 0 -
 act "SCENE" SCENE
-param TEMPO.BPM "BPM" cont lin 30 300 1 120 -
+param TEMPO.BPM "BPM" stepped lin 30 300 1 120 -
 OK
 page 1 CUSTOM of 19
 panel CUSTOM -
@@ -37,7 +37,7 @@ act "IN SCALE" SET
 OK
 page 2 CHRD of 19
 panel CHRD -
-param ORBIT.SEGS "SEGS" cont lin 0 7 1 0 -
+param ORBIT.SEGS "SEGS" stepped lin 0 7 1 0 -
 act "DEGREE" DEGREE
 act "PLAY" PLAY
 OK
@@ -49,21 +49,21 @@ act "SWITCH" SWITCH
 OK
 page 4 RING1_RHYTHM of 19
 panel RING1_RHYTHM -
-param RING1.STEPS "STEPS" cont lin 0 31 1 15 -
-param RING1.HITS "HITS" cont lin 0 32 1 4 m
-param RING1.ROTATE "ROTATE" cont lin 0 31 1 0 m
-param RING1.CHANCE "CHANCE" cont lin 0 100 1 100 m
-param RING1.MUTATE "MUTATE" cont lin 0 100 1 0 m
+param RING1.STEPS "STEPS" stepped lin 0 31 1 15 -
+param RING1.HITS "HITS" stepped lin 0 32 1 4 m
+param RING1.ROTATE "ROTATE" stepped lin 0 31 1 0 m
+param RING1.CHANCE "CHANCE" stepped lin 0 100 1 100 m
+param RING1.MUTATE "MUTATE" stepped lin 0 100 1 0 m
 param RING1.MUTE "MUTE" toggle lin 0 1 1 0 -
 opt RING1.MUTE 0 "OFF"
 opt RING1.MUTE 1 "ON"
 OK
 page 5 RING1_VOICE of 19
 panel RING1_VOICE -
-param RING1.GATE "GATE" cont lin 0 100 1 50 m
-param RING1.VEL "VEL" cont lin 1 127 1 100 m
-param RING1.ACCENT "ACCENT" cont lin 0 32 1 0 m
-param RING1.OCTAVE "OCTAVE" cont lin 0 8 1 4 m
+param RING1.GATE "GATE" stepped lin 0 100 1 50 m
+param RING1.VEL "VEL" stepped lin 1 127 1 100 m
+param RING1.ACCENT "ACCENT" stepped lin 0 32 1 0 m
+param RING1.OCTAVE "OCTAVE" stepped lin 0 8 1 4 m
 param RING1.RANGE "RANGE" choice lin 0 3 1 0 -
 opt RING1.RANGE 0 "0"
 opt RING1.RANGE 1 "1"
@@ -83,28 +83,28 @@ opt RING1.WALK 0 "UP"
 opt RING1.WALK 1 "DOWN"
 opt RING1.WALK 2 "RANDOM"
 opt RING1.WALK 3 "PING-PG"
-param RING1.TARGET "TARGET" cont lin 0 5 1 0 -
+param RING1.TARGET "TARGET" stepped lin 0 5 1 0 -
 act "LEARN" LEARN
 act "CLEAR" CLEAR
 act "NOTE" NOTE
 OK
 page 7 RING2_RHYTHM of 19
 panel RING2_RHYTHM -
-param RING2.STEPS "STEPS" cont lin 0 31 1 15 -
-param RING2.HITS "HITS" cont lin 0 32 1 4 m
-param RING2.ROTATE "ROTATE" cont lin 0 31 1 0 m
-param RING2.CHANCE "CHANCE" cont lin 0 100 1 100 m
-param RING2.MUTATE "MUTATE" cont lin 0 100 1 0 m
+param RING2.STEPS "STEPS" stepped lin 0 31 1 15 -
+param RING2.HITS "HITS" stepped lin 0 32 1 4 m
+param RING2.ROTATE "ROTATE" stepped lin 0 31 1 0 m
+param RING2.CHANCE "CHANCE" stepped lin 0 100 1 100 m
+param RING2.MUTATE "MUTATE" stepped lin 0 100 1 0 m
 param RING2.MUTE "MUTE" toggle lin 0 1 1 0 -
 opt RING2.MUTE 0 "OFF"
 opt RING2.MUTE 1 "ON"
 OK
 page 8 RING2_VOICE of 19
 panel RING2_VOICE -
-param RING2.GATE "GATE" cont lin 0 100 1 50 m
-param RING2.VEL "VEL" cont lin 1 127 1 100 m
-param RING2.ACCENT "ACCENT" cont lin 0 32 1 0 m
-param RING2.OCTAVE "OCTAVE" cont lin 0 8 1 4 m
+param RING2.GATE "GATE" stepped lin 0 100 1 50 m
+param RING2.VEL "VEL" stepped lin 1 127 1 100 m
+param RING2.ACCENT "ACCENT" stepped lin 0 32 1 0 m
+param RING2.OCTAVE "OCTAVE" stepped lin 0 8 1 4 m
 param RING2.RANGE "RANGE" choice lin 0 3 1 0 -
 opt RING2.RANGE 0 "0"
 opt RING2.RANGE 1 "1"
@@ -124,28 +124,28 @@ opt RING2.WALK 0 "UP"
 opt RING2.WALK 1 "DOWN"
 opt RING2.WALK 2 "RANDOM"
 opt RING2.WALK 3 "PING-PG"
-param RING2.TARGET "TARGET" cont lin 0 5 1 0 -
+param RING2.TARGET "TARGET" stepped lin 0 5 1 0 -
 act "LEARN" LEARN
 act "CLEAR" CLEAR
 act "NOTE" NOTE
 OK
 page 10 RING3_RHYTHM of 19
 panel RING3_RHYTHM -
-param RING3.STEPS "STEPS" cont lin 0 31 1 15 -
-param RING3.HITS "HITS" cont lin 0 32 1 4 m
-param RING3.ROTATE "ROTATE" cont lin 0 31 1 0 m
-param RING3.CHANCE "CHANCE" cont lin 0 100 1 100 m
-param RING3.MUTATE "MUTATE" cont lin 0 100 1 0 m
+param RING3.STEPS "STEPS" stepped lin 0 31 1 15 -
+param RING3.HITS "HITS" stepped lin 0 32 1 4 m
+param RING3.ROTATE "ROTATE" stepped lin 0 31 1 0 m
+param RING3.CHANCE "CHANCE" stepped lin 0 100 1 100 m
+param RING3.MUTATE "MUTATE" stepped lin 0 100 1 0 m
 param RING3.MUTE "MUTE" toggle lin 0 1 1 0 -
 opt RING3.MUTE 0 "OFF"
 opt RING3.MUTE 1 "ON"
 OK
 page 11 RING3_VOICE of 19
 panel RING3_VOICE -
-param RING3.GATE "GATE" cont lin 0 100 1 50 m
-param RING3.VEL "VEL" cont lin 1 127 1 100 m
-param RING3.ACCENT "ACCENT" cont lin 0 32 1 0 m
-param RING3.OCTAVE "OCTAVE" cont lin 0 8 1 4 m
+param RING3.GATE "GATE" stepped lin 0 100 1 50 m
+param RING3.VEL "VEL" stepped lin 1 127 1 100 m
+param RING3.ACCENT "ACCENT" stepped lin 0 32 1 0 m
+param RING3.OCTAVE "OCTAVE" stepped lin 0 8 1 4 m
 param RING3.RANGE "RANGE" choice lin 0 3 1 0 -
 opt RING3.RANGE 0 "0"
 opt RING3.RANGE 1 "1"
@@ -165,28 +165,28 @@ opt RING3.WALK 0 "UP"
 opt RING3.WALK 1 "DOWN"
 opt RING3.WALK 2 "RANDOM"
 opt RING3.WALK 3 "PING-PG"
-param RING3.TARGET "TARGET" cont lin 0 5 1 0 -
+param RING3.TARGET "TARGET" stepped lin 0 5 1 0 -
 act "LEARN" LEARN
 act "CLEAR" CLEAR
 act "NOTE" NOTE
 OK
 page 13 RING4_RHYTHM of 19
 panel RING4_RHYTHM -
-param RING4.STEPS "STEPS" cont lin 0 31 1 15 -
-param RING4.HITS "HITS" cont lin 0 32 1 4 m
-param RING4.ROTATE "ROTATE" cont lin 0 31 1 0 m
-param RING4.CHANCE "CHANCE" cont lin 0 100 1 100 m
-param RING4.MUTATE "MUTATE" cont lin 0 100 1 0 m
+param RING4.STEPS "STEPS" stepped lin 0 31 1 15 -
+param RING4.HITS "HITS" stepped lin 0 32 1 4 m
+param RING4.ROTATE "ROTATE" stepped lin 0 31 1 0 m
+param RING4.CHANCE "CHANCE" stepped lin 0 100 1 100 m
+param RING4.MUTATE "MUTATE" stepped lin 0 100 1 0 m
 param RING4.MUTE "MUTE" toggle lin 0 1 1 0 -
 opt RING4.MUTE 0 "OFF"
 opt RING4.MUTE 1 "ON"
 OK
 page 14 RING4_VOICE of 19
 panel RING4_VOICE -
-param RING4.GATE "GATE" cont lin 0 100 1 50 m
-param RING4.VEL "VEL" cont lin 1 127 1 100 m
-param RING4.ACCENT "ACCENT" cont lin 0 32 1 0 m
-param RING4.OCTAVE "OCTAVE" cont lin 0 8 1 4 m
+param RING4.GATE "GATE" stepped lin 0 100 1 50 m
+param RING4.VEL "VEL" stepped lin 1 127 1 100 m
+param RING4.ACCENT "ACCENT" stepped lin 0 32 1 0 m
+param RING4.OCTAVE "OCTAVE" stepped lin 0 8 1 4 m
 param RING4.RANGE "RANGE" choice lin 0 3 1 0 -
 opt RING4.RANGE 0 "0"
 opt RING4.RANGE 1 "1"
@@ -206,28 +206,28 @@ opt RING4.WALK 0 "UP"
 opt RING4.WALK 1 "DOWN"
 opt RING4.WALK 2 "RANDOM"
 opt RING4.WALK 3 "PING-PG"
-param RING4.TARGET "TARGET" cont lin 0 5 1 0 -
+param RING4.TARGET "TARGET" stepped lin 0 5 1 0 -
 act "LEARN" LEARN
 act "CLEAR" CLEAR
 act "NOTE" NOTE
 OK
 page 16 RING5_RHYTHM of 19
 panel RING5_RHYTHM -
-param RING5.STEPS "STEPS" cont lin 0 31 1 15 -
-param RING5.HITS "HITS" cont lin 0 32 1 4 m
-param RING5.ROTATE "ROTATE" cont lin 0 31 1 0 m
-param RING5.CHANCE "CHANCE" cont lin 0 100 1 100 m
-param RING5.MUTATE "MUTATE" cont lin 0 100 1 0 m
+param RING5.STEPS "STEPS" stepped lin 0 31 1 15 -
+param RING5.HITS "HITS" stepped lin 0 32 1 4 m
+param RING5.ROTATE "ROTATE" stepped lin 0 31 1 0 m
+param RING5.CHANCE "CHANCE" stepped lin 0 100 1 100 m
+param RING5.MUTATE "MUTATE" stepped lin 0 100 1 0 m
 param RING5.MUTE "MUTE" toggle lin 0 1 1 0 -
 opt RING5.MUTE 0 "OFF"
 opt RING5.MUTE 1 "ON"
 OK
 page 17 RING5_VOICE of 19
 panel RING5_VOICE -
-param RING5.GATE "GATE" cont lin 0 100 1 50 m
-param RING5.VEL "VEL" cont lin 1 127 1 100 m
-param RING5.ACCENT "ACCENT" cont lin 0 32 1 0 m
-param RING5.OCTAVE "OCTAVE" cont lin 0 8 1 4 m
+param RING5.GATE "GATE" stepped lin 0 100 1 50 m
+param RING5.VEL "VEL" stepped lin 1 127 1 100 m
+param RING5.ACCENT "ACCENT" stepped lin 0 32 1 0 m
+param RING5.OCTAVE "OCTAVE" stepped lin 0 8 1 4 m
 param RING5.RANGE "RANGE" choice lin 0 3 1 0 -
 opt RING5.RANGE 0 "0"
 opt RING5.RANGE 1 "1"
@@ -247,7 +247,7 @@ opt RING5.WALK 0 "UP"
 opt RING5.WALK 1 "DOWN"
 opt RING5.WALK 2 "RANDOM"
 opt RING5.WALK 3 "PING-PG"
-param RING5.TARGET "TARGET" cont lin 0 5 1 0 -
+param RING5.TARGET "TARGET" stepped lin 0 5 1 0 -
 act "LEARN" LEARN
 act "CLEAR" CLEAR
 act "NOTE" NOTE

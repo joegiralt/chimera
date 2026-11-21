@@ -489,6 +489,9 @@ apply intent m =
                 , routesMany = Routes.setAmount a (Routes.amountFromNorm t) m.routesMany
             }
 
+        Nudge a n ->
+            apply (SetNorm a (clamp 0 1 (n.from + toFloat n.by * n.wheel))) m
+
         SetOption a i ->
             { m | values = Dict.update (Addr.key a) (Maybe.map (setOption i)) m.values }
 

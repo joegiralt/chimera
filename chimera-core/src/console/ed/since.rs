@@ -1062,12 +1062,12 @@ impl EdSince {
             clock,
         } = at;
         match s {
-            Section::Part => self.part_section(owed, ui, own, refused, pass, w),
+            Section::Part => self.part_section(owed, ui, own, refused, clock.delay, pass, w),
             Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Map => self.map_section(owed, ui, pass, w),
             Section::Mixer => self.mixer_section(owed, ui, own, clock, pass, w),
-            Section::Orbit => self.orbit_section(owed, ui, own, pass, w),
-            Section::Settings => self.settings_section(owed, ui, own, pass, w),
+            Section::Orbit => self.orbit_section(owed, ui, own, clock.delay, pass, w),
+            Section::Settings => self.settings_section(owed, ui, own, clock.delay, pass, w),
         }
     }
 
@@ -1084,6 +1084,7 @@ impl EdSince {
         owed: bool,
         ui: &UiState,
         own: &CellOwn,
+        delay: FoldState,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -1102,7 +1103,7 @@ impl EdSince {
             last: &mut c.last,
             described: &d,
         };
-        values(ui, own, copy, !whole, pass, w)?;
+        values(ui, own, delay, copy, !whole, pass, w)?;
         let rev = ui.project().rev();
         let marks = match c.marks {
             Some(m) if m.rev == rev || (!whole && m.age < MARKS_EVERY) => m,
@@ -1161,6 +1162,7 @@ impl EdSince {
         ui: &UiState,
         own: &CellOwn,
         refused: &Refusals,
+        delay: FoldState,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -1211,6 +1213,7 @@ impl EdSince {
         values(
             ui,
             own,
+            delay,
             Copy {
                 schema: Schema::Engine(engine),
                 last: &mut self.part.last,
@@ -1369,8 +1372,8 @@ impl EdSince {
             described: d,
         };
         match again {
-            None => values(ui, own, copy, !whole, pass, w)?,
-            Some(a) => values_but(ui, own, copy, a, pass, w)?,
+            None => values(ui, own, clock.delay, copy, !whole, pass, w)?,
+            Some(a) => values_but(ui, own, clock.delay, copy, a, pass, w)?,
         }
         Ok(whole)
     }
@@ -1391,6 +1394,7 @@ impl EdSince {
         owed: bool,
         ui: &UiState,
         own: &CellOwn,
+        delay: FoldState,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -1433,7 +1437,7 @@ impl EdSince {
             last: &mut kept.last,
             described: &d,
         };
-        values(ui, own, copy, !whole, pass, w)?;
+        values(ui, own, delay, copy, !whole, pass, w)?;
         let notes = super::orbit::Notes::of(song.live());
         notes.write((!whole).then_some(&kept.notes), w)?;
         if let Pass::Commit = pass {
@@ -1467,12 +1471,13 @@ struct Copy<'a> {
 fn values(
     ui: &UiState,
     own: &CellOwn,
+    delay: FoldState,
     c: Copy<'_>,
     same: bool,
     pass: Pass,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    walk(ui, own, c, |_, moved| moved || !same, pass, w)
+    walk(ui, own, delay, c, |_, moved| moved || !same, pass, w)
 }
 
 /// As `values`, with every value of `again`'s blocks answered whatever
@@ -1484,19 +1489,30 @@ fn values(
 fn values_but(
     ui: &UiState,
     own: &CellOwn,
+    delay: FoldState,
     c: Copy<'_>,
     again: Again,
     pass: Pass,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    walk(ui, own, c, |at, moved| moved || again.has(at), pass, w)
+    walk(
+        ui,
+        own,
+        delay,
+        c,
+        |at, moved| moved || again.has(at),
+        pass,
+        w,
+    )
 }
 
-/// Each listed value of `c`'s schema, answered where `say(block, moved)`.
+/// Each listed value of `c`'s schema, answered where `say(block, moved)`;
+/// the delay's note read at the answer's fold `delay` (#1059).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.walk"))]
 fn walk(
     ui: &UiState,
     own: &CellOwn,
+    delay: FoldState,
     c: Copy<'_>,
     say: impl Fn(EdBlock, bool) -> bool,
     pass: Pass,
@@ -1528,7 +1544,7 @@ fn walk(
                     *last = now;
                 }
                 if let Some(a) = EdAddr::new(at, id)
-                    && let Some((norm, stored, text)) = reading(a, ui, own)
+                    && let Some((norm, stored, text)) = reading(a, ui, own, delay)
                 {
                     line(a, norm, stored, text.as_str(), w)?;
                 }
@@ -1630,37 +1646,62 @@ mod tests {
         assert!(out.as_str().ends_with("OK 1\n"));
     }
 
-    /// What one answer's passes read, as `answer_within` builds it.
-    fn reading<'a>(ui: &'a UiState, own: &'a CellOwn, refused: &'a Refusals) -> Reading<'a> {
+    /// What one answer's passes read, at the clock `clock` (injected: no
+    /// test moves the meter's global word, #1053's flake class).
+    fn reading<'a>(
+        ui: &'a UiState,
+        own: &'a CellOwn,
+        refused: &'a Refusals,
+        clock: ClockSeen,
+    ) -> Reading<'a> {
         Reading {
             ui,
             own,
             refused,
-            clock: ClockSeen::now(ui, own),
+            clock,
         }
     }
 
-    /// One answer reads the delay's fold once: a fold published between
-    /// MIXER's measure and its commit writes nothing the measure didn't
-    /// count (#1059).
+    /// One answer reads the delay's fold once: MIXER's commit writes what
+    /// its measure counted, and the note's text is at that fold, not the
+    /// meter's (#1059).
     #[test]
-    fn a_fold_between_the_passes_writes_what_was_measured() {
-        use crate::meter::{delay_fold, publish_rev_clock, rev_clock};
+    fn the_answers_fold_is_the_one_its_passes_and_texts_read() {
         let ui = UiState::new();
         let mut s = EdSince::new();
         ask(&mut s, &ui, None, ANSWER_BYTES_MAX);
         let (own, refused) = (ui.cell_own(), Refusals::new());
-        let at = reading(&ui, &own, &refused);
+        let was = s.mixer.clock.unwrap();
+        // A fold the last answer didn't read: the delay's block again.
+        let clock = ClockSeen {
+            delay: FoldState(was.delay.0 ^ 1),
+            ..was
+        };
+        let at = reading(&ui, &own, &refused, clock);
         let mut measured = ByteCount(0);
         s.section(Section::Mixer, false, at, Pass::Measure, &mut measured)
             .unwrap();
-        let ((t, f), d) = (rev_clock(), delay_fold());
-        publish_rev_clock(t, f, FoldState(d.0 ^ 1));
-        let mut written = ByteCount(0);
+        let mut written = alloc_free::Buf::new();
         s.section(Section::Mixer, false, at, Pass::Commit, &mut written)
             .unwrap();
-        publish_rev_clock(t, f, d);
-        assert_eq!(written.0, measured.0);
+        assert_eq!(written.as_str().len(), measured.0);
+        let note = written
+            .as_str()
+            .lines()
+            .find(|l| l.starts_with("val DELAY.NOTE "))
+            .expect("the delay's block again");
+        use crate::block::Block as _;
+        let mut want = crate::ui::fmt::FmtBuf::new();
+        let v = ui
+            .project()
+            .perf()
+            .fx
+            .delay
+            .get(crate::dsp::delay::DelayParams::NOTE);
+        crate::ui::delay_sync::note_text_at(&mut want, v, clock.delay);
+        let text = note.strip_suffix('"').unwrap();
+        let head = text.strip_suffix(want.as_str()).expect(note);
+        assert!(head.ends_with(" \""), "{note}");
     }
 
     /// The answer's lines and its `OK` word.
@@ -1696,7 +1737,12 @@ mod tests {
             .section(
                 Section::Part,
                 true,
-                reading(&ui, &ui.cell_own(), &Refusals::new()),
+                reading(
+                    &ui,
+                    &ui.cell_own(),
+                    &Refusals::new(),
+                    ClockSeen::now(&ui, &ui.cell_own()),
+                ),
                 Pass::Measure,
                 &mut part,
             )
@@ -1740,7 +1786,12 @@ mod tests {
             .section(
                 Section::Part,
                 true,
-                reading(&ui, &ui.cell_own(), &Refusals::new()),
+                reading(
+                    &ui,
+                    &ui.cell_own(),
+                    &Refusals::new(),
+                    ClockSeen::now(&ui, &ui.cell_own()),
+                ),
                 Pass::Measure,
                 &mut part,
             )

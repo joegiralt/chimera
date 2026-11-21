@@ -14,6 +14,7 @@ use super::schema::{Round, Schema};
 use crate::addr::{BlockRead, BlockRef};
 use crate::dsp::drum::sound::RouteId;
 use crate::dsp::drum::types::PadId;
+use crate::dsp::rev::sync::FoldState;
 use crate::project::{Part, PartId};
 use crate::ui::UiState;
 use crate::ui::block_def::{BlockDef, SlotBinding};
@@ -212,13 +213,25 @@ fn cell_part(ui: &UiState, a: EdAddr) -> &Part {
 /// its engine's, or a block it lacks). The value is the Sound's stored one, as
 /// the unit holds it: a refused choice the box shows dimmed is not reported.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.reading"))]
-pub(super) fn reading(addr: EdAddr, ui: &UiState, own: &CellOwn) -> Option<(f32, f32, FmtBuf)> {
+pub(super) fn reading(
+    addr: EdAddr,
+    ui: &UiState,
+    own: &CellOwn,
+    delay: FoldState,
+) -> Option<(f32, f32, FmtBuf)> {
     if !addr.at().reachable(engine_of(ui)) {
         return None;
     }
     let blk = block(ui, addr.at())?;
     let spec = addr.param().spec()?;
     let (stored, norm) = (blk.get(addr.id()), blk.normalized(addr.id()));
+    // The delay's note at the fold the answer read (`since::ClockSeen`),
+    // not the meter's now: its text and `since`'s decision agree (#1059).
+    if addr.param() == crate::ui::view::DELAY_NOTE {
+        let mut text = FmtBuf::new();
+        crate::ui::delay_sync::note_text_at(&mut text, norm, delay);
+        return Some((norm, stored, text));
+    }
     let text = match find(ui, own, addr) {
         Some((def, i, ctx)) => {
             let cx = CellCx {
@@ -259,7 +272,7 @@ pub(super) fn source_text(ui: &UiState, own: &CellOwn) -> Option<FmtBuf> {
 /// The answer but for the closing `OK`.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.value.get"))]
 pub(super) fn get(addr: EdAddr, ui: &UiState, w: &mut dyn Write) -> Option<fmt::Result> {
-    let (norm, stored, text) = reading(addr, ui, &ui.cell_own())?;
+    let (norm, stored, text) = reading(addr, ui, &ui.cell_own(), crate::meter::delay_fold())?;
     Some(line(addr, norm, stored, text.as_str(), w))
 }
 

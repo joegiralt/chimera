@@ -243,7 +243,7 @@ fn random_sound(e: EngineType, seed: u64) -> (Sim, Vec<(String, f32)>) {
         rng.shuffle(&mut order);
         for i in order {
             let (a, kind, min, max) = &params[i];
-            let v = if kind == "cont" {
+            let v = if kind == "cont" || kind == "stepped" {
                 format!("{:.6}", min + rng.unit() * (max - min))
             } else {
                 format!("#{}", rng.below(*max as usize + 1))

@@ -23,7 +23,7 @@ param DELAY.MIX "MIX" cont lin 0 1 0.0078125 1 m
 panel DELAY FREE
 param DELAY.TIME "TIME" cont lin 10 500 8 375 m
 panel DELAY SYNC
-param DELAY.NOTE "TIME" cont lin 0 1 0.1 0.9 m
+param DELAY.NOTE "TIME" stepped lin 0 1 0.1 0.9 m
 OK
 page 2 CHAR of 34
 panel CHAR -
@@ -37,7 +37,7 @@ page 3 GRAIN of 34
 panel GRAIN -
 param DELAY.SIZE "SIZE" cont lin 0 1 0.0078125 0.6 m
 param DELAY.DENSITY "DENSITY" cont lin 0 1 0.0078125 0.6 m
-param DELAY.PITCH "PITCH" cont lin -24 24 1 0 m
+param DELAY.PITCH "PITCH" stepped lin -24 24 1 0 m
 param DELAY.TEXTURE "TEXTURE" cont lin 0 1 0.0078125 0.2 m
 param DELAY.SYNC "SYNC" choice lin 0 1 1 0 -
 opt DELAY.SYNC 0 "FREE"
@@ -189,7 +189,7 @@ param COMP.MAKEUP "MAKEUP" cont lin 0 1 0.0078125 0 m
 param COMP.SMART_EQ "SMART EQ" toggle lin 0 1 1 0 -
 opt COMP.SMART_EQ 0 "OFF"
 opt COMP.SMART_EQ 1 "ON"
-param COMP.AMOUNT "AMOUNT" cont lin 0 127 1 64 m
+param COMP.AMOUNT "AMOUNT" stepped lin 0 127 1 64 m
 param REVERB.ROLE "REV ROLE" choice lin 0 2 1 2 -
 opt REVERB.ROLE 0 "FRONT"
 opt REVERB.ROLE 1 "MID"
@@ -197,7 +197,7 @@ opt REVERB.ROLE 2 "BACK"
 OK
 page 10 PART1_PRT of 34
 panel PART1_PRT -
-param PART1.CH "CH" cont lin 0 15 1 0 -
+param PART1.CH "CH" stepped lin 0 15 1 0 -
 param PART1.MODE "MODE" choice lin 0 1 1 1 -
 opt PART1.MODE 0 "MONO"
 opt PART1.MODE 1 "POLY"
@@ -207,7 +207,7 @@ opt PART1.OUT 1 "P2"
 opt PART1.OUT 2 "P3"
 param PART1.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
 param PART1.PAN "PAN" cont lin -1 1 0.015625 0 m
-param PART1.BEND "BEND" cont lin 0 24 1 2 -
+param PART1.BEND "BEND" stepped lin 0 24 1 2 -
 OK
 page 11 PART1_VOI of 34
 panel PART1_VOI -
@@ -237,7 +237,7 @@ opt PART1.RESERVE 8 "8"
 OK
 page 12 PART1_EQ of 34
 panel PART1_EQ -
-param PART1.TILT "TILT" cont lin -64 63 1 0 m
+param PART1.TILT "TILT" stepped lin -64 63 1 0 m
 param PART1.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
 opt PART1.LO_CUT 0 "OFF"
 opt PART1.LO_CUT 1 "ON"
@@ -254,7 +254,7 @@ param PART1_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
 OK
 page 14 PART2_PRT of 34
 panel PART2_PRT -
-param PART2.CH "CH" cont lin 0 15 1 0 -
+param PART2.CH "CH" stepped lin 0 15 1 0 -
 param PART2.MODE "MODE" choice lin 0 1 1 1 -
 opt PART2.MODE 0 "MONO"
 opt PART2.MODE 1 "POLY"
@@ -264,7 +264,7 @@ opt PART2.OUT 1 "P2"
 opt PART2.OUT 2 "P3"
 param PART2.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
 param PART2.PAN "PAN" cont lin -1 1 0.015625 0 m
-param PART2.BEND "BEND" cont lin 0 24 1 2 -
+param PART2.BEND "BEND" stepped lin 0 24 1 2 -
 OK
 page 15 PART2_VOI of 34
 panel PART2_VOI -
@@ -294,7 +294,7 @@ opt PART2.RESERVE 8 "8"
 OK
 page 16 PART2_EQ of 34
 panel PART2_EQ -
-param PART2.TILT "TILT" cont lin -64 63 1 0 m
+param PART2.TILT "TILT" stepped lin -64 63 1 0 m
 param PART2.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
 opt PART2.LO_CUT 0 "OFF"
 opt PART2.LO_CUT 1 "ON"
@@ -311,7 +311,7 @@ param PART2_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
 OK
 page 18 PART3_PRT of 34
 panel PART3_PRT -
-param PART3.CH "CH" cont lin 0 15 1 0 -
+param PART3.CH "CH" stepped lin 0 15 1 0 -
 param PART3.MODE "MODE" choice lin 0 1 1 1 -
 opt PART3.MODE 0 "MONO"
 opt PART3.MODE 1 "POLY"
@@ -321,7 +321,7 @@ opt PART3.OUT 1 "P2"
 opt PART3.OUT 2 "P3"
 param PART3.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
 param PART3.PAN "PAN" cont lin -1 1 0.015625 0 m
-param PART3.BEND "BEND" cont lin 0 24 1 2 -
+param PART3.BEND "BEND" stepped lin 0 24 1 2 -
 OK
 page 19 PART3_VOI of 34
 panel PART3_VOI -
@@ -351,7 +351,7 @@ opt PART3.RESERVE 8 "8"
 OK
 page 20 PART3_EQ of 34
 panel PART3_EQ -
-param PART3.TILT "TILT" cont lin -64 63 1 0 m
+param PART3.TILT "TILT" stepped lin -64 63 1 0 m
 param PART3.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
 opt PART3.LO_CUT 0 "OFF"
 opt PART3.LO_CUT 1 "ON"
@@ -368,7 +368,7 @@ param PART3_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
 OK
 page 22 PART4_PRT of 34
 panel PART4_PRT -
-param PART4.CH "CH" cont lin 0 15 1 0 -
+param PART4.CH "CH" stepped lin 0 15 1 0 -
 param PART4.MODE "MODE" choice lin 0 1 1 1 -
 opt PART4.MODE 0 "MONO"
 opt PART4.MODE 1 "POLY"
@@ -378,7 +378,7 @@ opt PART4.OUT 1 "P2"
 opt PART4.OUT 2 "P3"
 param PART4.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
 param PART4.PAN "PAN" cont lin -1 1 0.015625 0 m
-param PART4.BEND "BEND" cont lin 0 24 1 2 -
+param PART4.BEND "BEND" stepped lin 0 24 1 2 -
 OK
 page 23 PART4_VOI of 34
 panel PART4_VOI -
@@ -408,7 +408,7 @@ opt PART4.RESERVE 8 "8"
 OK
 page 24 PART4_EQ of 34
 panel PART4_EQ -
-param PART4.TILT "TILT" cont lin -64 63 1 0 m
+param PART4.TILT "TILT" stepped lin -64 63 1 0 m
 param PART4.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
 opt PART4.LO_CUT 0 "OFF"
 opt PART4.LO_CUT 1 "ON"
@@ -425,7 +425,7 @@ param PART4_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
 OK
 page 26 PART5_PRT of 34
 panel PART5_PRT -
-param PART5.CH "CH" cont lin 0 15 1 0 -
+param PART5.CH "CH" stepped lin 0 15 1 0 -
 param PART5.MODE "MODE" choice lin 0 1 1 1 -
 opt PART5.MODE 0 "MONO"
 opt PART5.MODE 1 "POLY"
@@ -435,7 +435,7 @@ opt PART5.OUT 1 "P2"
 opt PART5.OUT 2 "P3"
 param PART5.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
 param PART5.PAN "PAN" cont lin -1 1 0.015625 0 m
-param PART5.BEND "BEND" cont lin 0 24 1 2 -
+param PART5.BEND "BEND" stepped lin 0 24 1 2 -
 OK
 page 27 PART5_VOI of 34
 panel PART5_VOI -
@@ -465,7 +465,7 @@ opt PART5.RESERVE 8 "8"
 OK
 page 28 PART5_EQ of 34
 panel PART5_EQ -
-param PART5.TILT "TILT" cont lin -64 63 1 0 m
+param PART5.TILT "TILT" stepped lin -64 63 1 0 m
 param PART5.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
 opt PART5.LO_CUT 0 "OFF"
 opt PART5.LO_CUT 1 "ON"
@@ -482,7 +482,7 @@ param PART5_SND.SEND3 "REVERB" cont lin 0 1 0.0078125 0 m
 OK
 page 30 PART6_PRT of 34
 panel PART6_PRT -
-param PART6.CH "CH" cont lin 0 15 1 0 -
+param PART6.CH "CH" stepped lin 0 15 1 0 -
 param PART6.MODE "MODE" choice lin 0 1 1 1 -
 opt PART6.MODE 0 "MONO"
 opt PART6.MODE 1 "POLY"
@@ -492,7 +492,7 @@ opt PART6.OUT 1 "P2"
 opt PART6.OUT 2 "P3"
 param PART6.LEVEL "LEVEL" cont lin 0 1 0.0078125 0.8 m
 param PART6.PAN "PAN" cont lin -1 1 0.015625 0 m
-param PART6.BEND "BEND" cont lin 0 24 1 2 -
+param PART6.BEND "BEND" stepped lin 0 24 1 2 -
 OK
 page 31 PART6_VOI of 34
 panel PART6_VOI -
@@ -522,7 +522,7 @@ opt PART6.RESERVE 8 "8"
 OK
 page 32 PART6_EQ of 34
 panel PART6_EQ -
-param PART6.TILT "TILT" cont lin -64 63 1 0 m
+param PART6.TILT "TILT" stepped lin -64 63 1 0 m
 param PART6.LO_CUT "LO CUT" toggle lin 0 1 1 0 -
 opt PART6.LO_CUT 0 "OFF"
 opt PART6.LO_CUT 1 "ON"

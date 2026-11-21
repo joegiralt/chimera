@@ -46,8 +46,8 @@ param MODAL.E.MIX "ENS.M" cont lin 0 1 0.0078125 0 m
 OK
 page 3 PIT of 19
 panel PIT -
-param PITCH.PITCH "PITCH" cont lin -24 24 1 0 md
-param PITCH.FINE "FINE" cont lin -100 100 1 0 md
+param PITCH.PITCH "PITCH" stepped lin -24 24 1 0 md
+param PITCH.FINE "FINE" stepped lin -100 100 1 0 md
 param PITCH.STEAL "STEAL" choice lin 0 1 1 0 m
 opt PITCH.STEAL 0 "CUT"
 opt PITCH.STEAL 1 "GLIDE"

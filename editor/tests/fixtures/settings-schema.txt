@@ -21,7 +21,7 @@ opt RANDOM.MOD 0 "OFF"
 opt RANDOM.MOD 1 "SUBTLE"
 opt RANDOM.MOD 2 "MOVING"
 opt RANDOM.MOD 3 "WILD"
-param RANDOM.SEED "SEED" cont lin 0 255 1 0 -
+param RANDOM.SEED "SEED" stepped lin 0 255 1 0 -
 OK
 page 1 SYN of 27
 crumb "MIDI" "SYNC"
@@ -36,12 +36,12 @@ OK
 page 2 CHN of 27
 crumb "MIDI" "CHANNELS"
 panel CHN -
-param PART1.CH "P1" cont lin 0 15 1 0 -
-param PART2.CH "P2" cont lin 0 15 1 0 -
-param PART3.CH "P3" cont lin 0 15 1 0 -
-param PART4.CH "P4" cont lin 0 15 1 0 -
-param PART5.CH "P5" cont lin 0 15 1 0 -
-param PART6.CH "P6" cont lin 0 15 1 0 -
+param PART1.CH "P1" stepped lin 0 15 1 0 -
+param PART2.CH "P2" stepped lin 0 15 1 0 -
+param PART3.CH "P3" stepped lin 0 15 1 0 -
+param PART4.CH "P4" stepped lin 0 15 1 0 -
+param PART5.CH "P5" stepped lin 0 15 1 0 -
+param PART6.CH "P6" stepped lin 0 15 1 0 -
 OK
 page 3 CTL of 27
 crumb "MIDI" "CONTROL"
@@ -134,7 +134,7 @@ opt MIDI.MPE_LOWER 12 "12"
 opt MIDI.MPE_LOWER 13 "13"
 opt MIDI.MPE_LOWER 14 "14"
 opt MIDI.MPE_LOWER 15 "15"
-param MIDI.MPE_LBEND "L BEND" cont lin 0 96 1 48 -
+param MIDI.MPE_LBEND "L BEND" stepped lin 0 96 1 48 -
 param MIDI.MPE_UPPER "UPPER" choice lin 0 15 1 0 -
 opt MIDI.MPE_UPPER 0 "OFF"
 opt MIDI.MPE_UPPER 1 "1"
@@ -152,7 +152,7 @@ opt MIDI.MPE_UPPER 12 "12"
 opt MIDI.MPE_UPPER 13 "13"
 opt MIDI.MPE_UPPER 14 "14"
 opt MIDI.MPE_UPPER 15 "15"
-param MIDI.MPE_UBEND "U BEND" cont lin 0 96 1 48 -
+param MIDI.MPE_UBEND "U BEND" stepped lin 0 96 1 48 -
 OK
 page 6 OUT of 27
 crumb "AUDIO" "OUTPUTS"
@@ -307,7 +307,7 @@ OK
 page 16 PART1_TUN of 27
 crumb "AUDIO" "TUNING"
 panel PART1_TUN -
-param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param MIDI.TUNE "TUNE" stepped lin -100 100 1 0 -
 param PART1.TUNING "TUNING" choice lin 0 6 1 0 -
 opt PART1.TUNING 0 "12-TET"
 opt PART1.TUNING 1 "JUST"
@@ -334,7 +334,7 @@ OK
 page 18 PART2_TUN of 27
 crumb "AUDIO" "TUNING"
 panel PART2_TUN -
-param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param MIDI.TUNE "TUNE" stepped lin -100 100 1 0 -
 param PART2.TUNING "TUNING" choice lin 0 6 1 0 -
 opt PART2.TUNING 0 "12-TET"
 opt PART2.TUNING 1 "JUST"
@@ -361,7 +361,7 @@ OK
 page 20 PART3_TUN of 27
 crumb "AUDIO" "TUNING"
 panel PART3_TUN -
-param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param MIDI.TUNE "TUNE" stepped lin -100 100 1 0 -
 param PART3.TUNING "TUNING" choice lin 0 6 1 0 -
 opt PART3.TUNING 0 "12-TET"
 opt PART3.TUNING 1 "JUST"
@@ -388,7 +388,7 @@ OK
 page 22 PART4_TUN of 27
 crumb "AUDIO" "TUNING"
 panel PART4_TUN -
-param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param MIDI.TUNE "TUNE" stepped lin -100 100 1 0 -
 param PART4.TUNING "TUNING" choice lin 0 6 1 0 -
 opt PART4.TUNING 0 "12-TET"
 opt PART4.TUNING 1 "JUST"
@@ -415,7 +415,7 @@ OK
 page 24 PART5_TUN of 27
 crumb "AUDIO" "TUNING"
 panel PART5_TUN -
-param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param MIDI.TUNE "TUNE" stepped lin -100 100 1 0 -
 param PART5.TUNING "TUNING" choice lin 0 6 1 0 -
 opt PART5.TUNING 0 "12-TET"
 opt PART5.TUNING 1 "JUST"
@@ -442,7 +442,7 @@ OK
 page 26 PART6_TUN of 27
 crumb "AUDIO" "TUNING"
 panel PART6_TUN -
-param MIDI.TUNE "TUNE" cont lin -100 100 1 0 -
+param MIDI.TUNE "TUNE" stepped lin -100 100 1 0 -
 param PART6.TUNING "TUNING" choice lin 0 6 1 0 -
 opt PART6.TUNING 0 "12-TET"
 opt PART6.TUNING 1 "JUST"
