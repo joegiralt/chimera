@@ -410,6 +410,7 @@ fn retune_glides_without_a_click() {
 
 /// B3, then SETTINGS › PART › LIVE SNAP: SNAP and HELD edit Part 3's, and
 /// the leaf is one page.
+#[cfg(feature = "orbit")]
 #[test]
 fn live_snap_leaf_edits_the_active_part() {
     let _: &OnePage = &LIVE_SNAP_LEAF;
