@@ -73,6 +73,21 @@ means Chimera's `dfu` cannot be reached, so the jumper is the way in.
 4. Take the jumper off and power-cycle. The bootloader runs and jumps to
    Chimera.
 
+## Back in DFU after a flash with the jumper on
+
+With BOOT0 bridged, a `to-dfu` (or OS UPGRADE's `ENTER DFU`) leaves
+Chimera's DFU marker set: the reset it asks for goes straight to the ROM
+loader, so nothing clears the marker. After the flash, `:leave` starts
+the new image, which sees the marker and goes back into DFU. Leave DFU a
+second time, flashing nothing; the first trip cleared the marker:
+
+```
+dfu-util -a0 -d 0483:df11 -s 0x8020000:leave
+```
+
+Without the jumper this never happens
+(private issue #305).
+
 ## No console after a cold power-on
 
 Known issue: private issue #331. From a cold
