@@ -454,6 +454,9 @@ impl ModState {
     /// Sum of `source_value * amount / 127` over all sources for dest `d`.
     /// Same order and arithmetic as the old `compute_offset`. Returns 0.0
     /// when `d` is out of range instead of panicking (see `dest`).
+    // Inlined: bank 2's `ui::notes` calls it too (#149), so no
+    // out-of-line copy stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub fn sum_for(&self, d: usize, source_values: &[f32; MAX_MOD_SOURCES]) -> f32 {
         if d >= MAX_MOD_DESTS {
             return 0.0;

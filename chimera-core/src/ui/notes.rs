@@ -140,7 +140,7 @@ fn stage(
         let a = ParamAddr::new(addr.block, p);
         m.find(a)
             .filter(|&d| m.present(d) != 0)
-            .map(|_| m.offset_for(a, sources))
+            .map(|d| m.sum_for(d, sources))
     };
     let r = speed_ranges(e.speed);
     let oct = match addr.param {
