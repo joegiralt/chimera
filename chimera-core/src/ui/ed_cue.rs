@@ -358,7 +358,41 @@ pub(crate) fn keep(ui: &mut UiState, p: PartId, to: crate::console::EdKeepMap) {
 /// editor, one ask: a flag, not a queue. RAM's (`.bss`), not a section of
 /// bank 2's.
 #[cfg(feature = "midi-map")]
-static MAPS_ASKED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+mod maps_asked {
+    /// The unit's one editor: a static.
+    #[cfg(target_os = "none")]
+    static ASKED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    #[cfg(target_os = "none")]
+    #[inline(always)]
+    pub(super) fn get() -> bool {
+        ASKED.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(target_os = "none")]
+    #[inline(always)]
+    pub(super) fn set(v: bool) {
+        ASKED.store(v, core::sync::atomic::Ordering::Relaxed)
+    }
+
+    // A host's: each thread its own (a test is a thread with its own
+    // box; another's ask is never this one's: #1053's class), as the
+    // desktop runs its console and UI on one.
+    #[cfg(not(target_os = "none"))]
+    extern crate std;
+    #[cfg(not(target_os = "none"))]
+    std::thread_local!(static ASKED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) });
+
+    #[cfg(not(target_os = "none"))]
+    pub(super) fn get() -> bool {
+        ASKED.with(core::cell::Cell::get)
+    }
+
+    #[cfg(not(target_os = "none"))]
+    pub(super) fn set(v: bool) {
+        ASKED.with(|a| a.set(v))
+    }
+}
 
 /// `ed maps` in the UI pass: the listing asked of the next card work,
 /// once no map job waits (the act waits until then).
@@ -368,7 +402,7 @@ pub(crate) fn ask_maps(ui: &UiState) -> Pass {
     if ctl_job(ui).is_some() {
         return Pass::Wait;
     }
-    MAPS_ASKED.store(true, core::sync::atomic::Ordering::Relaxed);
+    maps_asked::set(true);
     Pass::Done
 }
 
@@ -377,7 +411,7 @@ pub(crate) fn ask_maps(ui: &UiState) -> Pass {
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.ctl_due"))]
 pub(crate) fn ctl_due(ui: &UiState) -> bool {
-    ui.ctl_due_in() || MAPS_ASKED.load(core::sync::atomic::Ordering::Relaxed)
+    ui.ctl_due_in() || maps_asked::get()
 }
 
 /// The door's `ctl_work`: the layers' (`ctl_work_in`: a job, a stale
@@ -392,11 +426,10 @@ pub(crate) fn ctl_work(
 ) {
     use crate::midi_map::ctl::{self, MAX_MAPS};
     use chimera_hal::store::StoreError;
-    use core::sync::atomic::Ordering;
-    let asked = MAPS_ASKED.load(Ordering::Relaxed);
+    let asked = maps_asked::get();
     let (Some(r), true, false) = (r, asked, ui.ctl_due_in()) else {
         if r.is_none() {
-            MAPS_ASKED.store(false, Ordering::Relaxed);
+            maps_asked::set(false);
         }
         return ui.ctl_work_in(s, r);
     };
@@ -406,7 +439,7 @@ pub(crate) fn ctl_work(
     c.more = matches!(got, Ok((_, true)));
     c.listed = !matches!(got, Err(StoreError::Busy));
     if c.listed {
-        MAPS_ASKED.store(false, Ordering::Relaxed);
+        maps_asked::set(false);
     }
 }
 
@@ -738,5 +771,21 @@ mod tests {
         assert_eq!(CellSlot::new(5), Some(CellSlot(5)));
         assert_eq!(CellSlot::new(6), None);
         assert_eq!(CellSlot::new(usize::MAX), None);
+    }
+}
+
+#[cfg(all(test, feature = "midi-map"))]
+mod asked_tests {
+    extern crate std;
+
+    /// Another thread's `ed maps` (another test's box) is not this one's
+    /// to list (#1053's class: it took this test's listing).
+    #[test]
+    fn another_threads_ask_is_not_this_ones() {
+        super::maps_asked::set(false);
+        std::thread::spawn(|| super::maps_asked::set(true))
+            .join()
+            .unwrap();
+        assert!(!super::maps_asked::get());
     }
 }
