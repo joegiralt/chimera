@@ -415,8 +415,10 @@ impl Renderer {
             }
             VizType::CompressorCurve => {
                 use crate::dsp::comp::RATIOS;
-                let ratio = RATIOS[((a(1) * 7.0 + 0.5) as usize).min(RATIOS.len() - 1)];
-                viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db);
+                let last = RATIOS.len() - 1;
+                let ratio = RATIOS[((a(1) * last as f32 + 0.5) as usize).min(last)];
+                let key = f.fx.comp.key.name();
+                viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db, key);
             }
             VizType::About => crate::ui::about_page::draw_viz(display, f.bank2.as_ref()),
             VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
@@ -453,10 +455,14 @@ impl Renderer {
             && let Some(h) = f.pickup
         {
             hint::draw(display, h, theme::MARGIN_X, theme::BIGVIZ_STATUS_Y);
-        } else if let Some(h) = f.point().or_else(|| match Self::band(f) {
-            (pad, true) => Some(pad),
-            (_, false) => None,
-        }) {
+        } else if let Some(h) = f
+            .point()
+            .or_else(|| match Self::band(f) {
+                (pad, true) => Some(pad),
+                (_, false) => None,
+            })
+            .or_else(|| Self::key_hint(f))
+        {
             // Pointing's, or a pad cell's (MIX + -/+ steps the pad, and SEQ
             // + turn is fine), said where the band would, on the status
             // line's own backing (`viz_status`'s).
@@ -1027,6 +1033,14 @@ impl Renderer {
     /// two never fit together); a cell's own words stay.
     pub fn focus_hint(f: &Frame) -> hint::Hint {
         Self::band(f).0
+    }
+
+    /// What MST's status line says of KEY's choice while its cell is
+    /// touched (ADR 0303): bank 2's (`notes::key`); closed, nothing.
+    fn key_hint(f: &Frame) -> Option<hint::Hint> {
+        let mut out = None;
+        crate::bank2::ui_door(|u| u.notes(crate::ui::notes::Ask::Key(f, &mut out)));
+        out
     }
 
     /// The focus band's hint, and whether its cell is a pad's (its words

@@ -6,24 +6,28 @@
 //! envelope stages' names in the focus label, RATE SCALE's words and
 //! DECAY 1 LEVEL's under a held decay, the ratio CRSE, FINE and DETUN
 //! come to, the chart's feedback loops; ALGO PAGES' operator-first
-//! chains (ADR 0300).
+//! chains (ADR 0300). The compressor's KEY (ADR 0303): what each choice
+//! listens to, on MST's status line.
 
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::ParamId;
+use crate::comp_key::{CompKey, KEY_NAMES, KEYS};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::{kinds, tx};
+use crate::dsp::comp::CompParams;
 use crate::dsp::reverb::ReverbParams;
 use crate::modulation::{FixedCol, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
 use crate::project::Line;
 use crate::ui::alg_layout::AlgLayout;
-use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2};
+use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, SlotBinding};
 use crate::ui::block_registry as reg;
 use crate::ui::fmt::{FmtBuf, fixed};
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
+use crate::ui::renderer::Frame;
 use crate::ui::tape_strip::Paint;
 use crate::ui::theme;
 use embedded_graphics::pixelcolor::Rgb565;
@@ -60,6 +64,8 @@ pub enum Ask<'a> {
         formant: bool,
         out: &'a mut Option<&'static ChainDef2>,
     },
+    /// `key`: KEY's hint on the frame's status line.
+    Key(&'a Frame<'a>, &'a mut Option<Hint>),
 }
 
 /// The page an operator's cell is on: one parameter across OP1-OP6, the
@@ -88,6 +94,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
             links,
         } => loops(on, algo, at, &links),
         Ask::OpsChain { formant, out } => *out = Some(ops_chain(formant)),
+        Ask::Key(f, out) => *out = key(f),
     }
 }
 
@@ -114,12 +121,17 @@ enum W {
     Ratio,
     Detune,
     Cents,
+    KeyFull,
+    KeyLow,
+    KeyHigh,
+    KeyHit,
+    KeyPart,
 }
 
 /// Each word with its text, in `W`'s order (checked below): one table, so
 /// a word and its text can't part. Read only at compile time: the bytes
 /// reach the build through `WORDS` alone.
-const TABLE: [(W, &str); 19] = [
+const TABLE: [(W, &str); 24] = [
     (W::Vca, "VCA:"),
     (W::Replaces, "ROUTES REPLACE CONTOUR"),
     (W::SumStarts, "SUM STARTS AT AMP BASE"),
@@ -139,6 +151,11 @@ const TABLE: [(W, &str); 19] = [
     (W::Ratio, "RATIO "),
     (W::Detune, ", DETUNE "),
     (W::Cents, " CENTS"),
+    (W::KeyFull, "HEARS THE WHOLE MIX"),
+    (W::KeyLow, "THE KICK PUMPS THE MIX"),
+    (W::KeyHigh, "HEARS ALL BUT THE BASS"),
+    (W::KeyHit, "EVERY HIT PUSHES IT ALIKE"),
+    (W::KeyPart, "DUCKS ALL BUT ITSELF"),
 ];
 
 // Row `i` is word `i`: `word` indexes the table by `W`.
@@ -517,6 +534,38 @@ pub fn ops_chain(formant: bool) -> &'static ChainDef2 {
     }
 }
 
+/// What each of KEY's choices listens to (ADR 0303), by its code: the
+/// choice's name, then what it does to the mix.
+static KEY_HINTS: [[Gesture<'static>; 1]; KEYS] = {
+    let mut h = [[Gesture("", "")]; KEYS];
+    let mut c = 0;
+    while c < KEYS {
+        let does = match CompKey::ALL[c] {
+            CompKey::Full => word(W::KeyFull),
+            CompKey::Low => word(W::KeyLow),
+            CompKey::High => word(W::KeyHigh),
+            CompKey::Hit => word(W::KeyHit),
+            CompKey::Part(_) => word(W::KeyPart),
+        };
+        h[c] = [Gesture(KEY_NAMES[c], does)];
+        c += 1;
+    }
+    h
+};
+
+/// `key`'s hint.
+pub fn key_hint(key: CompKey) -> Hint {
+    &KEY_HINTS[usize::from(key.code())]
+}
+
+/// MST's status line while KEY's cell is the one touched: what its
+/// choice listens to. None on any other cell or page, or with HINTS off.
+pub fn key(f: &Frame<'_>) -> Option<Hint> {
+    const KEY: ParamAddr = ParamAddr::new(BlockRef::Comp, CompParams::KEY);
+    let on_key = matches!(f.def.params.get(f.focus)?.binding, SlotBinding::Param(a) if a == KEY);
+    (on_key && f.hints).then(|| key_hint(f.fx.comp.key))
+}
+
 /// The matrix's hint on `m`'s cursor in the VCA column, on a cell with no
 /// route (a route's own cell keeps its DELETE): the routes replace the
 /// engine's contour, or, with an ENV among them, they start at BASE.
@@ -576,7 +625,7 @@ mod tests {
         assert_eq!(op_name(AlgoOpParams::LEVEL), None);
         assert_eq!(RATE_SCALE, "HIGH NOTES, FASTER ENVELOPES");
         assert_eq!(D1_HOLDS, "DECAY 1 RATE 0: NEVER REACHED");
-        assert_eq!(WORDS.len(), 181 + 68 + 57 + 21);
+        assert_eq!(WORDS.len(), 181 + 68 + 57 + 21 + 108);
         assert_eq!(
             STEREO_WIDTH.as_ptr(),
             WORDS[151..].as_ptr(),

@@ -655,9 +655,10 @@ fn the_tape_page_is_drive_tone_wow_mix() {
     assert_eq!((perf.fx.tape.drive, perf.fx.tape.mix), (0.5, 0.25));
 }
 
-/// FX diet spec § UI: MST binds THRESH, RATIO, ATK, REL, MAKEUP, MIX; the
-/// legacy VOL and PAN sit on MST › LEVEL (an assumed default, pending the
-/// owner); MST ends both Mix chains.
+/// FX diet spec § UI, ADR 0303: MST binds THRESH, RATIO, ATK, REL, KEY,
+/// MIX; the legacy VOL and PAN sit on MST › LEVEL (an assumed default,
+/// pending the owner) with the compressor's MAKEUP; MST ends both Mix
+/// chains.
 #[test]
 fn the_master_page_is_the_compressor_with_level_below() {
     use chimera_core::dsp::comp::CompParams as C;
@@ -669,12 +670,13 @@ fn the_master_page_is_the_compressor_with_level_below() {
             at(C::RATIO),
             at(C::ATTACK),
             at(C::RELEASE),
-            at(C::MAKEUP),
+            at(C::KEY),
             at(C::MIX)
         ]
     );
     let labels: Vec<&str> = reg::MASTER_LEVEL.params.iter().map(|s| s.label()).collect();
-    assert_eq!(labels[..2], ["VOL", "PAN"]);
+    assert_eq!(labels[..3], ["VOL", "PAN", "MAKEUP"]);
+    assert_eq!(bound(&reg::MASTER_LEVEL)[2], at(C::MAKEUP));
     let chain = &reg::MIXER_CHANNEL_CHAIN;
     let last = chain.blocks.last().unwrap();
     assert_eq!(last.def.id, reg::MASTER.id, "{}", chain.name);

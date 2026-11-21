@@ -2179,6 +2179,12 @@ pub const CASES: &[ScreenCase] = &[
         to_fx(ui, MST);
         feed(ui, Input::press(ButtonId::Edit)); // MST › LEVEL
     }),
+    // KEY at LOW (ADR 0303): named under the curve, its hint over it.
+    ("mixer_master_key", |ui| {
+        to_fx(ui, MST);
+        feed(ui, Input::turn(EncoderId::B, 6)); // RATIO 10:1
+        feed(ui, Input::turn(EncoderId::E, 1)); // KEY LOW
+    }),
     // Part 1 on P2: the OUT warning on its mixer (ADR 0057).
     ("mixer_out_p2", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
