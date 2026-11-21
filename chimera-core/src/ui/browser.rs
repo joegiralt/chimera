@@ -201,11 +201,11 @@ pub const CLEAR_Y: i32 = 282;
 pub const INFO_Y: i32 = 300;
 /// The pool meter's top, under its percentage.
 pub const METER_Y: i32 = 306;
-/// A row's cost, right-aligned short of its engine tag.
-const COST_RIGHT: i32 = 184;
+/// A row's cost, right-aligned clear of the widest engine tag (#640).
+const COST_RIGHT: i32 = TAG_RIGHT - TAG_ROOM - 3;
 /// Where a row's name starts, and its clearance from the cost or tag.
 const NAME_X: i32 = 52;
-const NAME_GAP: i32 = 6;
+const NAME_GAP: i32 = 4;
 /// The engine tag's right edge.
 pub const TAG_RIGHT: i32 = 223;
 /// The widest engine tag, `MODAL`.
@@ -929,5 +929,28 @@ where
         (true, _) => draw::text_right(d, &theme::FONT_LABEL, SOON_TAG, TAG_RIGHT, y, dim, 0),
         (false, Some(engine)) => tag(d, engine, y, dim),
         (false, None) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{COST_RIGHT, TAG_RIGHT, TAG_ROOM};
+    use crate::params::EngineType;
+    use crate::ui::{components, draw, theme};
+
+    /// #640: every engine tag fits its room, and a row's cost stops clear
+    /// of the widest (`0.3KMODAL` had no gap).
+    #[test]
+    fn a_cost_stops_clear_of_every_tag() {
+        for e in EngineType::ALL {
+            let label = components::upper(e.label());
+            let w = draw::text_width(&theme::FONT_LABEL, label.as_str(), 0);
+            assert!(w <= TAG_ROOM, "{e:?} {w}px over {TAG_ROOM}");
+            assert!(
+                COST_RIGHT + 3 <= TAG_RIGHT - w,
+                "{e:?}: cost ends {COST_RIGHT}, tag starts {}",
+                TAG_RIGHT - w
+            );
+        }
     }
 }
