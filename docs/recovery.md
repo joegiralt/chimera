@@ -25,7 +25,7 @@ Ixox's own update mechanism and instructions, and Chimera rides on it (ADR
   `~/chimera-backups/`.
 
 If Ixox ships a new bootloader (a PreenFM3 2.0, say), Chimera follows it:
-check it against Chimera on a unit, then update this page and the hash.
+check it against Chimera on a unit, then update this page.
 
 ## Taking a backup
 

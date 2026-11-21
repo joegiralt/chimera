@@ -10,7 +10,7 @@ The repo tracked `preenfm3-bootloader-backup.bin`, a 128 KB dump of an older sto
 ## Decision
 - The bootloader is Ixox's software, with Ixox's own update mechanism and instructions. Chimera rides on it and does not carry a copy: the binary is removed from the tree (it stays in the private history).
 - `docs/recovery.md` points to the exact image Chimera expects, `p3_boot_1_09.bin` in the stock v1.03 release's `pfm3_firmware_1_03.zip` (https://github.com/Ixox/preenfm3/releases/tag/v1.03), the one the owner's unit runs, with the `bootloader/` source and Ixox's instructions for installing or restoring it. `just backup-bootloader` still reads a local copy off the user's own unit. The removed file was 1.05, older than what Chimera requires, so it was not a valid restore image for 1.09 anyway.
-- Chimera expects bootloader 1.09 (the owner's rule). If Ixox releases a new bootloader (a PreenFM3 2.0 is expected), Chimera follows it: it is checked against Chimera on a unit, then the recovery page and the hash are updated.
+- Chimera expects bootloader 1.09 (the owner's rule). If Ixox releases a new bootloader (a PreenFM3 2.0 is expected), Chimera follows it: it is checked against Chimera on a unit, then the recovery page is updated.
 
 ## Consequences
 - `THIRD_PARTY.md` no longer lists the file; `just release`'s private-file guard no longer names it.
