@@ -604,6 +604,9 @@ check $CHIMERA_STAMP_CLEAN="1":
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
+    # The fuzz targets compile, so none rots unnoticed (#505).
+    cargo check --manifest-path chimera-core/fuzz/Cargo.toml --bins
+    cargo check --manifest-path chimera-desktop/fuzz/Cargo.toml --bins
     # The default build in release too: with TAPE its dev build passes FLASH (#303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     # Every other feature set in release: a build check, not a debug flash;

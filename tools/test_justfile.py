@@ -208,3 +208,11 @@ class TargetDir(unittest.TestCase):
             for l in body:
                 self.assertNotIn("target/thumbv7em-none-eabihf", l, name)
 
+
+
+class Fuzz(unittest.TestCase):
+    def test_check_compiles_every_fuzz_crate(self):
+        # #505: a target that no longer compiles fails `check`, not the next fuzz run.
+        body = "\n".join(recipes()["check"])
+        for crate in sorted(p.parent.relative_to(ROOT) for p in ROOT.glob("*/fuzz/Cargo.toml")):
+            self.assertIn("cargo check --manifest-path %s/Cargo.toml --bins" % crate, body)
