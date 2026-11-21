@@ -38,7 +38,7 @@ Measured after (release, clean stamp): `bench-algo` D2 free 9,032 B (was 16), AX
 - **`ed set` snaps stepped params (#1055):** the editor snapping costs no flash, and `ed set` stays the exact console path ADR 0301 made it.
 
 ## Consequences
-- Bank 1 grows by the closed word, the engine compare and the drop's store: `default` +64 B, `orbit` +48 B over their lines at 0.4 26465c7aa; bank 2 `default` +32 B, `orbit` -32 B (`ed since` reads its clock once). The other sets' lines are set to their measured values.
+- Bank 1 grows by the closed word, the engine compare and the drop's store: `default` +64 B, `orbit` +32 B over their lines at 0.4 26465c7aa, the bench sets +80 to +168 B (bench-algo's report buffer among them); bank 2 `default` +96 B, `orbit` +32 B, `bank2-gate` +128 B (the drop inlined into `ed`'s cues, `ed since`'s clock). Every set's line is set to its measured value under this ADR.
 - **#1053:** `midi_map::maps_put` is a thread-local on a host (each test a thread, its own card's count), the static atomic on the unit unchanged. `controller_page_test`'s mutex, which serialised the tests that moved it, is gone.
 - **#1055:** the editor stores a linear param on its own steps from its bottom (a turn's grid; DELAY's note is then always a note's index), its top always reachable; an octave param (CUTOFF) has no grid to land on and keeps its four-decimal place. `ed set` still stores what it is given.
 - **#1059:** `ed since` reads the synced cells' clock once an answer (`Reading.clock`), so MIXER's commit writes what its measure counted; `QuarterBpm::of`; MIXER's clock is `Option` (no zero sentinel); `reverb_variant` a total match; a test holds PART's texts the same under FREE and SYNC on every engine.
