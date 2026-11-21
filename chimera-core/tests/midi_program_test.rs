@@ -15,7 +15,7 @@ use chimera_core::MidiChannel;
 use chimera_core::midi_in::{CtrlEvent, PROGRAM_PENDING, Port};
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::{Origin, PartFrom, PartId, PartStatus, SlotId, part_status};
+use chimera_core::project::{Origin, PartFrom, PartId, SlotId, SoundStatus, sound_status};
 use chimera_core::ui::UiState;
 use chimera_core::ui::midi_settings::MidiSettings;
 use chimera_hal::{ButtonId, Ms};
@@ -79,8 +79,8 @@ fn from(ui: &UiState, p: PartId) -> PartFrom {
     }
 }
 
-fn status(ui: &UiState, p: PartId) -> PartStatus {
-    part_status(ui.project().part(p), ui.project().pool())
+fn status(ui: &UiState, p: PartId) -> SoundStatus {
+    sound_status(ui.project().part(p), ui.project().pool())
 }
 
 fn edit(ui: &mut UiState, p: PartId) {
@@ -98,7 +98,7 @@ fn bank_0_loads_the_pool_slot_into_every_part_on_the_channel() {
     pass(&mut ui, &[prog(2, None, 1)]);
     for p in [P[0], P[1]] {
         assert_eq!(from(&ui, p), PartFrom::Slot(SlotId::ALL[1]), "{p:?}");
-        assert_eq!(status(&ui, p), PartStatus::Clean);
+        assert_eq!(status(&ui, p), SoundStatus::Clean);
     }
     assert_eq!(from(&ui, P[2]), third, "another channel's Part stays");
     assert_eq!(
@@ -152,9 +152,9 @@ fn noops_cost_nothing() {
     ui.set_midi(MidiSettings::DEFAULT.with_program_in(true));
     let s = sound(EngineType::Va, "NEWER");
     ui.project_mut().pool_store(SlotId::ALL[0], &s).unwrap();
-    assert!(matches!(status(&ui, P[0]), PartStatus::Stale(_)));
+    assert!(matches!(status(&ui, P[0]), SoundStatus::Stale(_)));
     pass(&mut ui, &[prog(2, None, 0)]);
-    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Clean);
     assert_eq!(ui.project().part(P[0]).sound.name.as_str(), "NEWER");
 }
 
@@ -170,12 +170,12 @@ fn an_edited_part_keeps_its_edits_for_its_return() {
     pass(&mut ui, &[prog(3, None, 2)]);
     assert!(!ui.prompt_open());
     assert_eq!(from(&ui, P[2]), PartFrom::Slot(SlotId::ALL[2]));
-    assert_eq!(status(&ui, P[2]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[2]), SoundStatus::Clean);
     // Back: the edits, still marked edited.
     pass(&mut ui, &[prog(3, None, 0)]);
     assert_eq!(from(&ui, P[2]), PartFrom::Slot(SlotId::ALL[0]));
     assert_eq!(cutoff(&ui, P[2]), edited);
-    assert_eq!(status(&ui, P[2]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[2]), SoundStatus::Edited);
     // Out, through another clean slot, and back: still there.
     pass(&mut ui, &[prog(3, None, 2)]);
     pass(&mut ui, &[prog(3, None, 1)]);
@@ -197,7 +197,7 @@ fn edits_swap_between_two_slots() {
     assert_eq!(cutoff(&ui, P[2]), a);
     pass(&mut ui, &[prog(3, None, 2)]);
     assert_eq!(cutoff(&ui, P[2]), b);
-    assert_eq!(status(&ui, P[2]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[2]), SoundStatus::Edited);
 }
 
 /// Any other load of the Part (RELOAD, the browser) drops its recall copy.
@@ -211,7 +211,7 @@ fn another_load_drops_the_recall_copy() {
     screen::init_part(&mut ui, P[2]);
     pass(&mut ui, &[prog(3, None, 0)]);
     assert_eq!(cutoff(&ui, P[2]), clean);
-    assert_eq!(status(&ui, P[2]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[2]), SoundStatus::Clean);
 }
 
 #[test]
@@ -336,9 +336,27 @@ fn a_refused_load_leaves_the_part_as_it_was() {
     pass(&mut ui, &[prog(3, None, 2)]);
     assert_eq!(from(&ui, P[2]), PartFrom::Slot(SlotId::ALL[0]));
     assert_eq!(cutoff(&ui, P[2]), edited);
-    assert_eq!(status(&ui, P[2]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[2]), SoundStatus::Edited);
     // No copy was kept: slot 2 and back, the slot as saved.
     pass(&mut ui, &[prog(3, None, 1)]);
     pass(&mut ui, &[prog(3, None, 0)]);
     assert_eq!(cutoff(&ui, P[2]), edited, "slot 1's change kept them");
+}
+
+/// #949: a DRUM Part's kit stays on the Part through a program change, so
+/// a kit edit is no reason to drop one.
+#[test]
+fn a_kit_edit_never_drops_a_program_change() {
+    use chimera_core::dsp::drum::types::{Machine, PadId};
+    let mut ui = rig();
+    screen::load_init(&mut ui, EngineType::Drum);
+    assert_eq!(from(&ui, P[0]), PartFrom::Init(EngineType::Drum));
+    ui.project_mut()
+        .kit_mut(P[0])
+        .pad_mut(PadId::ALL[0])
+        .set_machine(Machine::PlainSine);
+    let kit = *ui.project().kit(P[0]);
+    pass(&mut ui, &[prog(2, None, 1)]);
+    assert_eq!(from(&ui, P[0]), PartFrom::Slot(SlotId::ALL[1]));
+    assert_eq!(*ui.project().kit(P[0]), kit, "the kit stays on the Part");
 }

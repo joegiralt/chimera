@@ -211,7 +211,7 @@ pub fn full_dense_slots(n: usize) -> (Box<Project>, TemplateCrc) {
 
 /// Panics with the first difference: the names, each slot (its bytes),
 /// each Part's Sound (`bits_eq`), mix, kit, Origin (slot and CRC, or engine;
-/// never the generation) and `part_status`, the FX, ORBIT, then
+/// never the generation) and `sound_status`, the FX, ORBIT, then
 /// `project_crc`.
 pub fn same(a: &Project, b: &Project) {
     assert_eq!(a.meta().name(), b.meta().name(), "project name");
@@ -250,11 +250,8 @@ pub fn same(a: &Project, b: &Project) {
             ) => assert_eq!((s1, c1), (s2, c2), "Part {n} origin"),
             (o1, o2) => assert_eq!(o1, o2, "Part {n} origin"),
         }
-        assert_eq!(
-            part_status(x, a.pool()),
-            part_status(y, b.pool()),
-            "Part {n} status"
-        );
+        let id = PartId::ALL[n];
+        assert_eq!(part_status(a, id), part_status(b, id), "Part {n} status");
     }
     assert_eq!(a.perf().fx, b.perf().fx, "FX");
     assert_eq!(a.orbit(), b.orbit(), "ORBIT");

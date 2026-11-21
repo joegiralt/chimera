@@ -10,7 +10,8 @@ use core::marker::PhantomData;
 use crate::boot::RomDfu;
 use crate::orbit::RINGS;
 use crate::project::{
-    DeleteTarget, LibraryPart, OverwriteTarget, PartSource, ProjectSource, SceneSlot, Witnessed,
+    DeleteTarget, LibraryKit, LibraryPart, OverwriteTarget, PartSource, ProjectSource, SceneSlot,
+    Witnessed,
 };
 
 /// A key's press: a tap acts on release, a hold fires once while down.
@@ -82,6 +83,11 @@ answers!(LoadAnswer { SaveThenLoad, LoadAnyway, Cancel } Three);
 answers!(ReplaceAnswer { SavePartFirst, Replace, Cancel } Three);
 answers!(ReloadAnswer { SavePartFirst, Reload, Cancel } Three);
 answers!(LibraryAnswer { SavePartFirst, Replace, Cancel } Three);
+answers!(
+    /// A library load over a kit in no library file (ADR 0305): no save
+    /// first, as no slot holds a kit.
+    KitAnswer { Replace, Cancel } Two, start 1
+);
 answers!(
     /// `Update`'s pill names the Parts: `UPDATE P4`, `UPDATE ALL`.
     AlsoUsesAnswer { Update, Leave } Two
@@ -185,6 +191,7 @@ commits!(
     ReplaceAnswer => Replace, PartSource;
     ReloadAnswer => Reload, PartSource;
     LibraryAnswer => Replace, LibraryPart;
+    KitAnswer => Replace, LibraryKit;
     LoadAnswer => LoadAnyway, ProjectSource;
     DeleteAnswer => Delete, DeleteTarget;
     ClearAnswer => Clear, OverwriteTarget;

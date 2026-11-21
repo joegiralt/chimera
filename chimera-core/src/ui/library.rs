@@ -12,9 +12,9 @@ use chimera_hal::store::{Dir, Store, StoreError, VolumeId};
 use crate::in_place::uninit_at;
 use crate::name::SoundName;
 use crate::project::{
-    AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibRead, LibraryPart, Line, PageAt,
-    PartId, PartSet, ReplaceError, ReplaceGuard, Shelf, SlotId, SourceNeed, Staged, list_library,
-    peek_note, read_library_sound, save_library_part,
+    AdoptError, CardOut, Confirmed, LibEntry, LibNote, LibPage, LibraryKit, LibraryPart, Line,
+    PageAt, PartId, PartSet, ReadPart, ReplaceError, ReplaceGuard, Shelf, SlotId, SourceNeed,
+    Staged, list_library, peek_note, read_library_sound, save_library_part,
 };
 use crate::storage::{
     BuildStamp, Card, FactoryId, LibId, LibKind, Note, held_for_file_len, source_file,
@@ -25,8 +25,9 @@ use crate::ui::browser::Browse;
 use crate::ui::busy::Toast;
 use crate::ui::nav::{ListAt, Location};
 use crate::ui::settings::job::Job;
+use crate::ui::settings::part::Offer;
 use crate::ui::settings::prompt;
-use crate::ui::settings::replace::LibraryAsk;
+use crate::ui::settings::replace::{LibraryAsk, LibraryReply, Reply};
 use crate::ui::settings::{Ask, NamingFor, PART_ROW, SAVE_TO_LIB_ROW};
 use crate::ui::source_cell::{READ_FAILED, SOURCE_MISSING, SourceLoad, SourceNote, StagedStep};
 
@@ -72,12 +73,11 @@ impl BrowserTab {
     }
 }
 
-/// A library load between its read and `adopt`: the confirmation and
-/// what the read said. Its source streams in the SOURCE cell's job slot
+/// A library load between its read and `adopt`: the read, which holds
+/// its confirmation. Its source streams in the SOURCE cell's job slot
 /// (`SourceCell::hold`), which it shares, as the two never stream at once.
 pub(crate) struct PendingLoad {
-    pub go: Confirmed<LibraryPart>,
-    pub read: LibRead,
+    pub read: ReadPart,
 }
 
 /// The selected FACTORY row's description, peeked on its own: the one
@@ -337,8 +337,50 @@ impl UiState {
         };
         let src = LibraryPart { part, file };
         match ReplaceGuard::check(&self.project, self.template, src) {
-            Ok(c) => self.queue(Job::LibraryLoad(c)),
+            Ok(c) => {
+                self.library_go(c);
+            }
             Err(n) => self.ask(Ask::LoadLibrary(LibraryAsk::new(n))),
+        }
+    }
+
+    /// A library load whose Sound question is settled: its kit's (ADR
+    /// 0305), asked if the load would lose one, then the load queued.
+    /// Whether it was queued.
+    #[inline(never)]
+    pub(crate) fn library_go(&mut self, c: Confirmed<LibraryPart>) -> bool {
+        match ReplaceGuard::kit(&self.project, self.template, c) {
+            Ok(k) => {
+                self.queue(Job::LibraryLoad(k));
+                true
+            }
+            Err(n) => {
+                self.ask(Ask::LoadLibrary(LibraryAsk::kit(n)));
+                false
+            }
+        }
+    }
+
+    /// A library load's prompt, answered: the Sound's question (REPLACE
+    /// goes on to the kit's, SAVE PART FIRST saves then asks again) or
+    /// the kit's (REPLACE queues the load). Out of line: the prompts'
+    /// dispatch holds one arm for both.
+    #[inline(never)]
+    pub(crate) fn library_answered(&mut self, r: LibraryReply) {
+        match r {
+            LibraryReply::Sound(Reply::Confirmed(c)) => {
+                self.library_go(c);
+            }
+            LibraryReply::Sound(Reply::SaveFirst(ask)) => self.save_first(
+                ask,
+                Offer::first_save,
+                |x| Ask::LoadLibrary(LibraryAsk::Sound(x)),
+                UiState::queue_library,
+            ),
+            LibraryReply::Sound(Reply::Cancel) => {}
+            LibraryReply::Kit(Some(k)) => self.queue(Job::LibraryLoad(k)),
+            // What SAVE PART FIRST left Stale is asked now.
+            LibraryReply::Kit(None) => self.lib_ended(),
         }
     }
 
@@ -368,8 +410,10 @@ impl UiState {
     /// SAVE PART FIRST's confirmed load queued; the Stale Parts it left
     /// are asked about once it ends. Refused, they are asked now.
     pub(crate) fn queue_library(&mut self, c: Confirmed<LibraryPart>, stale: Option<Ask>) {
-        self.queue(Job::LibraryLoad(c));
-        match (self.job.is_some(), stale) {
+        // The kit's question open: the Stale Parts wait for its answer
+        // too (a CANCEL asks them, `lib_ended`).
+        let waits = !self.library_go(c) || self.job.is_some();
+        match (waits, stale) {
             (true, s) => self.lib.after = s.and_then(|a| a.stale_parts()),
             (false, Some(a)) => self.ask(a),
             (false, None) => {}
@@ -377,7 +421,7 @@ impl UiState {
     }
 
     /// A load over, whatever its outcome: what SAVE PART FIRST left Stale.
-    fn lib_ended(&mut self) {
+    pub(crate) fn lib_ended(&mut self) {
         if self.lib.busy() {
             return;
         }
@@ -430,9 +474,11 @@ impl UiState {
             save_library_part(card, store, p, part, name, &about_page::THIS);
         self.saw(event);
         match out {
-            Ok(id) => {
-                // Saved as it sounds: CC 64 is this Sound now (ADR 0263).
-                self.project.reset_shift(part);
+            Ok(saved) => {
+                let id = saved.id();
+                // Saved as it sounds: CC 64 is this Sound now (ADR 0263),
+                // and the kit its file holds is its mark (ADR 0305).
+                self.project.library_saved(saved);
                 self.toast.show(Toast {
                     text: Line::new(SAVED),
                     ms: Toast::SAVED_MS,
@@ -470,31 +516,37 @@ impl UiState {
         &mut self,
         card: &mut Card,
         store: &mut S,
-        go: Confirmed<LibraryPart>,
+        go: Confirmed<LibraryKit>,
     ) {
         self.lib_read(card, store, go);
         self.lib_ended();
     }
 
     #[inline(never)]
-    fn lib_read<S: Store>(&mut self, card: &mut Card, store: &mut S, go: Confirmed<LibraryPart>) {
-        let file = go.target().file;
-        let CardOut { out, event } = read_library_sound(card, store, &mut self.project, file);
+    fn lib_read<S: Store>(&mut self, card: &mut Card, store: &mut S, go: Confirmed<LibraryKit>) {
+        let vol = go.target().file().vol;
+        let CardOut { out, event } = read_library_sound(card, store, &mut self.project, go);
         self.saw(event);
+        // The read is held in the one place, `lib.load`, until `lib_adopt`
+        // takes it.
         let read = match out {
-            Ok(r) => r,
+            Ok(r) => {
+                let read = r.read();
+                self.lib.load = Some(PendingLoad { read: r });
+                read
+            }
             Err(n) => return self.lib_note(n),
         };
         if let Err(f) = self.project.library_needs(read.source) {
+            self.lib.load = None;
             return self.refuse(f);
         }
         let Some(need) = read.source.filter(SourceNeed::readable) else {
-            let staged = read.source.map(|n| Staged::Missing(n.r));
-            return self.lib_adopt(go, read, staged);
+            return self.lib_adopt(read.source.map(|n| Staged::Missing(n.r)));
         };
-        match self.stream_size(card, store, file.vol, need) {
+        match self.stream_size(card, store, vol, need) {
             // Gone or changed since the read: it loads absent.
-            None => self.lib_adopt(go, read, Some(Staged::Missing(need.r))),
+            None => self.lib_adopt(Some(Staged::Missing(need.r))),
             Some(size) => match SourceLoad::start(&mut self.project, need.r.stem(), size) {
                 Some(stream) => {
                     debug_assert!(
@@ -502,9 +554,11 @@ impl UiState {
                         "a library load starts beside no SOURCE job"
                     );
                     self.src.hold(stream);
-                    self.lib.load = Some(PendingLoad { go, read });
                 }
-                None => self.error(Line::new(READ_FAILED)),
+                None => {
+                    self.lib.load = None;
+                    self.error(Line::new(READ_FAILED))
+                }
             },
         }
     }
@@ -541,9 +595,10 @@ impl UiState {
     /// One pass of a pending load's source: on its last chunk, `adopt`.
     #[inline(never)]
     pub(crate) fn lib_step<S: Store>(&mut self, card: &mut Card, store: &mut S) {
-        let Some(l) = self.lib.load.take() else {
+        let Some(l) = self.lib.load.as_ref() else {
             return;
         };
+        let source = l.read.read().source;
         let p = &mut self.project;
         let step = match self.src.staging() {
             Some(stream) => match card.run(store, |s, r| {
@@ -561,27 +616,32 @@ impl UiState {
             None => StagedStep::Failed(SourceNote::ReadFailed),
         };
         if step == StagedStep::More {
-            self.lib.load = Some(l);
             return;
         }
         self.src.unhold();
-        match (step, l.read.source) {
+        match (step, source) {
             // Committed as the read costed it: the bytes staged are its file's.
             (StagedStep::Staged(got), Some(need)) if got.r == need.r => {
-                self.lib_adopt(l.go, l.read, Some(Staged::Read(need)))
+                self.lib_adopt(Some(Staged::Read(need)))
             }
             (StagedStep::Failed(w), _) => self.error(Line::new(w.words())),
             _ => self.error(Line::new(READ_FAILED)),
         }
+        // Adopted or not, the read is spent.
+        self.lib.load = None;
         self.lib_ended();
     }
 
-    /// The scratch Sound adopted into the Part, then its pages and one
-    /// toast; a refusal changes nothing.
-    fn lib_adopt(&mut self, go: Confirmed<LibraryPart>, read: LibRead, staged: Option<Staged>) {
-        let part = go.target().part;
+    /// The held read's Sound adopted into the Part, then its pages and
+    /// one toast; a refusal changes nothing.
+    fn lib_adopt(&mut self, staged: Option<Staged>) {
+        // The held read, taken once: only `adopt` consumes it.
+        let Some(PendingLoad { read: r }) = self.lib.load.take() else {
+            return;
+        };
+        let (part, read) = (r.part(), r.read());
         let was = self.active_chain();
-        match self.project.adopt(go, staged) {
+        match self.project.adopt(r, staged) {
             Ok(a) => {
                 self.landed(part, was);
                 if matches!(staged, Some(Staged::Missing(_))) {
@@ -650,7 +710,7 @@ impl UiState {
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn start_pending_library_load_for_test(&mut self) {
-        use crate::project::{LibFile, LibSeen};
+        use crate::project::{LibFile, LibRead, LibSeen};
         let file = LibFile {
             id: LibId::new(1).expect("a user id"),
             vol: VolumeId {
@@ -661,6 +721,7 @@ impl UiState {
                 generation: None,
                 name: None,
             },
+            engine: None,
         };
         let target = LibraryPart {
             part: PartId::ALL[0],
@@ -670,13 +731,17 @@ impl UiState {
             Ok(c) => c,
             Err(n) => n.into_pending().anyway(&self.project),
         };
+        let go = match ReplaceGuard::kit(&self.project, self.template, go) {
+            Ok(c) => c,
+            Err(n) => n.into_pending().anyway(&self.project),
+        };
+        let read = LibRead {
+            skips: 0,
+            over: false,
+            source: None,
+        };
         self.lib.load = Some(PendingLoad {
-            go,
-            read: LibRead {
-                skips: 0,
-                over: false,
-                source: None,
-            },
+            read: ReadPart::for_test(&self.project, go, read),
         });
     }
 

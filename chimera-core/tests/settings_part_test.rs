@@ -6,7 +6,7 @@ mod screen;
 
 use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
-use chimera_core::project::{Line, PartId, PartStatus, SlotId, part_status, test_support};
+use chimera_core::project::{Line, PartId, SlotId, SoundStatus, sound_status, test_support};
 use chimera_core::storage::sound_crc;
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
@@ -35,8 +35,8 @@ fn edit(ui: &mut UiState, p: PartId) {
     ui.project_mut().edit_part(p).sound.params.filter.cutoff *= 0.5;
 }
 
-fn status(ui: &UiState, p: PartId) -> PartStatus {
-    part_status(ui.project().part(p), ui.project().pool())
+fn status(ui: &UiState, p: PartId) -> SoundStatus {
+    sound_status(ui.project().part(p), ui.project().pool())
 }
 
 fn crc(ui: &UiState, p: PartId) -> u32 {
@@ -195,25 +195,25 @@ fn update_applies_only_what_it_showed() {
         .filter
         .resonance;
     *r = if *r > 0.5 { 0.1 } else { 0.9 };
-    assert_eq!(status(&ui, P[3]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[3]), SoundStatus::Edited);
     let p4 = crc(&ui, P[3]);
     answer(&mut ui, 0); // UPDATE P4
     assert_eq!(crc(&ui, P[3]), p4, "edited since: refused");
     assert_eq!(crc(&ui, P[4]), p5, "not named: untouched");
-    assert_eq!(status(&ui, P[4]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[4]), SoundStatus::Edited);
 }
 
 #[test]
 fn save_over_then_update_stale() {
     let mut ui = saved_over();
-    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Clean);
     answer(&mut ui, 0); // UPDATE P4
-    assert_eq!(status(&ui, P[3]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[3]), SoundStatus::Clean);
     assert_eq!(crc(&ui, P[3]), crc(&ui, P[0]), "the new sound");
 
     let mut ui = saved_over();
     answer(&mut ui, 1); // LEAVE
-    assert_eq!(status(&ui, P[3]), PartStatus::Stale(S3));
+    assert_eq!(status(&ui, P[3]), SoundStatus::Stale(S3));
     assert_ne!(crc(&ui, P[3]), crc(&ui, P[0]));
 }
 
@@ -230,7 +230,7 @@ fn stale_part_offers_no_over_slot() {
     assert_eq!(o.look(PartCmd::Reload), RowLook::Normal, "UPDATE");
     tap(&mut ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
-    assert_eq!(status(&ui, P[3]), PartStatus::Stale(S3));
+    assert_eq!(status(&ui, P[3]), SoundStatus::Stale(S3));
     assert_eq!(crc(&ui, P[3]), was);
     assert_eq!(ui.project().pool().get(S3).unwrap().crc(), pool);
 }
@@ -251,7 +251,7 @@ fn reload_is_dimmed_until_there_is_something_to_revert() {
     part_row(&mut ui, P[0], 3); // RELOAD FROM PROJ
     tap(&mut ui, ButtonId::Edit);
     answer(&mut ui, 1); // REPLACE
-    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Clean);
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn reload_over_edits_asks_and_save_first_goes_to_a_new_slot() {
     assert_eq!(ui.project().pool().get(free).unwrap().crc(), edited);
     assert_eq!(ui.project().pool().get(S3).unwrap().crc(), slot);
     assert_eq!(crc(&ui, P[1]), slot, "reloaded");
-    assert_eq!(status(&ui, P[1]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[1]), SoundStatus::Clean);
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn a_stale_part_reloads_without_asking() {
     part_row(&mut ui, P[3], 3);
     tap(&mut ui, ButtonId::Edit);
     assert!(!ui.prompt_open());
-    assert_eq!(status(&ui, P[3]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[3]), SoundStatus::Clean);
     assert_eq!(crc(&ui, P[3]), crc(&ui, P[0]));
 }
 
@@ -333,7 +333,7 @@ fn clear_edited_part_asks_and_each_answer() {
     clear_asks(&mut ui);
     answer(&mut ui, 1); // REPLACE
     assert_eq!(crc(&ui, P[0]), init);
-    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Clean);
 
     let mut ui = UiState::new();
     let free = ui.project().pool().first_free().unwrap();
@@ -341,7 +341,7 @@ fn clear_edited_part_asks_and_each_answer() {
     answer(&mut ui, 0); // SAVE PART FIRST
     assert_eq!(ui.project().pool().get(free).unwrap().crc(), edited);
     assert_eq!(crc(&ui, P[0]), init);
-    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Clean);
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn rename_marks_the_part_edited() {
     tap(&mut ui, ButtonId::Edit);
     assert!(ui.naming().is_none());
     assert_ne!(ui.project().part(P[0]).sound.name, name);
-    assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Edited);
 }
 
 #[test]
@@ -573,7 +573,7 @@ mod midi_map {
         turn(&mut ui, EncoderId::B, 1);
         assert_eq!(cc_num(&map(&ui).entries()[0]), 75);
         assert_ne!(crc(&ui, P[0]), c0);
-        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+        assert_eq!(status(&ui, P[0]), SoundStatus::Edited);
 
         // Row 1, CC 63: PLUS skips the reserved 64.
         feed(&mut ui, Input::press(ButtonId::Plus));
@@ -596,7 +596,7 @@ mod midi_map {
             (5, 250)
         );
         assert_ne!(crc(&ui, P[0]), c1);
-        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+        assert_eq!(status(&ui, P[0]), SoundStatus::Edited);
     }
 
     fn cutoff_b(cc: u8) -> Binding {
@@ -626,7 +626,7 @@ mod midi_map {
         turn(&mut ui, EncoderId::C, 125);
         assert_eq!(map(&ui).entries()[0].span.min, 250);
         assert_eq!(text(&ui, 0).1, "250-245");
-        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+        assert_eq!(status(&ui, P[0]), SoundStatus::Edited);
         // Clamps, never wraps.
         turn(&mut ui, EncoderId::C, 127);
         assert_eq!(map(&ui).entries()[0].span.min, 255);
@@ -647,7 +647,7 @@ mod midi_map {
         answer(&mut ui, 0); // DELETE
         assert_eq!(map(&ui).len(), 1);
         assert_eq!(cc_num(&map(&ui).entries()[0]), 20);
-        assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+        assert_eq!(status(&ui, P[0]), SoundStatus::Edited);
     }
 
     #[test]
@@ -755,14 +755,14 @@ fn randomize_rolls_the_part_and_reload_undoes_it() {
     to_leaf(&mut ui, &["PART", "RANDOMIZE"]);
     feed(&mut ui, Input::turn(EncoderId::E, 1));
     assert!(ui.project().part(P[0]).sound.bits_eq(&one), "SEED 1");
-    assert_eq!(status(&ui, P[0]), PartStatus::Edited);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Edited);
     feed(&mut ui, Input::turn(EncoderId::E, 1));
     assert!(ui.project().part(P[0]).sound.bits_eq(&two), "SEED 2");
 
     part_row(&mut ui, P[0], 3); // RELOAD FROM PROJ
     tap(&mut ui, ButtonId::Edit);
     answer(&mut ui, 1); // REPLACE
-    assert_eq!(status(&ui, P[0]), PartStatus::Clean);
+    assert_eq!(status(&ui, P[0]), SoundStatus::Clean);
     assert_eq!(crc(&ui, P[0]), slot);
 }
 

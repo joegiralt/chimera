@@ -18,7 +18,7 @@ use super::tree::{Act, Kind, PART, ROOT, Row, Screen, row_at, rows};
 use crate::name::{ProjectName, SoundName};
 use crate::orbit::scene::{OrbitSong, SceneIdx, SceneSet};
 use crate::project::{
-    Line, Origin, PartId, PartStatus, Project, ProjectFile, ProjectStatus, SlotId, part_status,
+    Line, Origin, PartId, Project, ProjectFile, ProjectStatus, SlotId, SoundStatus, sound_status,
 };
 use crate::ui::components::HeaderStatus;
 use crate::ui::draw;
@@ -562,10 +562,10 @@ pub enum PartMark {
 impl PartMark {
     pub fn of(p: &Project, part: PartId) -> Self {
         let x = p.part(part);
-        match part_status(x, p.pool()) {
-            PartStatus::Clean => PartMark::Clean,
-            PartStatus::Stale(s) => PartMark::SlotMoved(s),
-            PartStatus::Edited => PartMark::Edited(match x.origin() {
+        match sound_status(x, p.pool()) {
+            SoundStatus::Clean => PartMark::Clean,
+            SoundStatus::Stale(s) => PartMark::SlotMoved(s),
+            SoundStatus::Edited => PartMark::Edited(match x.origin() {
                 Origin::Slot { slot, .. } => Some(slot),
                 Origin::Init(_) => None,
             }),

@@ -26,8 +26,8 @@ use chimera_hal::Controls;
 
 use crate::name::{Name, ProjectName};
 use crate::project::{
-    FreshFile, LibraryPart, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry,
-    ProjectSource, SceneAsk, SlotId, Subject, Unused,
+    FreshFile, PartAction, PartId, PartSet, PartSource, Project, ProjectEntry, ProjectSource,
+    SceneAsk, SlotId, Subject, Unused,
 };
 use crate::ui::browser::Browse;
 use crate::ui::hold::Presses;
@@ -38,12 +38,12 @@ use listing::Chosen;
 use naming::{NAME_MAX, Naming, NamingOut};
 use prompt::{
     AlsoUses, AlsoUsesAnswer, Answer, CardChanged, CardChangedAnswer, Choice, Clear, ClearAnswer,
-    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu,
-    LibraryAnswer, Load, LoadAnswer, LoadLibrary, NameExists, NameExistsAnswer, PromptView,
-    PurgeAnswer, PurgeSources, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace,
-    ReplaceAnswer, ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer, panel,
+    ClearScene, ClearSceneAnswer, ClearSlot, Delete, DeleteAnswer, DfuAnswer, EnterDfu, KitUnsaved,
+    Load, LoadAnswer, LoadLibrary, NameExists, NameExistsAnswer, PromptView, PurgeAnswer,
+    PurgeSources, Reload, ReloadAnswer, ReloadScene, ReloadSceneAnswer, Replace, ReplaceAnswer,
+    ReplaceTo, SaveOver, SaveOverAnswer, SaveSceneOver, SaveSceneOverAnswer, panel,
 };
-use replace::{LibraryAsk, PartAsk, ProjectAsk, ReloadAsk, Reply};
+use replace::{LibraryAsk, LibraryReply, PartAsk, ProjectAsk, ReloadAsk, Reply};
 
 /// SAVE PROJECT AS, named: the file it goes to and the load it is inside.
 #[derive(Debug)]
@@ -167,7 +167,7 @@ fn subject(c: &Chosen) -> Subject {
 pub(crate) enum Answered {
     ReplacePart(Reply<PartSource, ReplaceAnswer>, ReplaceTo),
     ReloadPart(Reply<PartSource, ReloadAnswer>, SlotId),
-    LoadLibrary(Reply<LibraryPart, LibraryAnswer>),
+    LoadLibrary(LibraryReply),
     UpdateStale(Reverts, Answer<AlsoUsesAnswer>),
     ClearSlot(SlotId, Answer<ClearAnswer>),
     LoadProject {
@@ -242,9 +242,13 @@ impl Ask {
                 let part = a.source().part;
                 panel(&Reload { part, slot: *slot }, a.choice(), f)
             }
-            Ask::LoadLibrary(a) => {
+            Ask::LoadLibrary(LibraryAsk::Sound(a)) => {
                 let part = a.source().part;
                 panel(&LoadLibrary { part }, a.choice(), f)
+            }
+            Ask::LoadLibrary(LibraryAsk::Kit(n, c)) => {
+                let part = n.source().part();
+                panel(&KitUnsaved { part }, c, f)
             }
             Ask::UpdateStale {
                 first,

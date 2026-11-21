@@ -5,9 +5,8 @@ use chimera_hal::store::{Store, StoreError};
 
 use crate::name::{ProjectName, SoundName};
 use crate::project::{
-    self, CardOut, Confirmed, DeleteTarget, FreshFile, LibraryPart, Line, LoadLink,
-    OverwriteTarget, PageAt, PartId, Pending, ProjectEntry, ProjectNote, ProjectSource, SaveTo,
-    Swap,
+    self, CardOut, Confirmed, DeleteTarget, FreshFile, LibraryKit, Line, LoadLink, OverwriteTarget,
+    PageAt, PartId, Pending, ProjectEntry, ProjectNote, ProjectSource, SaveTo, Swap,
 };
 use crate::storage::{Card, CardEvent, SystemSettings, SystemSync};
 use crate::ui::UiState;
@@ -71,7 +70,7 @@ pub(crate) enum Job {
     /// SAVE TO LIBRARY, named: the Part's Sound to a new library file.
     LibrarySave(PartId, SoundName),
     /// A confirmed library load: the file, then its source or `adopt`.
-    LibraryLoad(Confirmed<LibraryPart>),
+    LibraryLoad(Confirmed<LibraryKit>),
 }
 
 /// What card work borrows from the shell.

@@ -111,6 +111,9 @@ pub struct Pool {
     /// The scratch's map record a closed door left unread, for its slot
     /// (#862).
     scratch_kept: KeptMap,
+    /// Moved by every hand-out of the scratch to a writer (ADR 0305): a
+    /// library read's `ReadPart` adopts only at the epoch it read at.
+    scratch_epoch: u16,
 }
 
 /// A source slot.
@@ -151,7 +154,7 @@ struct Index {
 }
 
 // `init_in_place` writes each field: a new one fails to build here first.
-crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch, scratch_kept });
+crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch, scratch_kept, scratch_epoch });
 crate::in_place::field_list!(Index => Index { slots, gens });
 
 impl Pool {
@@ -185,6 +188,7 @@ impl Pool {
             // stack-check guards the frame.
             addr_of_mut!((*p).scratch).write(Sound::neutral(EngineType::Algo));
             addr_of_mut!((*p).scratch_kept).write(KeptMap::EMPTY);
+            addr_of_mut!((*p).scratch_epoch).write(0);
             slot.assume_init_mut()
         }
     }
@@ -948,7 +952,14 @@ impl Pool {
     /// The load's scratch Sound.
     #[optimize(size)]
     pub(in crate::project) fn scratch(&mut self) -> &mut Sound {
+        self.scratch_epoch = self.scratch_epoch.wrapping_add(1);
         &mut self.scratch
+    }
+
+    /// The scratch's epoch: moved by every writer since.
+    #[inline(always)]
+    pub(in crate::project) fn scratch_epoch(&self) -> u16 {
+        self.scratch_epoch
     }
 
     /// The scratch Sound, as the last load left it.
@@ -960,6 +971,7 @@ impl Pool {
     /// The scratch Sound and its kept record, for a load to write.
     #[optimize(size)]
     pub(in crate::project) fn scratch_kept(&mut self) -> (&mut Sound, &mut KeptMap) {
+        self.scratch_epoch = self.scratch_epoch.wrapping_add(1);
         (&mut self.scratch, &mut self.scratch_kept)
     }
 

@@ -5,7 +5,7 @@ use core::fmt::Write;
 
 use crate::project::arena::Cost;
 use crate::project::{
-    Line, Origin, PartAction, PartActionKind, PartId, PartStatus, Project, SlotId, part_actions,
+    Line, Origin, PartAction, PartActionKind, PartId, Project, SlotId, SoundStatus, part_actions,
 };
 
 use super::prompt::Slot;
@@ -85,7 +85,7 @@ impl Offer {
             Origin::Init(_) => None,
         };
         let over_full = actions[PartCmd::OverSlot.idx()].is_none()
-            && offered.status() == PartStatus::Edited
+            && offered.status() == SoundStatus::Edited
             && home.is_some();
         Offer {
             actions,
