@@ -337,7 +337,7 @@ class ErrLine(bytes):
 
 def answer(conn: Conn, first=SILENCE_S) -> tuple:
     """(Status.OK, body) or (Status.ERR, the ERR line), the first byte
-    waited for up to `first` s.
+    waited for up to `first` s. An `OK <words>` line ends the body too.
 
     A `SHOT` header line stays in the body, followed by exactly its length
     of pixel bytes. Raises NoAnswer, Vanished or BadShot."""
@@ -346,6 +346,9 @@ def answer(conn: Conn, first=SILENCE_S) -> tuple:
         ln = rd.line()
         if ln == b"OK":
             return Status.OK, body
+        # `OK queued`, `ed since`'s `OK <gen> [more]`: the line is the news.
+        if ln.startswith(b"OK "):
+            return Status.OK, body + ln + b"\n"
         if ln == b"ERR" or ln.startswith(b"ERR "):
             err = ErrLine(ln)
             err.before = body

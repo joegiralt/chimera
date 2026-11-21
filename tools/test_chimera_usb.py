@@ -289,6 +289,18 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.first_wait("stats"), tool.SILENCE_S)
         self.assertGreaterEqual(tool.CARD_WAIT_S, 30)
 
+    def test_an_ok_with_words_ends_the_answer_and_prints(self):
+        # #1065: protocol 4's queued acts and `ed since` end on `OK <words>`.
+        answers = {
+            b"ed set MIDI.SYNC INT\n": b"OK queued\n",
+            b"ed since 0\n": b"chg 3 MIDI.SYNC 0\nOK 6 more\n",
+        }
+        with FakeUnit(answers) as u:
+            queued = run_tool(["ed", "set", "MIDI.SYNC", "INT"], u.target)
+            since = run_tool(["ed", "since", "0"], u.target)
+        self.assertEqual((queued.returncode, queued.stdout), (0, b"OK queued\n"), queued.stderr)
+        self.assertEqual((since.returncode, since.stdout), (0, b"chg 3 MIDI.SYNC 0\nOK 6 more\n"), since.stderr)
+
     def test_a_card_stopped_short_prints_what_it_measured(self):
         with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:
             r = run_tool(["card", "seed=7"], u.target)
