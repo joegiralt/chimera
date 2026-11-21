@@ -3811,6 +3811,15 @@ impl UiState {
             a.set_target(v);
             a.update();
         }
+        // A glyph's params off the page ease too (#284).
+        {
+            let perf = self.project.perf();
+            let p = &perf.parts()[self.active_part.index()];
+            self.renderer.ease_outside(|a| {
+                crate::project::part_block(&p.sound, &p.mix, &perf.fx, a.block)
+                    .map_or(0.0, |b| b.normalized(a.param))
+            });
+        }
 
         // Animate branch scroll for dungeon map sub-pages.
         // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
@@ -3970,6 +3979,14 @@ impl UiState {
             self.project.perf().parts(),
             self.bank2,
         )
+    }
+
+    /// The focus band's gauge as the next frame draws it, for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shown_gauge(&self) -> Option<glyph::Gauge> {
+        let perf = PerfStats::zero();
+        let scope = [0.0; SCOPE_LEN];
+        self.renderer.shown_gauge(&self.frame(&perf, None, &scope))
     }
 
     /// What one frame draws from.
