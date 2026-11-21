@@ -43,7 +43,8 @@ pub const SOURCE_MISSING: &str = "SOURCE MISSING";
 pub const NOT_ON_CARD: &str = "SOURCE NOT ON CARD";
 pub const READ_FAILED: &str = "CARD READ FAILED";
 /// A source in more runs than the stream registry keeps (slice 1 § 5.3).
-pub const FRAGMENTED: &str = "FRAGMENTED · COPY IT AGAIN";
+/// No fix promised: `put` won't replace a sealed file (ADR 0106, #643).
+pub const FRAGMENTED: &str = "FRAGMENTED · SILENT";
 /// A streamed file the card condemned whole (#609): records that won't
 /// de-frame, so its voices drop out over them. Its cell reads `BAD FILE`
 /// (`DAMAGED` is a pixel past the column). The band promises no fix: `put`
