@@ -103,7 +103,15 @@ pub fn delay_variant(s: DelaySync) -> &'static str {
     unsafe(link_section = ".bank2_ed.describe.reverb_variant")
 )]
 pub fn reverb_variant(t: ReverbType) -> &'static str {
-    ReverbType::NAMES.get(t.index()).copied().unwrap_or("-")
+    let n = &ReverbType::NAMES;
+    match t {
+        ReverbType::Quad => n[0],
+        ReverbType::Room => n[1],
+        ReverbType::Hall => n[2],
+        ReverbType::Bloom => n[3],
+        ReverbType::Gate => n[4],
+        ReverbType::Reverse => n[5],
+    }
 }
 
 /// One name for each panel `mod_panel::env_panel` has.

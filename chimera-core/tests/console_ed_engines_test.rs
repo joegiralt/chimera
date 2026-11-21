@@ -868,16 +868,20 @@ fn answers(f: &mut Fake, mut n: u32) -> (Vec<Vec<String>>, u32, usize) {
     }
 }
 
-/// `ed since <n>`'s PART section (each answer's lines before any other
-/// section's header), its number and its largest answer's bytes.
+/// `ed since <n>`'s PART section (the first answer's lines before any
+/// other section's header; a paged follow-up's from its `part` header
+/// only, as PART leads every answer it is in: #1059), its number and its
+/// largest answer's bytes.
 fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32, usize) {
     let (all, m, bytes) = answers(f, n);
     (
         all.into_iter()
-            .flat_map(|lines| {
+            .enumerate()
+            .flat_map(|(i, lines)| {
                 lines
                     .into_iter()
                     .filter(|l| !l.is_empty())
+                    .skip_while(|l| i > 0 && !l.starts_with("part "))
                     .take_while(|l| !matches!(l.as_str(), "mixer" | "orbit" | "settings"))
                     .collect::<Vec<_>>()
             })
@@ -928,6 +932,21 @@ fn a_delay_sync_flip_says_nothing_of_the_part() {
     let (part, _, bytes) = since(&mut f, m);
     println!("DRUM: a SYNC flip's answer is {bytes} B");
     assert!(part.is_empty(), "{} PART lines, {bytes} B", part.len());
+}
+
+/// PART's texts read a `SlotCtx` with the delay's SYNC held at FREE
+/// (`since::PartCtx`): every engine's whole PART answer is the same under
+/// FREE and SYNC, so no PART text reads SYNC (#1059).
+#[test]
+fn every_engine_part_reads_the_same_under_free_and_sync() {
+    for e in EngineType::ALL {
+        let mut f = fake(e);
+        let (free, _, _) = since(&mut f, 0);
+        set(&mut f, "DELAY.SYNC", "SYNC");
+        let (sync, _, _) = since(&mut f, 0);
+        assert!(vals(&free) > 40, "{e:?}");
+        assert_eq!(free, sync, "{e:?}");
+    }
 }
 
 /// PART's bytes in a whole answer: its lines, each with its newline, up
