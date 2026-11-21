@@ -123,6 +123,7 @@ use screen::*;
 // env_a, row_mod: HOLD's bottom reads 0.001 ms (#159). Every browser and
 // library list: a row's cost stops clear of MODAL (#640). mixer_master,
 // mixer_master_key: OUT clear of KEY's hint (#1066).
+// mixer_fx_reverb_gate_sync: the TAIL at its synced LENGTH (#366).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x6a6639f41cb3937f),
@@ -327,7 +328,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate_more", 0x343e170f63c10d89),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x04e062f483df79c0),
+    ("mixer_fx_reverb_gate_sync", 0xdab9b34a43a58751),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom", 0x1958625eb97cdd65),
@@ -384,7 +385,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate_more", 0xee4c4f5fda5a5e62),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x9ea3dc4e31c642ab),
+    ("mixer_fx_reverb_gate_sync", 0xca91b1498a570a3e),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom", 0x5ee28976325a22aa),
     #[cfg(feature = "master-tape")]
