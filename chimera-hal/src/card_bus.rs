@@ -249,10 +249,18 @@ impl CardBus {
         }
     }
 
-    /// An abort of hold `h`.
-    pub fn ask_abort(&self, h: Hold) {
+    /// An abort of hold `h`, asked only if `h` is still the hold: one a
+    /// burst renewed or the IRQ re-took since the judge is left alone
+    /// (false), and the asker may judge again. The IRQ's `take_abort`
+    /// drops one that moves after this check.
+    #[must_use]
+    pub fn ask_abort(&self, h: Hold) -> bool {
+        if self.held() != Some(h) {
+            return false;
+        }
         self.abort_for.store(h.0, Ordering::Relaxed);
         self.abort.store(true, Ordering::Release);
+        true
     }
 
     /// The IRQ's read of an abort: once per ask, and only one asked of

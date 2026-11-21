@@ -1069,8 +1069,9 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
             }
         };
         wait();
-        if let Some(h) = BUS.held() {
-            BUS.ask_abort(h);
+        // The hold as it is when asked: a burst's renew between the read
+        // and the ask reads again, a few times at most (#766).
+        if (0..4).any(|_| BUS.held().is_some_and(|h| BUS.ask_abort(h))) {
             crate::card_dma::pend();
             wait();
         }

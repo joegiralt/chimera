@@ -107,7 +107,7 @@ fn abort_asked_is_taken_once() {
     let b = CardBus::new();
     assert!(!b.take_abort());
     assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
-    b.ask_abort(b.held().unwrap());
+    assert!(b.ask_abort(b.held().unwrap()));
     assert!(b.take_abort());
     assert!(!b.take_abort());
 }
@@ -214,10 +214,10 @@ fn a_stream_take_drops_a_stale_abort() {
     assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
     let h = b.held().unwrap();
     b.give();
-    b.ask_abort(h);
+    assert!(!b.ask_abort(h), "given back since");
     assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
     assert!(!b.take_abort());
-    b.ask_abort(b.held().unwrap());
+    assert!(b.ask_abort(b.held().unwrap()));
     assert!(b.take_abort());
 }
 
@@ -231,13 +231,34 @@ fn a_stale_abort_never_stops_a_fresh_transfer() {
     let judged = b.stuck(Ms(201)).expect("stuck");
     b.give();
     assert_eq!(b.take_or_want(Ms(202)), Took::Taken);
-    b.ask_abort(judged);
-    assert!(!b.take_abort(), "the next transfer's");
+    assert!(!b.ask_abort(judged), "the next transfer's: not asked");
+    assert!(!b.take_abort());
+    // Asked, then the hold moves before the IRQ reads it: dropped there.
     let judged = b.stuck(Ms(500)).expect("stuck");
+    assert!(b.ask_abort(judged));
     b.renew(Ms(501));
-    b.ask_abort(judged);
     assert!(!b.take_abort(), "renewed since");
     let judged = b.stuck(Ms(800)).expect("stuck");
-    b.ask_abort(judged);
+    assert!(b.ask_abort(judged));
+    b.give();
+    assert_eq!(b.take_or_want(Ms(801)), Took::Taken);
+    assert!(!b.take_abort(), "re-taken since");
+    let judged = b.stuck(Ms(1_100)).expect("stuck");
+    assert!(b.ask_abort(judged));
     assert!(b.take_abort(), "its own transfer's");
+}
+
+/// From thread context an ask re-reads the hold: one already renewed or
+/// re-taken since the judge is not asked at all, so the asker may judge
+/// again (#766's review).
+#[test]
+fn an_ask_on_a_hold_already_moved_is_not_made() {
+    let b = CardBus::new();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    let judged = b.stuck(Ms(201)).expect("stuck");
+    b.renew(Ms(202));
+    assert!(!b.ask_abort(judged));
+    assert!(!b.take_abort());
+    assert!(b.ask_abort(b.held().unwrap()));
+    assert!(b.take_abort());
 }

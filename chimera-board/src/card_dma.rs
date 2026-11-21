@@ -282,12 +282,11 @@ impl CardDoor {
 
 /// A stuck transfer asked to abort; true if one was.
 fn unstick(now: Ms) -> bool {
-    let stuck = BUS.stuck(now);
-    if let Some(h) = stuck {
-        BUS.ask_abort(h);
+    let asked = BUS.stuck(now).is_some_and(|h| BUS.ask_abort(h));
+    if asked {
         pend();
     }
-    stuck.is_some()
+    asked
 }
 
 /// A card is mounted and not faulted.
@@ -1760,9 +1759,8 @@ mod bench {
     pub(super) fn strike(fault: Option<Inject>, h: &Held) {
         match fault {
             Some(Inject::Abort) => {
-                if let Some(h) = BUS.held() {
-                    BUS.ask_abort(h);
-                }
+                // The handler's own hold: nothing renews it under this.
+                let _ = BUS.held().is_some_and(|h| BUS.ask_abort(h));
             }
             // SAFETY: CR1's bits as RM0433 lays them; the one write that
             // drops SSI, made only here, armed only by `card dma inject

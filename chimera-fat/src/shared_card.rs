@@ -123,8 +123,10 @@ impl<D: Medium> SharedCard<D> {
                     pend: self.hooks.pend,
                 });
             }
-            if let Some(h) = self.bus.stuck(now).filter(|_| !asked) {
-                self.bus.ask_abort(h);
+            // An ask on a hold renewed since the judge isn't made: judged again.
+            if let Some(h) = self.bus.stuck(now).filter(|_| !asked)
+                && self.bus.ask_abort(h)
+            {
                 (self.hooks.pend)();
                 asked = true;
             }
