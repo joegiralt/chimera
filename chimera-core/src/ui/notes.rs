@@ -16,8 +16,10 @@ use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::{kinds, tx};
 use crate::dsp::comp::CompParams;
+use crate::dsp::modulator::EnvType;
+use crate::dsp::modulator::law::speed_ranges;
 use crate::dsp::reverb::ReverbParams;
-use crate::modulation::{FixedCol, ModSource, VCA};
+use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
 use crate::project::Line;
@@ -66,6 +68,15 @@ pub enum Ask<'a> {
     },
     /// `key`: KEY's hint on the frame's status line.
     Key(&'a Frame<'a>, &'a mut Option<Hint>),
+    /// `stage`: an ENV A stage cell's bar under the TIME or LEVEL routes
+    /// it primes (#149); `None` for any other cell, or none routed.
+    Stage {
+        addr: ParamAddr,
+        value: f32,
+        sound: &'a Sound,
+        sources: &'a [f32; MAX_MOD_SOURCES],
+        out: &'a mut Option<f32>,
+    },
 }
 
 /// The page an operator's cell is on: one parameter across OP1-OP6, the
@@ -95,7 +106,55 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         } => loops(on, algo, at, &links),
         Ask::OpsChain { formant, out } => *out = Some(ops_chain(formant)),
         Ask::Key(f, out) => *out = key(f),
+        Ask::Stage {
+            addr,
+            value,
+            sound,
+            sources,
+            out,
+        } => *out = stage(addr, value, sound, sources),
     }
+}
+
+/// An ENV A stage cell's bar as the envelope plays it (#149): ATTACK,
+/// DECAY, RELEASE and HOLD × 2^(−5·Σ) of the slot's TIME routes, as
+/// `ACoefs` takes them, in each law's octaves; SUS × the peak a LEVEL
+/// route sets. The cells prime those (`prime_target`), so no route is
+/// their own.
+fn stage(
+    addr: ParamAddr,
+    value: f32,
+    sound: &Sound,
+    sources: &[f32; MAX_MOD_SOURCES],
+) -> Option<f32> {
+    use crate::params::EnvParams as E;
+    let BlockRef::Env(slot) = addr.block else {
+        return None;
+    };
+    let e = &sound.params.envelopes[slot.index()];
+    if e.env_type != EnvType::A {
+        return None;
+    }
+    let m = &sound.mod_state;
+    let routed = |p: ParamId| {
+        let a = ParamAddr::new(addr.block, p);
+        m.find(a)
+            .filter(|&d| m.present(d) != 0)
+            .map(|_| m.offset_for(a, sources))
+    };
+    let r = speed_ranges(e.speed);
+    let oct = match addr.param {
+        E::ATTACK => r.attack.oct,
+        E::HOLD => r.hold.oct,
+        E::DECAY | E::RELEASE => r.dec_rel.oct,
+        E::SUSTAIN => {
+            let peak = routed(E::LEVEL)?;
+            return Some(value * peak.clamp(0.0, 1.0));
+        }
+        _ => return None,
+    };
+    let sum = routed(E::TIME)?.clamp(-1.0, 1.0);
+    Some((value - 5.0 * sum / oct).clamp(0.0, 1.0))
 }
 
 /// Each word `WORDS` holds.

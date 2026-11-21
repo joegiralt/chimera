@@ -3789,6 +3789,20 @@ impl UiState {
                 {
                     *value = spec.offset_normalized(*value, offset);
                 }
+                // An ENV A stage moves by the TIME or LEVEL it primes (#149).
+                let mut stage = None;
+                crate::bank2::ui_door(|u| {
+                    u.notes(notes::Ask::Stage {
+                        addr,
+                        value: *value,
+                        sound,
+                        sources: &mod_sources,
+                        out: &mut stage,
+                    })
+                });
+                if let Some(v) = stage {
+                    *value = v;
+                }
             }
         }
 
