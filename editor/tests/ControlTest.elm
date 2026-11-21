@@ -82,6 +82,25 @@ suite =
                         , \_ -> Expect.equal 0 (Control.atNorm (param "ALGO.TRNSP") 0.5)
                         ]
                         ()
+            , test "a_position_lands_on_the_param_s_steps" <|
+                \_ ->
+                    let
+                        note : Param
+                        note =
+                            { addr = addr "DELAY.NOTE"
+                            , label = "TIME"
+                            , kind = Protocol.Cont
+                            , scale = Linear
+                            , min = 0
+                            , max = 1
+                            , step = 0.1
+                            , default = 0.9
+                            , flags = { mappable = True, modulation = False }
+                            , options = []
+                            }
+                    in
+                    Expect.equal [ 0.6, 0, 1, 0.3 ]
+                        [ Control.atNorm note 0.55, Control.atNorm note 0.04, Control.atNorm note 0.97, Control.atNorm note 0.33 ]
             , test "stored_values_are_plain_decimals" <|
                 \_ ->
                     Control.atNorm (param "FILTER.RESO") (1 / 3)

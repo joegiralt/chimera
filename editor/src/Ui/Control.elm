@@ -667,7 +667,11 @@ scaleOf p =
 
 
 {-| The stored value at knob position `t`, 0 to 1, kept to four decimals so
-it is always a plain number the unit reads. The unit quantises it.
+it is always a plain number the unit reads. A linear param lands on its
+steps from its bottom, as the box's turns store it (#1055: DELAY's note
+is the step it is on), or on its top, which a turn reaches by the clamp.
+An octave param (CUTOFF) has no grid of its own to land on: the box's
+turns step from wherever it is.
 -}
 atNorm : Param -> Float -> Float
 atNorm p t0 =
@@ -676,16 +680,31 @@ atNorm p t0 =
         t =
             clamp 0 1 t0
 
+        range : Float
+        range =
+            p.max - p.min
+
+        steps : Float -> Float
+        steps x =
+            if p.step <= 0 then
+                x
+
+            else if x >= range - p.step / 2 then
+                range
+
+            else
+                toFloat (round (x / p.step)) * p.step
+
         v : Float
         v =
             case scaleOf p of
                 Linear ->
-                    p.min + t * (p.max - p.min)
+                    p.min + steps (t * range)
 
                 Octaves ->
                     p.min * (2 ^ (t * logBase 2 (p.max / p.min)))
     in
-    toFloat (round (v * 10000)) / 10000
+    toFloat (round (clamp p.min p.max v * 10000)) / 10000
 
 
 {-| A position moved by dragging from `startY` to `y`: up raises it, `px`
