@@ -102,8 +102,8 @@ pub struct LibState {
     /// The build line 3 compares stamps with.
     pub(crate) this: BuildStamp,
     /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
-    /// it ran before ends, not under it.
-    after: Option<(PartSet, SlotId)>,
+    /// it ran before ends, not under it; dropped with the kit's question.
+    pub(super) after: Option<(PartSet, SlotId)>,
 }
 
 // `init_in_place` writes each field: a new one fails to build here first.

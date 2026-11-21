@@ -120,11 +120,20 @@ fn closed_is_handled_not_silent() {
         .unwrap();
     p.adopt(r, None).unwrap();
     assert_eq!(*p.kit(P1), Kit::DEFAULT);
-    let _ = save_library_sound(
-        &mut Card::new(),
-        &mut st,
-        &Sound::init(EngineType::Algo),
-        name,
-        &ST,
-    );
+    // A Sound's own save has no kit to weigh: it writes, open as closed.
+    for close in [false, true] {
+        if close {
+            DOOR_CELL.close();
+        }
+        let out = save_library_sound(
+            &mut Card::new(),
+            &mut st,
+            &Sound::init(EngineType::Algo),
+            name,
+            &ST,
+        )
+        .out;
+        assert!(out.is_ok(), "closed: {close}");
+    }
+    DOOR_CELL.open_host();
 }

@@ -487,7 +487,7 @@ pub(crate) fn learn(ui: &mut UiState, at: Option<LearnAt>) -> Pass {
         return Pass::Done;
     };
     if ui.modal.take().is_some() {
-        ui.closed();
+        ui.dropped();
     }
     ui.idle.touch(false, true);
     ui.go(match on {

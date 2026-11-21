@@ -1415,10 +1415,62 @@ fn save_part_first_then_the_kits_question() {
     tap(&mut r.ui, ButtonId::Edit);
     assert_eq!(r.ui.project().pool().sound_count(), slots + 1);
     assert_eq!(kit_asked(&r), Some(true));
-    // A second EDIT on its opening pill, CANCEL, saves no second slot.
+    // REPLACE (one turn off its opening CANCEL): the load's slot, and
+    // no second save of the Sound.
     r.turn(EncoderId::A, -1);
     tap(&mut r.ui, ButtonId::Edit);
     r.work();
     assert_eq!(*r.ui.project().kit(P1), Kit::DEFAULT);
     assert_eq!(r.ui.project().pool().sound_count(), slots + 2);
+}
+
+/// SAVE PART FIRST over a slot P2 plays, then the kit's question dropped
+/// by a Part key: the Stale Parts' question goes with it, and never pops
+/// after a later load (#1060).
+#[test]
+fn a_dropped_kit_question_drops_the_stale_parts_question() {
+    use chimera_core::dsp::drum::types::{Machine, PadId};
+    use chimera_core::project::{PartFrom, PartSource, ReplaceGuard};
+    let mut r = kit_rig();
+    let mut s = Sound::init(EngineType::Drum);
+    s.name = SoundName::new("SHARED").unwrap();
+    let slot = r.ui.project().pool().first_free().unwrap();
+    let t = r.ui.template();
+    let p = r.ui.project_mut();
+    p.pool_store(slot, &s).unwrap();
+    for part in [P1, PartId::ALL[1]] {
+        let src = PartSource {
+            part,
+            from: PartFrom::Slot(slot),
+        };
+        let c = match ReplaceGuard::check(p, t, src) {
+            Ok(c) => c,
+            Err(n) => n.into_pending().anyway(p),
+        };
+        p.replace_part(c).unwrap();
+    }
+    p.kit_mut(P1)
+        .pad_mut(PadId::ALL[0])
+        .set_machine(Machine::PlainSine);
+    r.edit_part();
+    r.start_load();
+    // SAVE PART FIRST is the pill it opens on.
+    tap(&mut r.ui, ButtonId::Edit);
+    assert_eq!(kit_asked(&r), Some(true));
+    r.press(ButtonId::B2);
+    assert!(!r.ui.prompt_open(), "dropped");
+    r.work();
+    // A later load, its questions answered REPLACE.
+    r.start_load();
+    for _ in 0..2 {
+        match kit_asked(&r) {
+            None => break,
+            Some(true) => r.turn(EncoderId::A, -1),
+            Some(false) => r.turn(EncoderId::A, 1),
+        }
+        tap(&mut r.ui, ButtonId::Edit);
+    }
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+    assert_ne!(r.ui.prompt_kind_for_test(), Some(AskKind::UpdateStale));
 }

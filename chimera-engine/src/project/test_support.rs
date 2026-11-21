@@ -211,7 +211,7 @@ pub fn full_dense_slots(n: usize) -> (Box<Project>, TemplateCrc) {
 
 /// Panics with the first difference: the names, each slot (its bytes),
 /// each Part's Sound (`bits_eq`), mix, kit, Origin (slot and CRC, or engine;
-/// never the generation) and `sound_status`, the FX, ORBIT, then
+/// never the generation) and `part_status`, the FX, ORBIT, then
 /// `project_crc`.
 pub fn same(a: &Project, b: &Project) {
     assert_eq!(a.meta().name(), b.meta().name(), "project name");
