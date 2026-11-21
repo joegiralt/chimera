@@ -264,6 +264,38 @@ impl Debounce {
     }
 }
 
+/// A switch from its first read: one down then (the key held at power-on
+/// that picked the bootloader's slot) reads up until it is released once,
+/// press and release alike (#1000).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartHold {
+    #[default]
+    Unread,
+    Held,
+    Free,
+}
+
+impl StartHold {
+    pub const fn new() -> Self {
+        StartHold::Unread
+    }
+
+    /// One tick's raw level and `Debounce`'s settled one in; the level
+    /// the UI sees out.
+    pub fn step(&mut self, raw: bool, settled: bool) -> bool {
+        match *self {
+            StartHold::Unread if raw => *self = StartHold::Held,
+            StartHold::Held if !raw && !settled => *self = StartHold::Free,
+            StartHold::Unread => *self = StartHold::Free,
+            StartHold::Held | StartHold::Free => {}
+        }
+        match self {
+            StartHold::Free => settled,
+            StartHold::Unread | StartHold::Held => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EncoderId {

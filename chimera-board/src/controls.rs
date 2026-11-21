@@ -10,7 +10,7 @@ use chimera_core::clock_plan::{cycles_for_ns, systick_reload};
 use chimera_core::console::Hand;
 use chimera_hal::{
     Accel, BurstPos, ButtonId, ButtonState, Controls, Debounce, Detents, Edges, EncoderId, Latch,
-    Ms, NUM_BUTTONS, NUM_ENCODERS, Turn, push_levels,
+    Ms, NUM_BUTTONS, NUM_ENCODERS, StartHold, Turn, push_levels,
 };
 use core::ptr::addr_of_mut;
 use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicUsize, Ordering};
@@ -79,6 +79,8 @@ static mut LATCHES: [Latch; NUM_SWITCHES] = [Latch::new(); NUM_SWITCHES];
 static mut ENC_STATE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut DEBOUNCE: [Debounce; NUM_SWITCHES] = [Debounce::new(); NUM_SWITCHES];
+/// A switch down at the first tick waits for its release (#1000).
+static mut START: [StartHold; NUM_SWITCHES] = [StartHold::new(); NUM_SWITCHES];
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
 /// The console's hand: switches it holds, one bit each in `LATCHES`'
@@ -179,7 +181,7 @@ pub unsafe fn isr_tick() {
     };
     let hand = HAND.load(Ordering::Relaxed);
     let by_hand = |i: usize| hand & (1 << i) != 0;
-    // SAFETY: DEBOUNCE is only touched here, from SysTick (this fn's
+    // SAFETY: DEBOUNCE and START are only touched here, from SysTick (this fn's
     // contract), which is not reentrant. LATCHES is shared with
     // `snapshot`, which only touches it inside `interrupt::free`: on this
     // single core that masks SysTick, so the ISR never runs during it, and
@@ -188,15 +190,22 @@ pub unsafe fn isr_tick() {
     unsafe {
         let latches = &mut *addr_of_mut!(LATCHES);
         let debounce = &mut *addr_of_mut!(DEBOUNCE);
+        let start = &mut *addr_of_mut!(START);
         let raw = BTN_BITS.iter().map(|&m| bits & m == 0).chain(pushes);
         // A push the scan does not read, the hand cannot press either.
         let live = (0..NUM_SWITCHES).map(|i| i < NUM_BUTTONS || push);
-        for (i, ((raw, live), (d, latch))) in raw
+        for (i, ((raw, live), ((d, s), latch))) in raw
             .zip(live)
-            .zip(debounce.iter_mut().zip(latches.iter_mut()))
+            .zip(
+                debounce
+                    .iter_mut()
+                    .zip(start.iter_mut())
+                    .zip(latches.iter_mut()),
+            )
             .enumerate()
         {
-            latch.level(d.step(raw || (live && by_hand(i))), now_ms);
+            let raw = raw || (live && by_hand(i));
+            latch.level(s.step(raw, d.step(raw)), now_ms);
         }
     }
 
