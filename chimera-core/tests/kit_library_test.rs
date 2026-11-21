@@ -744,3 +744,21 @@ fn the_sounds_own_check_still_refuses_a_kit_record() {
     let r = common::codec_util::pass(&mut Sound::init(EngineType::Algo), &sink.0, false);
     assert_eq!(r, Err(FileError::Corrupt));
 }
+
+/// The kit's question trusts the listing's engine; the read re-peeks it:
+/// a file whose engine is not the one listed is FILE CHANGED, so a kit no
+/// question weighed never lands (#1060).
+#[test]
+fn a_file_whose_engine_is_not_the_listed_one_is_changed() {
+    let mut st = card();
+    let (mut p, _) = drum_project();
+    edit_kit(&mut p, P1);
+    let mut file = save_part(&mut st, &mut p, P1);
+    assert_eq!(file.engine, Some(EngineType::Drum));
+    file.engine = Some(EngineType::Va);
+    let (mut q, t) = drum_project();
+    edit_kit(&mut q, P1);
+    assert!(ask(&q, t, P1, file).is_ok(), "listed VA: no kit question");
+    let r = read(&mut st, &mut q, t, P1, file);
+    assert!(matches!(r, Err(LibNote::Changed)), "read the listed engine");
+}

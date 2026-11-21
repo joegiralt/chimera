@@ -79,12 +79,23 @@ pub fn script(events: &Path, name: &str) -> Result<Script, String> {
 /// A Sound file's bytes (a library `get`) decoded as the firmware does.
 pub fn load_sound(path: &Path) -> Result<Sound, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    sound_of(&bytes)
+}
+
+/// The Sound a library file's `bytes` hold: a DRUM Part's kit records
+/// after it (ADR 0305) are the kit's, skipped.
+fn sound_of(bytes: &[u8]) -> Result<Sound, String> {
+    use chimera_core::storage::{Event, ReadTag, RecordTag};
     let mut s = Sound::neutral(EngineType::Algo);
     for apply in [false, true] {
         let mut d = SoundDecoder::new(&mut s);
         let mut f = Framer::new(bytes.len() as u32).map_err(|e| format!("{e:?}"))?;
-        f.push(&bytes, &mut |e| if apply { d.apply(e) } else { d.event(e) })
-            .map_err(|e| format!("{e:?}"))?;
+        f.push(bytes, &mut |e| match e {
+            Event::Record(ReadTag::Known(RecordTag::Kit | RecordTag::KitSound), _) => Ok(()),
+            e if apply => d.apply(e),
+            e => d.event(e),
+        })
+        .map_err(|e| format!("{e:?}"))?;
         f.finish().map_err(|e| format!("{e:?}"))?;
         if apply { d.commit() } else { d.end() }.map_err(|e| format!("{e:?}"))?;
     }
@@ -581,6 +592,41 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/test-out")
             .join(name)
+    }
+
+    /// A DRUM Part's library file: its Sound's records, then its kit's
+    /// (ADR 0305), which the Sound skips (#1060).
+    #[test]
+    fn a_drum_parts_library_file_reads_its_sound() {
+        use chimera_core::storage::{
+            BuildStamp, FileKind, Generation, Header, RecordTag, encode_library_sound, write_file,
+        };
+        use chimera_hal::store::{ByteSink, StoreError};
+        struct Bytes(Vec<u8>);
+        impl ByteSink for Bytes {
+            fn put(&mut self, b: &[u8]) -> Result<(), StoreError> {
+                self.0.extend_from_slice(b);
+                Ok(())
+            }
+        }
+        let mut drum = Sound::init(EngineType::Drum);
+        drum.name = chimera_core::name::SoundName::new("KIT").unwrap();
+        let h = Header {
+            kind: FileKind::Sound,
+            generation: Generation::FIRST,
+            name: Some(drum.name),
+        };
+        let st = BuildStamp::new("0.4.0", "02e440e2", false);
+        let mut b = Bytes(Vec::new());
+        write_file(&mut b, &h, &mut |w| {
+            encode_library_sound(&drum, &st, None, w)?;
+            w.put(RecordTag::Kit, &[0; 157])?;
+            w.put(RecordTag::KitSound, &[0; 58])
+        })
+        .unwrap();
+        let got = sound_of(&b.0).unwrap();
+        assert_eq!(got.params.engine(), EngineType::Drum);
+        assert_eq!(got.name, drum.name);
     }
 
     #[test]

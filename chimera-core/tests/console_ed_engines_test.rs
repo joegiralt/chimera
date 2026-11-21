@@ -367,6 +367,54 @@ fn every_engine_variant_is_a_panel() {
     );
 }
 
+/// DELAY's note is a place in its list, stored `i / 10` (ADR 0302): a
+/// stepped param, so a number between two notes lands on one, on the box
+/// and from `ed set` alike (#1055, ADR 0306).
+#[test]
+fn the_delays_note_is_stored_on_a_note() {
+    let mut f = fake(EngineType::Algo);
+    set(&mut f, "DELAY.NOTE", "0.55");
+    let (stored, _) = get(&mut f, "DELAY.NOTE");
+    assert!((stored - 0.6).abs() < 1e-6, "{stored}");
+}
+
+/// A param line's kind is its spec's: a named one (`choice`, `toggle`)
+/// picks by name; else `cont` a `ParamKind::Continuous`, `stepped` one
+/// `quantize` rounds to its step (`Stepped`, `Enum`). The editor snaps
+/// only a stepped one (#1055).
+#[test]
+fn every_param_line_says_its_specs_kind() {
+    use chimera_core::console::ed_schema_pages;
+    use chimera_engine::block::ParamKind;
+    let mut f = Fake::new();
+    let mut schemas = vec![Schema::Mixer, Schema::Settings, Schema::Map, Schema::Orbit];
+    for e in EngineType::ALL {
+        schemas.extend([Schema::Engine(e), Schema::Matrix(e)]);
+    }
+    let mut texts = Vec::new();
+    for sc in schemas {
+        let mut t = String::new();
+        sc.write(&mut t).unwrap();
+        texts.extend(
+            (0..ed_schema_pages(sc)).map(|n| ask(&mut f, &format!("ed describe {t} {n}\n"))),
+        );
+    }
+    let mut stepped = 0;
+    for p in params(&texts) {
+        let a = EdAddr::parse(p[1].as_bytes()).unwrap();
+        let named = ["choice", "toggle"].contains(&p[3].as_str());
+        let want = match (named, a.param().spec().unwrap().kind) {
+            (true, _) => p[3].as_str(),
+            (false, ParamKind::Continuous) => "cont",
+            (false, ParamKind::Stepped | ParamKind::Enum) => "stepped",
+        };
+        assert_eq!(p[3], want, "{p:?}");
+        stepped += usize::from(p[3] == "stepped");
+    }
+    assert!(stepped > 0);
+    println!("{} param lines, {stepped} stepped", params(&texts).len());
+}
+
 #[test]
 fn every_param_line_says_its_scale() {
     let mut oct = 0;
@@ -392,7 +440,7 @@ fn every_param_line_says_its_scale() {
             };
             assert_eq!(p[9], flags, "{p:?}");
             assert!(
-                ["cont", "choice", "toggle"].contains(&p[3].as_str()),
+                ["cont", "stepped", "choice", "toggle"].contains(&p[3].as_str()),
                 "{p:?}"
             );
             oct += usize::from(want == "oct");
@@ -868,16 +916,20 @@ fn answers(f: &mut Fake, mut n: u32) -> (Vec<Vec<String>>, u32, usize) {
     }
 }
 
-/// `ed since <n>`'s PART section (each answer's lines before any other
-/// section's header), its number and its largest answer's bytes.
+/// `ed since <n>`'s PART section (the first answer's lines before any
+/// other section's header; a paged follow-up's from its `part` header
+/// only, as PART leads every answer it is in: #1059), its number and its
+/// largest answer's bytes.
 fn since(f: &mut Fake, n: u32) -> (Vec<String>, u32, usize) {
     let (all, m, bytes) = answers(f, n);
     (
         all.into_iter()
-            .flat_map(|lines| {
+            .enumerate()
+            .flat_map(|(i, lines)| {
                 lines
                     .into_iter()
                     .filter(|l| !l.is_empty())
+                    .skip_while(|l| i > 0 && !l.starts_with("part "))
                     .take_while(|l| !matches!(l.as_str(), "mixer" | "orbit" | "settings"))
                     .collect::<Vec<_>>()
             })
@@ -928,6 +980,21 @@ fn a_delay_sync_flip_says_nothing_of_the_part() {
     let (part, _, bytes) = since(&mut f, m);
     println!("DRUM: a SYNC flip's answer is {bytes} B");
     assert!(part.is_empty(), "{} PART lines, {bytes} B", part.len());
+}
+
+/// PART's texts read a `SlotCtx` with the delay's SYNC held at FREE
+/// (`since::PartCtx`): every engine's whole PART answer is the same under
+/// FREE and SYNC, so no PART text reads SYNC (#1059).
+#[test]
+fn every_engine_part_reads_the_same_under_free_and_sync() {
+    for e in EngineType::ALL {
+        let mut f = fake(e);
+        let (free, _, _) = since(&mut f, 0);
+        set(&mut f, "DELAY.SYNC", "SYNC");
+        let (sync, _, _) = since(&mut f, 0);
+        assert!(vals(&free) > 40, "{e:?}");
+        assert_eq!(free, sync, "{e:?}");
+    }
 }
 
 /// PART's bytes in a whole answer: its lines, each with its newline, up

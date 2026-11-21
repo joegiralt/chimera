@@ -352,13 +352,15 @@ fn described_in(d: &mut Option<Described>, s: Schema) -> &Described {
     d.get_or_insert_with(|| Described::built(s))
 }
 
-/// What an answer's sections read: the box, its cells' context, and the
-/// refusals PART says.
+/// What an answer's sections read: the box, its cells' context, the
+/// refusals PART says, and the synced cells' clock, read once so both
+/// passes see one fold (#1059).
 #[derive(Clone, Copy)]
 struct Reading<'a> {
     ui: &'a UiState,
     own: &'a CellOwn,
     refused: &'a Refusals,
+    clock: ClockSeen,
 }
 
 /// The most panels an engine reports: DRUM's FX, its ENVs and LFOs, and
@@ -620,6 +622,18 @@ struct MixSeen {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct QuarterBpm(u16);
 
+impl QuarterBpm {
+    /// `t`, which sits on the grid already (`meter::rev_clock` reads it
+    /// off the word): a cast, where `clock_word`'s round is bank 1's.
+    #[cfg_attr(
+        target_os = "none",
+        unsafe(link_section = ".bank2_ed.since.quarter_bpm")
+    )]
+    fn of(t: crate::dsp::rev::sync::Tempo) -> QuarterBpm {
+        QuarterBpm((t.0 * 4.0) as u16)
+    }
+}
+
 /// What the synced cells' texts read beyond their own values, when last
 /// reported: the reverb's (the box's `rev_text_key`: PRE-DLY's pull in
 /// HALL's plate zone, the tempo and the reverb's fold a synced cell's
@@ -655,23 +669,15 @@ impl Again {
 }
 
 impl ClockSeen {
-    /// Before any answer: the first is whole, and takes `now`.
-    const NONE: ClockSeen = ClockSeen {
-        pre: 0,
-        tempo: QuarterBpm(0),
-        rev: FoldState(0),
-        delay: FoldState(0),
-    };
-
+    /// Read once an answer (`Reading`): the tempo and the reverb's fold
+    /// from the cells' own snapshot, the delay's fold from the meter.
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.clock_now"))]
     fn now(ui: &UiState, own: &CellOwn) -> ClockSeen {
         let pre = crate::dsp::reverb::plate_pull(&ui.project().perf().fx.reverb).predelay;
-        // The tempo sits on the grid already (`meter::rev_clock` reads it
-        // off the word): a cast, where `clock_word`'s round is bank 1's.
         let (t, rev) = own.rev_clock;
         ClockSeen {
             pre: pre.to_bits(),
-            tempo: QuarterBpm((t.0 * 4.0) as u16),
+            tempo: QuarterBpm::of(t),
             rev,
             delay: crate::meter::delay_fold(),
         }
@@ -752,7 +758,8 @@ struct MapSeen {
 /// MIXER's copy.
 struct MixerCopy {
     seen: Option<MixSeen>,
-    clock: ClockSeen,
+    /// The clock MIXER's last answer read; none before any.
+    clock: Option<ClockSeen>,
     last: [Bits; MIXER_SLOTS],
     described: Option<Described>,
 }
@@ -910,7 +917,7 @@ impl EdSince {
             orbit: None,
             mixer: MixerCopy {
                 seen: None,
-                clock: ClockSeen::NONE,
+                clock: None,
                 last: [Bits(0); MIXER_SLOTS],
                 described: None,
             },
@@ -981,6 +988,7 @@ impl EdSince {
         let known = held.is_some() && held == self.issued;
         let owed = if known { self.owed } else { Sections::ALL };
         let own = ui.cell_own();
+        let clock = ClockSeen::now(ui, &own);
         let m = match self.issued {
             Some(g) => g.next(),
             None => Gen::FIRST,
@@ -995,6 +1003,7 @@ impl EdSince {
                 ui,
                 own: &own,
                 refused,
+                clock,
             };
             let w_s = self.section(s, owed.has(s), at, Pass::Measure, &mut size)?;
             if size.0 > room {
@@ -1020,6 +1029,7 @@ impl EdSince {
                     ui,
                     own: &own,
                     refused,
+                    clock,
                 };
                 self.section(s, owed.has(s), at, Pass::Commit, w)?;
             }
@@ -1045,14 +1055,14 @@ impl EdSince {
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
-        let Reading { ui, own, refused } = at;
+        let Reading { ui, own, clock, .. } = at;
         match s {
-            Section::Part => self.part_section(owed, ui, own, refused, pass, w),
+            Section::Part => self.part_section(owed, at, pass, w),
             Section::Routes => self.routes_section(owed, ui, pass, w),
             Section::Map => self.map_section(owed, ui, pass, w),
-            Section::Mixer => self.mixer_section(owed, ui, own, pass, w),
-            Section::Orbit => self.orbit_section(owed, ui, own, pass, w),
-            Section::Settings => self.settings_section(owed, ui, own, pass, w),
+            Section::Mixer => self.mixer_section(owed, ui, own, clock, pass, w),
+            Section::Orbit => self.orbit_section(owed, ui, own, clock.delay, pass, w),
+            Section::Settings => self.settings_section(owed, ui, own, clock.delay, pass, w),
         }
     }
 
@@ -1069,6 +1079,7 @@ impl EdSince {
         owed: bool,
         ui: &UiState,
         own: &CellOwn,
+        delay: FoldState,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -1087,7 +1098,7 @@ impl EdSince {
             last: &mut c.last,
             described: &d,
         };
-        values(ui, own, copy, !whole, pass, w)?;
+        values(ui, own, delay, copy, !whole, pass, w)?;
         let rev = ui.project().rev();
         let marks = match c.marks {
             Some(m) if m.rev == rev || (!whole && m.age < MARKS_EVERY) => m,
@@ -1143,12 +1154,17 @@ impl EdSince {
     fn part_section(
         &mut self,
         owed: bool,
-        ui: &UiState,
-        own: &CellOwn,
-        refused: &Refusals,
+        at: Reading<'_>,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
+        let Reading {
+            ui,
+            own,
+            refused,
+            clock,
+        } = at;
+        let delay = clock.delay;
         let known = if owed { None } else { self.part.seen };
         let part = ui.active_part;
         let engine = engine_of(ui);
@@ -1196,6 +1212,7 @@ impl EdSince {
         values(
             ui,
             own,
+            delay,
             Copy {
                 schema: Schema::Engine(engine),
                 last: &mut self.part.last,
@@ -1321,6 +1338,7 @@ impl EdSince {
         owed: bool,
         ui: &UiState,
         own: &CellOwn,
+        clock: ClockSeen,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -1333,14 +1351,13 @@ impl EdSince {
             closed: ui.bank2().is_some_and(|b| !b.is_open()),
         };
         let whole = owed || self.mixer.seen != Some(now);
-        let clock = ClockSeen::now(ui, own);
-        let again = match whole {
-            true => None,
-            false => self.mixer.clock.again(clock),
+        let again = match (whole, self.mixer.clock) {
+            (false, Some(was)) => was.again(clock),
+            (true, _) | (false, None) => None,
         };
         if let Pass::Commit = pass {
             self.mixer.seen = Some(now);
-            self.mixer.clock = clock;
+            self.mixer.clock = Some(clock);
         }
         if whole {
             w.write_str(MIXER.get())?;
@@ -1354,8 +1371,8 @@ impl EdSince {
             described: d,
         };
         match again {
-            None => values(ui, own, copy, !whole, pass, w)?,
-            Some(a) => values_but(ui, own, copy, a, pass, w)?,
+            None => values(ui, own, clock.delay, copy, !whole, pass, w)?,
+            Some(a) => values_but(ui, own, clock.delay, copy, a, pass, w)?,
         }
         Ok(whole)
     }
@@ -1376,6 +1393,7 @@ impl EdSince {
         owed: bool,
         ui: &UiState,
         own: &CellOwn,
+        delay: FoldState,
         pass: Pass,
         w: &mut dyn Write,
     ) -> Result<bool, fmt::Error> {
@@ -1418,7 +1436,7 @@ impl EdSince {
             last: &mut kept.last,
             described: &d,
         };
-        values(ui, own, copy, !whole, pass, w)?;
+        values(ui, own, delay, copy, !whole, pass, w)?;
         let notes = super::orbit::Notes::of(song.live());
         notes.write((!whole).then_some(&kept.notes), w)?;
         if let Pass::Commit = pass {
@@ -1452,12 +1470,13 @@ struct Copy<'a> {
 fn values(
     ui: &UiState,
     own: &CellOwn,
+    delay: FoldState,
     c: Copy<'_>,
     same: bool,
     pass: Pass,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    walk(ui, own, c, |_, moved| moved || !same, pass, w)
+    walk(ui, own, delay, c, |_, moved| moved || !same, pass, w)
 }
 
 /// As `values`, with every value of `again`'s blocks answered whatever
@@ -1469,19 +1488,30 @@ fn values(
 fn values_but(
     ui: &UiState,
     own: &CellOwn,
+    delay: FoldState,
     c: Copy<'_>,
     again: Again,
     pass: Pass,
     w: &mut dyn Write,
 ) -> fmt::Result {
-    walk(ui, own, c, |at, moved| moved || again.has(at), pass, w)
+    walk(
+        ui,
+        own,
+        delay,
+        c,
+        |at, moved| moved || again.has(at),
+        pass,
+        w,
+    )
 }
 
-/// Each listed value of `c`'s schema, answered where `say(block, moved)`.
+/// Each listed value of `c`'s schema, answered where `say(block, moved)`;
+/// the delay's note read at the answer's fold `delay` (#1059).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.since.walk"))]
 fn walk(
     ui: &UiState,
     own: &CellOwn,
+    delay: FoldState,
     c: Copy<'_>,
     say: impl Fn(EdBlock, bool) -> bool,
     pass: Pass,
@@ -1513,7 +1543,7 @@ fn walk(
                     *last = now;
                 }
                 if let Some(a) = EdAddr::new(at, id)
-                    && let Some((norm, stored, text)) = reading(a, ui, own)
+                    && let Some((norm, stored, text)) = reading(a, ui, own, delay)
                 {
                     line(a, norm, stored, text.as_str(), w)?;
                 }
@@ -1615,6 +1645,64 @@ mod tests {
         assert!(out.as_str().ends_with("OK 1\n"));
     }
 
+    /// What one answer's passes read, at the clock `clock` (injected: no
+    /// test moves the meter's global word, #1053's flake class).
+    fn reading<'a>(
+        ui: &'a UiState,
+        own: &'a CellOwn,
+        refused: &'a Refusals,
+        clock: ClockSeen,
+    ) -> Reading<'a> {
+        Reading {
+            ui,
+            own,
+            refused,
+            clock,
+        }
+    }
+
+    /// One answer reads the delay's fold once: MIXER's commit writes what
+    /// its measure counted, and the note's text is at that fold, not the
+    /// meter's (#1059).
+    #[test]
+    fn the_answers_fold_is_the_one_its_passes_and_texts_read() {
+        let ui = UiState::new();
+        let mut s = EdSince::new();
+        ask(&mut s, &ui, None, ANSWER_BYTES_MAX);
+        let (own, refused) = (ui.cell_own(), Refusals::new());
+        let was = s.mixer.clock.unwrap();
+        // A fold the last answer didn't read: the delay's block again.
+        let clock = ClockSeen {
+            delay: FoldState(was.delay.0 ^ 1),
+            ..was
+        };
+        let at = reading(&ui, &own, &refused, clock);
+        let mut measured = ByteCount(0);
+        s.section(Section::Mixer, false, at, Pass::Measure, &mut measured)
+            .unwrap();
+        let mut written = alloc_free::Buf::new();
+        s.section(Section::Mixer, false, at, Pass::Commit, &mut written)
+            .unwrap();
+        assert_eq!(written.as_str().len(), measured.0);
+        let note = written
+            .as_str()
+            .lines()
+            .find(|l| l.starts_with("val DELAY.NOTE "))
+            .expect("the delay's block again");
+        use crate::block::Block as _;
+        let mut want = crate::ui::fmt::FmtBuf::new();
+        let v = ui
+            .project()
+            .perf()
+            .fx
+            .delay
+            .get(crate::dsp::delay::DelayParams::NOTE);
+        crate::ui::delay_sync::note_text_at(&mut want, v, clock.delay);
+        let text = note.strip_suffix('"').unwrap();
+        let head = text.strip_suffix(want.as_str()).expect(note);
+        assert!(head.ends_with(" \""), "{note}");
+    }
+
     /// The answer's lines and its `OK` word.
     fn ask(s: &mut EdSince, ui: &UiState, held: Option<Gen>, max: usize) -> alloc_free::Buf {
         let mut out = alloc_free::Buf::new();
@@ -1648,11 +1736,12 @@ mod tests {
             .section(
                 Section::Part,
                 true,
-                Reading {
-                    ui: &ui,
-                    own: &ui.cell_own(),
-                    refused: &Refusals::new(),
-                },
+                reading(
+                    &ui,
+                    &ui.cell_own(),
+                    &Refusals::new(),
+                    ClockSeen::now(&ui, &ui.cell_own()),
+                ),
                 Pass::Measure,
                 &mut part,
             )
@@ -1696,11 +1785,12 @@ mod tests {
             .section(
                 Section::Part,
                 true,
-                Reading {
-                    ui: &ui,
-                    own: &ui.cell_own(),
-                    refused: &Refusals::new(),
-                },
+                reading(
+                    &ui,
+                    &ui.cell_own(),
+                    &Refusals::new(),
+                    ClockSeen::now(&ui, &ui.cell_own()),
+                ),
                 Pass::Measure,
                 &mut part,
             )

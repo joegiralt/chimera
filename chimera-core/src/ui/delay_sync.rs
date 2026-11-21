@@ -11,6 +11,7 @@ use chimera_hal::Ticks;
 use crate::addr::ParamAddr;
 use crate::block::{Block, ParamId};
 use crate::dsp::delay::{DelayNote, DelayParams, DelaySync};
+use crate::dsp::rev::sync::FoldState;
 use crate::ui::feel::Nudged;
 use crate::ui::fmt::FmtBuf;
 use crate::ui::hint::{Gesture, Hint};
@@ -56,9 +57,13 @@ pub static SYNC_WORDS: &str = word_at(56, 29);
 /// `1/8D`, `▾1/8`.
 #[inline(never)]
 pub fn note_text(buf: &mut FmtBuf, v: f32) {
-    DelayNote::at(v)
-        .division()
-        .write(crate::meter::delay_fold(), buf);
+    note_text_at(buf, v, crate::meter::delay_fold());
+}
+
+/// The note at `v` folded `fold`: `ed`'s, at the fold its answer read.
+#[inline(never)]
+pub fn note_text_at(buf: &mut FmtBuf, v: f32, fold: FoldState) {
+    DelayNote::at(v).division().write(fold, buf);
 }
 
 /// The band's hint on the delay's TIME cell, the ms or the note, with

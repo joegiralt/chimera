@@ -96,8 +96,9 @@ static mut BUFS: Bufs = Bufs {
     }; WRITE_BLOCKS],
 };
 static BUFS_TAKEN: AtomicBool = AtomicBool::new(false);
-// 10,004 B, NOLOAD in D2 beside the UI: built in place by `take`.
-#[unsafe(link_section = ".ram_d2")]
+// 10,004 B, NOLOAD in AXI (`.uninit`), whose bench margin holds it: D2
+// is the UI's and the voices' (ADR 0306, #1063). Built in place by `take`.
+#[unsafe(link_section = ".uninit.card_speed.HIST")]
 static mut HIST: MaybeUninit<Histogram<HIST_BUCKETS>> = MaybeUninit::uninit();
 static mut DMA: MaybeUninit<Dma> = MaybeUninit::uninit();
 

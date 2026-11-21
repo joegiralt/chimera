@@ -66,15 +66,15 @@ opt ALGO.ALG_B 28 "A21"
 opt ALGO.ALG_B 29 "A22"
 opt ALGO.ALG_B 30 "A23"
 opt ALGO.ALG_B 31 "A24"
-param ALGO.MORPH "MORPH" cont lin 0 127 1 0 md
-param ALGO.TRNSP "TRNSP" cont lin -24 24 1 0 m
+param ALGO.MORPH "MORPH" stepped lin 0 127 1 0 md
+param ALGO.TRNSP "TRNSP" stepped lin -24 24 1 0 m
 param OUT.LEVEL "VOL" cont lin 0 1 0.0078125 0.3515625 md
-param ALGO.VOWEL "VOWEL" cont lin 0 100 1 50 md
+param ALGO.VOWEL "VOWEL" stepped lin 0 100 1 50 md
 OK
 page 1 PIT of 37
 panel PIT -
-param PITCH.PITCH "PITCH" cont lin -24 24 1 0 md
-param PITCH.FINE "FINE" cont lin -100 100 1 0 md
+param PITCH.PITCH "PITCH" stepped lin -24 24 1 0 md
+param PITCH.FINE "FINE" stepped lin -100 100 1 0 md
 param PITCH.STEAL "STEAL" choice lin 0 1 1 0 m
 opt PITCH.STEAL 0 "CUT"
 opt PITCH.STEAL 1 "GLIDE"
@@ -202,12 +202,12 @@ opt OP_F.WAVE 17 "NOISE"
 OK
 page 3 FRM of 37
 panel FRM -
-param OP_A.FRMT "OP1" cont lin 0 168 1 72 md
-param OP_B.FRMT "OP2" cont lin 0 168 1 72 md
-param OP_C.FRMT "OP3" cont lin 0 168 1 72 md
-param OP_D.FRMT "OP4" cont lin 0 168 1 72 md
-param OP_E.FRMT "OP5" cont lin 0 168 1 72 md
-param OP_F.FRMT "OP6" cont lin 0 168 1 72 md
+param OP_A.FRMT "OP1" stepped lin 0 168 1 72 md
+param OP_B.FRMT "OP2" stepped lin 0 168 1 72 md
+param OP_C.FRMT "OP3" stepped lin 0 168 1 72 md
+param OP_D.FRMT "OP4" stepped lin 0 168 1 72 md
+param OP_E.FRMT "OP5" stepped lin 0 168 1 72 md
+param OP_F.FRMT "OP6" stepped lin 0 168 1 72 md
 OK
 page 4 CRS of 37
 panel CRS -
@@ -604,102 +604,102 @@ opt OP_F.CRSE 63 "25.95"
 OK
 page 5 FIN of 37
 panel FIN -
-param OP_A.FINE "OP1" cont lin 0 15 1 0 m
-param OP_B.FINE "OP2" cont lin 0 15 1 0 m
-param OP_C.FINE "OP3" cont lin 0 15 1 0 m
-param OP_D.FINE "OP4" cont lin 0 15 1 0 m
-param OP_E.FINE "OP5" cont lin 0 15 1 0 m
-param OP_F.FINE "OP6" cont lin 0 15 1 0 m
+param OP_A.FINE "OP1" stepped lin 0 15 1 0 m
+param OP_B.FINE "OP2" stepped lin 0 15 1 0 m
+param OP_C.FINE "OP3" stepped lin 0 15 1 0 m
+param OP_D.FINE "OP4" stepped lin 0 15 1 0 m
+param OP_E.FINE "OP5" stepped lin 0 15 1 0 m
+param OP_F.FINE "OP6" stepped lin 0 15 1 0 m
 OK
 page 6 DET of 37
 panel DET -
-param OP_A.DETUN "OP1" cont lin -3 3 1 0 m
-param OP_B.DETUN "OP2" cont lin -3 3 1 0 m
-param OP_C.DETUN "OP3" cont lin -3 3 1 0 m
-param OP_D.DETUN "OP4" cont lin -3 3 1 0 m
-param OP_E.DETUN "OP5" cont lin -3 3 1 0 m
-param OP_F.DETUN "OP6" cont lin -3 3 1 0 m
+param OP_A.DETUN "OP1" stepped lin -3 3 1 0 m
+param OP_B.DETUN "OP2" stepped lin -3 3 1 0 m
+param OP_C.DETUN "OP3" stepped lin -3 3 1 0 m
+param OP_D.DETUN "OP4" stepped lin -3 3 1 0 m
+param OP_E.DETUN "OP5" stepped lin -3 3 1 0 m
+param OP_F.DETUN "OP6" stepped lin -3 3 1 0 m
 OK
 page 7 LVL of 37
 panel LVL -
-param OP_A.LEVEL "OP1" cont lin 0 99 1 0 md
-param OP_B.LEVEL "OP2" cont lin 0 99 1 0 md
-param OP_C.LEVEL "OP3" cont lin 0 99 1 0 md
-param OP_D.LEVEL "OP4" cont lin 0 99 1 0 md
-param OP_E.LEVEL "OP5" cont lin 0 99 1 0 md
-param OP_F.LEVEL "OP6" cont lin 0 99 1 0 md
+param OP_A.LEVEL "OP1" stepped lin 0 99 1 0 md
+param OP_B.LEVEL "OP2" stepped lin 0 99 1 0 md
+param OP_C.LEVEL "OP3" stepped lin 0 99 1 0 md
+param OP_D.LEVEL "OP4" stepped lin 0 99 1 0 md
+param OP_E.LEVEL "OP5" stepped lin 0 99 1 0 md
+param OP_F.LEVEL "OP6" stepped lin 0 99 1 0 md
 OK
 page 8 VEL of 37
 panel VEL -
-param OP_A.VEL "OP1" cont lin 0 7 1 0 m
-param OP_B.VEL "OP2" cont lin 0 7 1 0 m
-param OP_C.VEL "OP3" cont lin 0 7 1 0 m
-param OP_D.VEL "OP4" cont lin 0 7 1 0 m
-param OP_E.VEL "OP5" cont lin 0 7 1 0 m
-param OP_F.VEL "OP6" cont lin 0 7 1 0 m
+param OP_A.VEL "OP1" stepped lin 0 7 1 0 m
+param OP_B.VEL "OP2" stepped lin 0 7 1 0 m
+param OP_C.VEL "OP3" stepped lin 0 7 1 0 m
+param OP_D.VEL "OP4" stepped lin 0 7 1 0 m
+param OP_E.VEL "OP5" stepped lin 0 7 1 0 m
+param OP_F.VEL "OP6" stepped lin 0 7 1 0 m
 OK
 page 9 AR of 37
 panel AR -
-param OP_A.AR "OP1" cont lin 0 31 1 31 m
-param OP_B.AR "OP2" cont lin 0 31 1 31 m
-param OP_C.AR "OP3" cont lin 0 31 1 31 m
-param OP_D.AR "OP4" cont lin 0 31 1 31 m
-param OP_E.AR "OP5" cont lin 0 31 1 31 m
-param OP_F.AR "OP6" cont lin 0 31 1 31 m
+param OP_A.AR "OP1" stepped lin 0 31 1 31 m
+param OP_B.AR "OP2" stepped lin 0 31 1 31 m
+param OP_C.AR "OP3" stepped lin 0 31 1 31 m
+param OP_D.AR "OP4" stepped lin 0 31 1 31 m
+param OP_E.AR "OP5" stepped lin 0 31 1 31 m
+param OP_F.AR "OP6" stepped lin 0 31 1 31 m
 OK
 page 10 D1R of 37
 panel D1R -
-param OP_A.D1R "OP1" cont lin 0 31 1 0 m
-param OP_B.D1R "OP2" cont lin 0 31 1 0 m
-param OP_C.D1R "OP3" cont lin 0 31 1 0 m
-param OP_D.D1R "OP4" cont lin 0 31 1 0 m
-param OP_E.D1R "OP5" cont lin 0 31 1 0 m
-param OP_F.D1R "OP6" cont lin 0 31 1 0 m
+param OP_A.D1R "OP1" stepped lin 0 31 1 0 m
+param OP_B.D1R "OP2" stepped lin 0 31 1 0 m
+param OP_C.D1R "OP3" stepped lin 0 31 1 0 m
+param OP_D.D1R "OP4" stepped lin 0 31 1 0 m
+param OP_E.D1R "OP5" stepped lin 0 31 1 0 m
+param OP_F.D1R "OP6" stepped lin 0 31 1 0 m
 OK
 page 11 D1L of 37
 panel D1L -
-param OP_A.D1L "OP1" cont lin 0 15 1 15 m
-param OP_B.D1L "OP2" cont lin 0 15 1 15 m
-param OP_C.D1L "OP3" cont lin 0 15 1 15 m
-param OP_D.D1L "OP4" cont lin 0 15 1 15 m
-param OP_E.D1L "OP5" cont lin 0 15 1 15 m
-param OP_F.D1L "OP6" cont lin 0 15 1 15 m
+param OP_A.D1L "OP1" stepped lin 0 15 1 15 m
+param OP_B.D1L "OP2" stepped lin 0 15 1 15 m
+param OP_C.D1L "OP3" stepped lin 0 15 1 15 m
+param OP_D.D1L "OP4" stepped lin 0 15 1 15 m
+param OP_E.D1L "OP5" stepped lin 0 15 1 15 m
+param OP_F.D1L "OP6" stepped lin 0 15 1 15 m
 OK
 page 12 D2R of 37
 panel D2R -
-param OP_A.D2R "OP1" cont lin 0 31 1 0 m
-param OP_B.D2R "OP2" cont lin 0 31 1 0 m
-param OP_C.D2R "OP3" cont lin 0 31 1 0 m
-param OP_D.D2R "OP4" cont lin 0 31 1 0 m
-param OP_E.D2R "OP5" cont lin 0 31 1 0 m
-param OP_F.D2R "OP6" cont lin 0 31 1 0 m
+param OP_A.D2R "OP1" stepped lin 0 31 1 0 m
+param OP_B.D2R "OP2" stepped lin 0 31 1 0 m
+param OP_C.D2R "OP3" stepped lin 0 31 1 0 m
+param OP_D.D2R "OP4" stepped lin 0 31 1 0 m
+param OP_E.D2R "OP5" stepped lin 0 31 1 0 m
+param OP_F.D2R "OP6" stepped lin 0 31 1 0 m
 OK
 page 13 RR of 37
 panel RR -
-param OP_A.RR "OP1" cont lin 1 15 1 5 m
-param OP_B.RR "OP2" cont lin 1 15 1 5 m
-param OP_C.RR "OP3" cont lin 1 15 1 5 m
-param OP_D.RR "OP4" cont lin 1 15 1 5 m
-param OP_E.RR "OP5" cont lin 1 15 1 5 m
-param OP_F.RR "OP6" cont lin 1 15 1 5 m
+param OP_A.RR "OP1" stepped lin 1 15 1 5 m
+param OP_B.RR "OP2" stepped lin 1 15 1 5 m
+param OP_C.RR "OP3" stepped lin 1 15 1 5 m
+param OP_D.RR "OP4" stepped lin 1 15 1 5 m
+param OP_E.RR "OP5" stepped lin 1 15 1 5 m
+param OP_F.RR "OP6" stepped lin 1 15 1 5 m
 OK
 page 14 RS of 37
 panel RS -
-param OP_A.RS "OP1" cont lin 0 3 1 0 m
-param OP_B.RS "OP2" cont lin 0 3 1 0 m
-param OP_C.RS "OP3" cont lin 0 3 1 0 m
-param OP_D.RS "OP4" cont lin 0 3 1 0 m
-param OP_E.RS "OP5" cont lin 0 3 1 0 m
-param OP_F.RS "OP6" cont lin 0 3 1 0 m
+param OP_A.RS "OP1" stepped lin 0 3 1 0 m
+param OP_B.RS "OP2" stepped lin 0 3 1 0 m
+param OP_C.RS "OP3" stepped lin 0 3 1 0 m
+param OP_D.RS "OP4" stepped lin 0 3 1 0 m
+param OP_E.RS "OP5" stepped lin 0 3 1 0 m
+param OP_F.RS "OP6" stepped lin 0 3 1 0 m
 OK
 page 15 FBK of 37
 panel FBK -
-param OP_A.FDBK "OP1" cont lin 0 7 0.1 0 m
-param OP_B.FDBK "OP2" cont lin 0 7 0.1 0 m
-param OP_C.FDBK "OP3" cont lin 0 7 0.1 0 m
-param OP_D.FDBK "OP4" cont lin 0 7 0.1 0 m
-param OP_E.FDBK "OP5" cont lin 0 7 0.1 0 m
-param OP_F.FDBK "OP6" cont lin 0 7 0.1 0 m
+param OP_A.FDBK "OP1" stepped lin 0 7 0.1 0 m
+param OP_B.FDBK "OP2" stepped lin 0 7 0.1 0 m
+param OP_C.FDBK "OP3" stepped lin 0 7 0.1 0 m
+param OP_D.FDBK "OP4" stepped lin 0 7 0.1 0 m
+param OP_E.FDBK "OP5" stepped lin 0 7 0.1 0 m
+param OP_F.FDBK "OP6" stepped lin 0 7 0.1 0 m
 OK
 page 16 OP1 of 37
 panel OP1 TABLE
@@ -787,10 +787,10 @@ opt OP_A.CRSE 60 "22.49"
 opt OP_A.CRSE 61 "23.55"
 opt OP_A.CRSE 62 "24.22"
 opt OP_A.CRSE 63 "25.95"
-param OP_A.FINE "FINE" cont lin 0 15 1 0 m
-param OP_A.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_A.FDBK "FDBK" cont lin 0 7 0.1 0 m
-param OP_A.VEL "VELOCITY" cont lin 0 7 1 0 m
+param OP_A.FINE "FINE" stepped lin 0 15 1 0 m
+param OP_A.LEVEL "LEVEL" stepped lin 0 99 1 0 md
+param OP_A.FDBK "FDBK" stepped lin 0 7 0.1 0 m
+param OP_A.VEL "VELOCITY" stepped lin 0 7 1 0 m
 panel OP1 FORMANT
 param OP_A.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_A.WAVE 0 "W1"
@@ -811,10 +811,10 @@ opt OP_A.WAVE 14 "RSQR"
 opt OP_A.WAVE 15 "SSAW"
 opt OP_A.WAVE 16 "FRMT"
 opt OP_A.WAVE 17 "NOISE"
-param OP_A.FRMT "FORMANT" cont lin 0 168 1 72 md
-param OP_A.BW "BW" cont lin 0 216 1 72 md
-param OP_A.SKIRT "SKIRT" cont lin 0 3 1 1 m
-param OP_A.KEY "KEY" cont lin 0 100 1 0 m
+param OP_A.FRMT "FORMANT" stepped lin 0 168 1 72 md
+param OP_A.BW "BW" stepped lin 0 216 1 72 md
+param OP_A.SKIRT "SKIRT" stepped lin 0 3 1 1 m
+param OP_A.KEY "KEY" stepped lin 0 100 1 0 m
 param OP_A.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_A.VSLOT 0 "AUTO"
 opt OP_A.VSLOT 1 "F1"
@@ -841,16 +841,16 @@ opt OP_A.WAVE 14 "RSQR"
 opt OP_A.WAVE 15 "SSAW"
 opt OP_A.WAVE 16 "FRMT"
 opt OP_A.WAVE 17 "NOISE"
-param OP_A.FRMT "CENTRE" cont lin 0 168 1 72 md
-param OP_A.BW "WIDTH" cont lin 0 216 1 72 md
-param OP_A.RES "RES" cont lin 0 100 1 0 m
+param OP_A.FRMT "CENTRE" stepped lin 0 168 1 72 md
+param OP_A.BW "WIDTH" stepped lin 0 216 1 72 md
+param OP_A.RES "RES" stepped lin 0 100 1 0 m
 param OP_A.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_A.VSLOT 0 "AUTO"
 opt OP_A.VSLOT 1 "F1"
 opt OP_A.VSLOT 2 "F2"
 opt OP_A.VSLOT 3 "F3"
 opt OP_A.VSLOT 4 "OFF"
-param OP_A.LEVEL "LEVEL" cont lin 0 99 1 0 md
+param OP_A.LEVEL "LEVEL" stepped lin 0 99 1 0 md
 OK
 page 17 OP2 of 37
 panel OP2 TABLE
@@ -938,10 +938,10 @@ opt OP_B.CRSE 60 "22.49"
 opt OP_B.CRSE 61 "23.55"
 opt OP_B.CRSE 62 "24.22"
 opt OP_B.CRSE 63 "25.95"
-param OP_B.FINE "FINE" cont lin 0 15 1 0 m
-param OP_B.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_B.FDBK "FDBK" cont lin 0 7 0.1 0 m
-param OP_B.VEL "VELOCITY" cont lin 0 7 1 0 m
+param OP_B.FINE "FINE" stepped lin 0 15 1 0 m
+param OP_B.LEVEL "LEVEL" stepped lin 0 99 1 0 md
+param OP_B.FDBK "FDBK" stepped lin 0 7 0.1 0 m
+param OP_B.VEL "VELOCITY" stepped lin 0 7 1 0 m
 panel OP2 FORMANT
 param OP_B.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_B.WAVE 0 "W1"
@@ -962,10 +962,10 @@ opt OP_B.WAVE 14 "RSQR"
 opt OP_B.WAVE 15 "SSAW"
 opt OP_B.WAVE 16 "FRMT"
 opt OP_B.WAVE 17 "NOISE"
-param OP_B.FRMT "FORMANT" cont lin 0 168 1 72 md
-param OP_B.BW "BW" cont lin 0 216 1 72 md
-param OP_B.SKIRT "SKIRT" cont lin 0 3 1 1 m
-param OP_B.KEY "KEY" cont lin 0 100 1 0 m
+param OP_B.FRMT "FORMANT" stepped lin 0 168 1 72 md
+param OP_B.BW "BW" stepped lin 0 216 1 72 md
+param OP_B.SKIRT "SKIRT" stepped lin 0 3 1 1 m
+param OP_B.KEY "KEY" stepped lin 0 100 1 0 m
 param OP_B.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_B.VSLOT 0 "AUTO"
 opt OP_B.VSLOT 1 "F1"
@@ -992,16 +992,16 @@ opt OP_B.WAVE 14 "RSQR"
 opt OP_B.WAVE 15 "SSAW"
 opt OP_B.WAVE 16 "FRMT"
 opt OP_B.WAVE 17 "NOISE"
-param OP_B.FRMT "CENTRE" cont lin 0 168 1 72 md
-param OP_B.BW "WIDTH" cont lin 0 216 1 72 md
-param OP_B.RES "RES" cont lin 0 100 1 0 m
+param OP_B.FRMT "CENTRE" stepped lin 0 168 1 72 md
+param OP_B.BW "WIDTH" stepped lin 0 216 1 72 md
+param OP_B.RES "RES" stepped lin 0 100 1 0 m
 param OP_B.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_B.VSLOT 0 "AUTO"
 opt OP_B.VSLOT 1 "F1"
 opt OP_B.VSLOT 2 "F2"
 opt OP_B.VSLOT 3 "F3"
 opt OP_B.VSLOT 4 "OFF"
-param OP_B.LEVEL "LEVEL" cont lin 0 99 1 0 md
+param OP_B.LEVEL "LEVEL" stepped lin 0 99 1 0 md
 OK
 page 18 OP3 of 37
 panel OP3 TABLE
@@ -1089,10 +1089,10 @@ opt OP_C.CRSE 60 "22.49"
 opt OP_C.CRSE 61 "23.55"
 opt OP_C.CRSE 62 "24.22"
 opt OP_C.CRSE 63 "25.95"
-param OP_C.FINE "FINE" cont lin 0 15 1 0 m
-param OP_C.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_C.FDBK "FDBK" cont lin 0 7 0.1 0 m
-param OP_C.VEL "VELOCITY" cont lin 0 7 1 0 m
+param OP_C.FINE "FINE" stepped lin 0 15 1 0 m
+param OP_C.LEVEL "LEVEL" stepped lin 0 99 1 0 md
+param OP_C.FDBK "FDBK" stepped lin 0 7 0.1 0 m
+param OP_C.VEL "VELOCITY" stepped lin 0 7 1 0 m
 panel OP3 FORMANT
 param OP_C.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_C.WAVE 0 "W1"
@@ -1113,10 +1113,10 @@ opt OP_C.WAVE 14 "RSQR"
 opt OP_C.WAVE 15 "SSAW"
 opt OP_C.WAVE 16 "FRMT"
 opt OP_C.WAVE 17 "NOISE"
-param OP_C.FRMT "FORMANT" cont lin 0 168 1 72 md
-param OP_C.BW "BW" cont lin 0 216 1 72 md
-param OP_C.SKIRT "SKIRT" cont lin 0 3 1 1 m
-param OP_C.KEY "KEY" cont lin 0 100 1 0 m
+param OP_C.FRMT "FORMANT" stepped lin 0 168 1 72 md
+param OP_C.BW "BW" stepped lin 0 216 1 72 md
+param OP_C.SKIRT "SKIRT" stepped lin 0 3 1 1 m
+param OP_C.KEY "KEY" stepped lin 0 100 1 0 m
 param OP_C.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_C.VSLOT 0 "AUTO"
 opt OP_C.VSLOT 1 "F1"
@@ -1143,16 +1143,16 @@ opt OP_C.WAVE 14 "RSQR"
 opt OP_C.WAVE 15 "SSAW"
 opt OP_C.WAVE 16 "FRMT"
 opt OP_C.WAVE 17 "NOISE"
-param OP_C.FRMT "CENTRE" cont lin 0 168 1 72 md
-param OP_C.BW "WIDTH" cont lin 0 216 1 72 md
-param OP_C.RES "RES" cont lin 0 100 1 0 m
+param OP_C.FRMT "CENTRE" stepped lin 0 168 1 72 md
+param OP_C.BW "WIDTH" stepped lin 0 216 1 72 md
+param OP_C.RES "RES" stepped lin 0 100 1 0 m
 param OP_C.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_C.VSLOT 0 "AUTO"
 opt OP_C.VSLOT 1 "F1"
 opt OP_C.VSLOT 2 "F2"
 opt OP_C.VSLOT 3 "F3"
 opt OP_C.VSLOT 4 "OFF"
-param OP_C.LEVEL "LEVEL" cont lin 0 99 1 0 md
+param OP_C.LEVEL "LEVEL" stepped lin 0 99 1 0 md
 OK
 page 19 OP4 of 37
 panel OP4 TABLE
@@ -1240,10 +1240,10 @@ opt OP_D.CRSE 60 "22.49"
 opt OP_D.CRSE 61 "23.55"
 opt OP_D.CRSE 62 "24.22"
 opt OP_D.CRSE 63 "25.95"
-param OP_D.FINE "FINE" cont lin 0 15 1 0 m
-param OP_D.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_D.FDBK "FDBK" cont lin 0 7 0.1 0 m
-param OP_D.VEL "VELOCITY" cont lin 0 7 1 0 m
+param OP_D.FINE "FINE" stepped lin 0 15 1 0 m
+param OP_D.LEVEL "LEVEL" stepped lin 0 99 1 0 md
+param OP_D.FDBK "FDBK" stepped lin 0 7 0.1 0 m
+param OP_D.VEL "VELOCITY" stepped lin 0 7 1 0 m
 panel OP4 FORMANT
 param OP_D.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_D.WAVE 0 "W1"
@@ -1264,10 +1264,10 @@ opt OP_D.WAVE 14 "RSQR"
 opt OP_D.WAVE 15 "SSAW"
 opt OP_D.WAVE 16 "FRMT"
 opt OP_D.WAVE 17 "NOISE"
-param OP_D.FRMT "FORMANT" cont lin 0 168 1 72 md
-param OP_D.BW "BW" cont lin 0 216 1 72 md
-param OP_D.SKIRT "SKIRT" cont lin 0 3 1 1 m
-param OP_D.KEY "KEY" cont lin 0 100 1 0 m
+param OP_D.FRMT "FORMANT" stepped lin 0 168 1 72 md
+param OP_D.BW "BW" stepped lin 0 216 1 72 md
+param OP_D.SKIRT "SKIRT" stepped lin 0 3 1 1 m
+param OP_D.KEY "KEY" stepped lin 0 100 1 0 m
 param OP_D.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_D.VSLOT 0 "AUTO"
 opt OP_D.VSLOT 1 "F1"
@@ -1294,16 +1294,16 @@ opt OP_D.WAVE 14 "RSQR"
 opt OP_D.WAVE 15 "SSAW"
 opt OP_D.WAVE 16 "FRMT"
 opt OP_D.WAVE 17 "NOISE"
-param OP_D.FRMT "CENTRE" cont lin 0 168 1 72 md
-param OP_D.BW "WIDTH" cont lin 0 216 1 72 md
-param OP_D.RES "RES" cont lin 0 100 1 0 m
+param OP_D.FRMT "CENTRE" stepped lin 0 168 1 72 md
+param OP_D.BW "WIDTH" stepped lin 0 216 1 72 md
+param OP_D.RES "RES" stepped lin 0 100 1 0 m
 param OP_D.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_D.VSLOT 0 "AUTO"
 opt OP_D.VSLOT 1 "F1"
 opt OP_D.VSLOT 2 "F2"
 opt OP_D.VSLOT 3 "F3"
 opt OP_D.VSLOT 4 "OFF"
-param OP_D.LEVEL "LEVEL" cont lin 0 99 1 0 md
+param OP_D.LEVEL "LEVEL" stepped lin 0 99 1 0 md
 OK
 page 20 OP5 of 37
 panel OP5 TABLE
@@ -1391,10 +1391,10 @@ opt OP_E.CRSE 60 "22.49"
 opt OP_E.CRSE 61 "23.55"
 opt OP_E.CRSE 62 "24.22"
 opt OP_E.CRSE 63 "25.95"
-param OP_E.FINE "FINE" cont lin 0 15 1 0 m
-param OP_E.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_E.FDBK "FDBK" cont lin 0 7 0.1 0 m
-param OP_E.VEL "VELOCITY" cont lin 0 7 1 0 m
+param OP_E.FINE "FINE" stepped lin 0 15 1 0 m
+param OP_E.LEVEL "LEVEL" stepped lin 0 99 1 0 md
+param OP_E.FDBK "FDBK" stepped lin 0 7 0.1 0 m
+param OP_E.VEL "VELOCITY" stepped lin 0 7 1 0 m
 panel OP5 FORMANT
 param OP_E.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_E.WAVE 0 "W1"
@@ -1415,10 +1415,10 @@ opt OP_E.WAVE 14 "RSQR"
 opt OP_E.WAVE 15 "SSAW"
 opt OP_E.WAVE 16 "FRMT"
 opt OP_E.WAVE 17 "NOISE"
-param OP_E.FRMT "FORMANT" cont lin 0 168 1 72 md
-param OP_E.BW "BW" cont lin 0 216 1 72 md
-param OP_E.SKIRT "SKIRT" cont lin 0 3 1 1 m
-param OP_E.KEY "KEY" cont lin 0 100 1 0 m
+param OP_E.FRMT "FORMANT" stepped lin 0 168 1 72 md
+param OP_E.BW "BW" stepped lin 0 216 1 72 md
+param OP_E.SKIRT "SKIRT" stepped lin 0 3 1 1 m
+param OP_E.KEY "KEY" stepped lin 0 100 1 0 m
 param OP_E.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_E.VSLOT 0 "AUTO"
 opt OP_E.VSLOT 1 "F1"
@@ -1445,16 +1445,16 @@ opt OP_E.WAVE 14 "RSQR"
 opt OP_E.WAVE 15 "SSAW"
 opt OP_E.WAVE 16 "FRMT"
 opt OP_E.WAVE 17 "NOISE"
-param OP_E.FRMT "CENTRE" cont lin 0 168 1 72 md
-param OP_E.BW "WIDTH" cont lin 0 216 1 72 md
-param OP_E.RES "RES" cont lin 0 100 1 0 m
+param OP_E.FRMT "CENTRE" stepped lin 0 168 1 72 md
+param OP_E.BW "WIDTH" stepped lin 0 216 1 72 md
+param OP_E.RES "RES" stepped lin 0 100 1 0 m
 param OP_E.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_E.VSLOT 0 "AUTO"
 opt OP_E.VSLOT 1 "F1"
 opt OP_E.VSLOT 2 "F2"
 opt OP_E.VSLOT 3 "F3"
 opt OP_E.VSLOT 4 "OFF"
-param OP_E.LEVEL "LEVEL" cont lin 0 99 1 0 md
+param OP_E.LEVEL "LEVEL" stepped lin 0 99 1 0 md
 OK
 page 21 OP6 of 37
 panel OP6 TABLE
@@ -1542,10 +1542,10 @@ opt OP_F.CRSE 60 "22.49"
 opt OP_F.CRSE 61 "23.55"
 opt OP_F.CRSE 62 "24.22"
 opt OP_F.CRSE 63 "25.95"
-param OP_F.FINE "FINE" cont lin 0 15 1 0 m
-param OP_F.LEVEL "LEVEL" cont lin 0 99 1 0 md
-param OP_F.FDBK "FDBK" cont lin 0 7 0.1 0 m
-param OP_F.VEL "VELOCITY" cont lin 0 7 1 0 m
+param OP_F.FINE "FINE" stepped lin 0 15 1 0 m
+param OP_F.LEVEL "LEVEL" stepped lin 0 99 1 0 md
+param OP_F.FDBK "FDBK" stepped lin 0 7 0.1 0 m
+param OP_F.VEL "VELOCITY" stepped lin 0 7 1 0 m
 panel OP6 FORMANT
 param OP_F.WAVE "WAVE" choice lin 0 17 1 0 m
 opt OP_F.WAVE 0 "W1"
@@ -1566,10 +1566,10 @@ opt OP_F.WAVE 14 "RSQR"
 opt OP_F.WAVE 15 "SSAW"
 opt OP_F.WAVE 16 "FRMT"
 opt OP_F.WAVE 17 "NOISE"
-param OP_F.FRMT "FORMANT" cont lin 0 168 1 72 md
-param OP_F.BW "BW" cont lin 0 216 1 72 md
-param OP_F.SKIRT "SKIRT" cont lin 0 3 1 1 m
-param OP_F.KEY "KEY" cont lin 0 100 1 0 m
+param OP_F.FRMT "FORMANT" stepped lin 0 168 1 72 md
+param OP_F.BW "BW" stepped lin 0 216 1 72 md
+param OP_F.SKIRT "SKIRT" stepped lin 0 3 1 1 m
+param OP_F.KEY "KEY" stepped lin 0 100 1 0 m
 param OP_F.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_F.VSLOT 0 "AUTO"
 opt OP_F.VSLOT 1 "F1"
@@ -1596,16 +1596,16 @@ opt OP_F.WAVE 14 "RSQR"
 opt OP_F.WAVE 15 "SSAW"
 opt OP_F.WAVE 16 "FRMT"
 opt OP_F.WAVE 17 "NOISE"
-param OP_F.FRMT "CENTRE" cont lin 0 168 1 72 md
-param OP_F.BW "WIDTH" cont lin 0 216 1 72 md
-param OP_F.RES "RES" cont lin 0 100 1 0 m
+param OP_F.FRMT "CENTRE" stepped lin 0 168 1 72 md
+param OP_F.BW "WIDTH" stepped lin 0 216 1 72 md
+param OP_F.RES "RES" stepped lin 0 100 1 0 m
 param OP_F.VSLOT "SLOT" choice lin 0 4 1 0 m
 opt OP_F.VSLOT 0 "AUTO"
 opt OP_F.VSLOT 1 "F1"
 opt OP_F.VSLOT 2 "F2"
 opt OP_F.VSLOT 3 "F3"
 opt OP_F.VSLOT 4 "OFF"
-param OP_F.LEVEL "LEVEL" cont lin 0 99 1 0 md
+param OP_F.LEVEL "LEVEL" stepped lin 0 99 1 0 md
 OK
 page 22 FLT of 37
 panel FLT -

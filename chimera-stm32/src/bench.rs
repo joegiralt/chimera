@@ -101,21 +101,11 @@ use chimera_board::orbit::SAMPLE_RATE_NZ;
 
 /// The bench's screens as text, `# TRUNCATED` past this: ROUTING's rows
 /// alone pass 6 KB, so a build with it takes 12 KB (TAPE, ROUTING and
-/// STRESS together fit D2); without it 6 KB, as ALGO's D2 leaves room for.
+/// STRESS together fit D2); without it 6 KB. ALGO's took seven trims to
+/// 5,152 B as its D2 filled, until the card bench's histogram left D2
+/// (ADR 0306): the floor keeps that room now.
 pub const BENCH_TEXT_LEN: usize = if cfg!(feature = "bench-routing") {
     12288
-} else if cfg!(feature = "bench-algo") {
-    // ALGO's D2 is 112 B over since the typed bindings (ADR 0217: a
-    // map grew 65 B in each of 7 Sounds): 128 B off is the least that links;
-    // 384 B more for MPE's (ADR 0252: SLIDE's matrix row, each voice's own
-    // bend and slide); 128 B more for AMP's BASE, a knob a Part (ADR 0292);
-    // 64 B more for PRT's meters' UI state (ADR 0293); 128 B more for
-    // AMP › STEREO, 96 B over: PAN a knob a Part, the WIDTHs' state and
-    // each voice's played WIDTH (ADR 0294); 128 B more, 96 B over: each
-    // voice's last PAN and BASE, kept from a retrigger (ADR 0294); 32 B
-    // more, 16 B over: the editor's 32-bit scene revs (ADR 0289) beside
-    // the LIBRARY kit's state (ADR 0305). The report runs about 2.2 KB.
-    5152
 } else {
     6144
 };

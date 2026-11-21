@@ -203,8 +203,13 @@ type Scale
     | Octaves
 
 
+{-| A param's control: `Cont` any number in range, `Stepped` a number the
+unit stores only on multiples of its step (`ParamSpec::quantize`), a
+`Choice` or `Toggle` by name.
+-}
 type Kind
     = Cont
+    | Stepped
     | Choice
     | Toggle
 
@@ -2127,6 +2132,9 @@ kindOf s =
     case s of
         "cont" ->
             Just Cont
+
+        "stepped" ->
+            Just Stepped
 
         "choice" ->
             Just Choice

@@ -1188,7 +1188,7 @@ impl UiState {
             return;
         }
         if self.modal.take().is_some() {
-            self.closed();
+            self.dropped();
         }
         if self.job.is_some() {
             return;
@@ -2394,6 +2394,15 @@ impl UiState {
         self.browser_dirty |= self.loc.browse().is_some();
     }
 
+    /// The prompt dropped unanswered: what SAVE PART FIRST left Stale,
+    /// waiting on the kit's question, goes with it (#1060). Inlined: a
+    /// store beside each drop's `closed`, not a call of its own.
+    #[inline(always)]
+    pub(crate) fn dropped(&mut self) {
+        self.lib.drop_after();
+        self.closed();
+    }
+
     /// The open prompt's question and reason.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
@@ -3276,7 +3285,7 @@ impl UiState {
                 return;
             }
             // Dropped: a pending replace with it.
-            self.closed();
+            self.dropped();
         }
         // MENU held while pointing cancels, as tapped (ADR 0288): no save.
         #[cfg(feature = "midi-map")]

@@ -48,6 +48,24 @@ ASSERT(__eram_d2_dma - __sram_d2_dma == 16384, "the DMA region must fill exactly
     )
     .unwrap();
 
+    // D2's floor (ADR 0306): what the UI's state and the Instrument may
+    // still grow into before a build fails here, not at the overflow a
+    // few bytes later. A bench build keeps 4 KiB, which its report's text
+    // was trimmed seven times to make (#1063); shipping 1 KiB, as much as
+    // its D2 has to spare.
+    let d2_floor = if env::var_os("CARGO_FEATURE_BENCH").is_some() {
+        "4K"
+    } else {
+        "1K"
+    };
+    fs::write(
+        out_dir.join("d2_floor.x"),
+        format!(
+            "D2_FLOOR = {d2_floor};\nASSERT(ORIGIN(RAM_D2) + LENGTH(RAM_D2) - (ADDR(.ram_d2) + SIZEOF(.ram_d2)) >= D2_FLOOR, \"D2: under the floor (ADR 0306)\");\n"
+        ),
+    )
+    .unwrap();
+
     fs::write(
         out_dir.join("sram4.x"),
         r#"
@@ -602,6 +620,7 @@ ASSERT(__bank2_door == 0x08100100, "the door follows the 256-byte header");
     println!("cargo:rustc-link-arg=-Tdtcm.x");
     println!("cargo:rustc-link-arg=-Titcm.x");
     println!("cargo:rustc-link-arg=-Taxi_margin.x");
+    println!("cargo:rustc-link-arg=-Td2_floor.x");
     // The relocations stay in the ELF: the door check reads them.
     println!("cargo:rustc-link-arg=--emit-relocs");
     println!("cargo:rerun-if-changed=memory.x");

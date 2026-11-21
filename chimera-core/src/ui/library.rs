@@ -102,7 +102,7 @@ pub struct LibState {
     /// The build line 3 compares stamps with.
     pub(crate) this: BuildStamp,
     /// SAVE PART FIRST's Stale Parts and slot: asked about once the load
-    /// it ran before ends, not under it.
+    /// it ran before ends, not under it; dropped with the kit's question.
     after: Option<(PartSet, SlotId)>,
 }
 
@@ -110,6 +110,15 @@ pub struct LibState {
 crate::in_place::field_list!(LibState => LibState {
     page, listed, described, err, load, tab, this, after
 });
+
+impl LibState {
+    /// SAVE PART FIRST's Stale Parts question dropped with the prompt it
+    /// waited on (#1060).
+    #[inline(always)]
+    pub(super) fn drop_after(&mut self) {
+        self.after = None;
+    }
+}
 
 impl LibState {
     /// PROJECT, nothing listed, written in place: the page a row at a

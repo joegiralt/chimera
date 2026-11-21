@@ -125,9 +125,14 @@ impl DelayNote {
         self.0 as usize
     }
 
-    /// As `DelayParams::more` holds it.
+    /// NOTE's step: a note a tick.
+    pub const STEP: f32 = 1.0 / (Self::COUNT - 1) as f32;
+
+    /// As `DelayParams::more` holds it: `i` steps, the very bits the
+    /// spec's `quantize` stores (ADR 0306), so a load writes it back
+    /// unchanged.
     pub const fn value(self) -> f32 {
-        self.0 as f32 / (Self::COUNT - 1) as f32
+        self.0 as f32 * Self::STEP
     }
 
     /// The note value.
@@ -431,17 +436,20 @@ pub static DELAY_SPECS: [ParamSpec; 14] = [
     )
     .ident("SYNC")
     .glyph(crate::glyph::FocusGlyph::None),
-    ParamSpec::continuous(
+    // Stepped: a place in the notes, stored `i / 10` from any input
+    // (`quantize`), the editor's and `ed set`'s too (#1055, ADR 0306); the
+    // note's change still glides its own way.
+    ParamSpec::stepped(
         13,
         "NOTE",
         ValFmt::Law(crate::dsp::modulator::law::Law::DelayNote),
         0.0,
         1.0,
         NOTE_DEFAULT,
-        1.0 / (DelayNote::COUNT - 1) as f32,
         false,
-        Smoothing::Own,
+        Motion::Continuous(Smoothing::Own),
     )
+    .stepping(DelayNote::STEP)
     .ident("NOTE"),
 ];
 

@@ -192,7 +192,7 @@ Rejected: the build string as the key (every rebuild drops the cache, and dirty 
 
 **Delay and chorus.** DLY's TYPE dims the other TYPE's cells (`delay_note`), but the cells stay the same params: they describe once, fixed, and the box's text says DIM where it does. Chorus MODE (CHORUS, FLANGER, PHASER, ADR 0235) changes no cell.
 
-**Flags on `param`.** The line becomes `param <addr> "<label>" <kind> <lin|oct> <min> <max> <step> <default> <flags>`, flags a word of `m` (MIDI-mappable: `Mappable::new` admits it), `d` (a mod destination: `ParamAddr::modulatable`), or `-`. The editor's MIDI MAP and MTX pickers read it. No separate target list exists, so none can drift.
+**Flags on `param`.** The line becomes `param <addr> "<label>" <kind> <lin|oct> <min> <max> <step> <default> <flags>`, flags a word of `m` (MIDI-mappable: `Mappable::new` admits it), `d` (a mod destination: `ParamAddr::modulatable`), or `-`. The editor's MIDI MAP and MTX pickers read it. No separate target list exists, so none can drift. `<kind>` is `cont` (any number in range), `stepped` (a number the box stores only on multiples of `step`, `ParamSpec::quantize`: the editor snaps only these), `choice` or `toggle` (ADR 0306).
 
 **Text context.** A Part round's cells read under Part *n*'s context: its Sound's `SlotCtx` for SND, its mix for PRT and VOI. The buses read the live context.
 

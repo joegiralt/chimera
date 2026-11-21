@@ -846,8 +846,8 @@ fn sides_of<S: Store>(s: &mut S, vol: VolumeId, id: LibId) -> Result<[Option<u32
 }
 
 /// `file` still the row listed, on the card in the slot (`vol`): its
-/// sides re-listed and re-peeked, refused when the card, or the pair,
-/// moved since; with its description. A load and `peek_note` share it.
+/// sides re-listed and re-peeked, refused when the card, the pair or its
+/// engine moved since; with its description. A load and `peek_note` share it.
 #[optimize(size)]
 fn recheck<S: Store>(
     s: &mut S,
@@ -861,7 +861,9 @@ fn recheck<S: Store>(
     let (now, _, note) = peek_pair(s, vol, file.id, sizes)?;
     Ok(if now.seen.generation.is_none() && now.err.is_none() {
         Err(LibNote::Gone)
-    } else if now.seen != file.seen {
+    } else if now.seen != file.seen || now.engine != file.engine {
+        // The engine too: the kit's question weighed the listed one
+        // (ADR 0305, #1060).
         Err(LibNote::Changed)
     } else {
         Ok(note)

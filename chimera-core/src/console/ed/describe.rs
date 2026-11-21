@@ -8,7 +8,7 @@
 //! page <n> <LABEL> of <count>
 //! crumb "<LIST>" "<ROW>"                   (SETTINGS' pages: the tree's crumbs)
 //! panel <name> <variant>
-//! param <addr> "<label>" <cont|choice|toggle> <lin|oct> <min> <max> <step> <default> <flags>
+//! param <addr> "<label>" <cont|stepped|choice|toggle> <lin|oct> <min> <max> <step> <default> <flags>
 //! opt <addr> <index> "<name>"
 //! route "<cell label>" <cell> <route|keybd>
 //! source "<cell label>"
@@ -16,7 +16,9 @@
 //! ```
 //!
 //! `flags` is `m` (a MIDI map may target it), `d` (a mod destination),
-//! both, or `-` (ADR 0289).
+//! both, or `-` (ADR 0289). `stepped` is a number the box stores only on
+//! multiples of `step` (`ParamSpec::quantize`), `cont` any number in range
+//! (ADR 0306).
 //!
 //! ALGO's chain is `ALGO_FORMANT_CHAIN`, so the editor has every page any
 //! operator mix can show. On DRUM a page that edits the pad is described
@@ -29,7 +31,7 @@ use super::EdAddr;
 use super::lit::{PANEL, QUOTE, QUOTE_SHUT, SOURCE, UNQUOTE, lit, quoted, uint};
 use super::schema::{Round, Schema};
 use crate::addr::{BlockRef, Op, ParamAddr};
-use crate::block::{Block, ParamSpec, Scale, ValFmt};
+use crate::block::{Block, ParamKind, ParamSpec, Scale, ValFmt};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::WaveId;
 use crate::dsp::delay::DelaySync;
@@ -103,7 +105,15 @@ pub fn delay_variant(s: DelaySync) -> &'static str {
     unsafe(link_section = ".bank2_ed.describe.reverb_variant")
 )]
 pub fn reverb_variant(t: ReverbType) -> &'static str {
-    ReverbType::NAMES.get(t.index()).copied().unwrap_or("-")
+    let n = &ReverbType::NAMES;
+    match t {
+        ReverbType::Quad => n[0],
+        ReverbType::Room => n[1],
+        ReverbType::Hall => n[2],
+        ReverbType::Bloom => n[3],
+        ReverbType::Gate => n[4],
+        ReverbType::Reverse => n[5],
+    }
 }
 
 /// One name for each panel `mod_panel::env_panel` has.
@@ -275,16 +285,19 @@ pub(super) fn spec_under(a: ParamAddr, ctx: &SlotCtx) -> Option<&'static ParamSp
     Block::spec(&f, a.param)
 }
 
-/// What a param's control is.
+/// What a param's control is: a named one picks by name; else `stepped`
+/// where the box's `quantize` rounds it to its step, which the editor
+/// snaps to (#1055), `cont` where nothing does.
 #[cfg_attr(
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.kind_word")
 )]
-fn kind_word(fmt: ValFmt) -> &'static str {
-    match names(fmt) {
-        Some(["OFF", "ON"]) => TOGGLE.get(),
-        Some(_) => CHOICE.get(),
-        None => CONT.get(),
+fn kind_word(fmt: ValFmt, kind: ParamKind) -> &'static str {
+    match (names(fmt), kind) {
+        (Some(["OFF", "ON"]), _) => TOGGLE.get(),
+        (Some(_), _) => CHOICE.get(),
+        (None, ParamKind::Continuous) => CONT.get(),
+        (None, ParamKind::Stepped | ParamKind::Enum) => STEPPED.get(),
     }
 }
 
@@ -331,7 +344,7 @@ impl Cell {
         w.write_str(QUOTE.get())?;
         w.write_str(label)?;
         w.write_str(QUOTE_SHUT.get())?;
-        w.write_str(kind_word(fmt))?;
+        w.write_str(kind_word(fmt, spec.kind))?;
         w.write_char(' ')?;
         w.write_str(scale_word(spec.scale))?;
         for v in [spec.min, spec.max, spec.step, spec.default] {
@@ -955,6 +968,7 @@ lit!(TABLE = "TABLE");
 lit!(TOGGLE = "toggle");
 lit!(CHOICE = "choice");
 lit!(CONT = "cont");
+lit!(STEPPED = "stepped");
 lit!(LIN = "lin");
 lit!(OCT = "oct");
 lit!(PARAM = "param ");

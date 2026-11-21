@@ -22,6 +22,30 @@ param =
     Fixture.param
 
 
+{-| A linear param of kind `k` over `lo`..`hi`, `st` a step.
+-}
+mk : Protocol.Kind -> Float -> Float -> Float -> Param
+mk k lo hi st =
+    { addr = addr "TEST.P"
+    , label = "P"
+    , kind = k
+    , scale = Linear
+    , min = lo
+    , max = hi
+    , step = st
+    , default = lo
+    , flags = { mappable = False, modulation = False }
+    , options = []
+    }
+
+
+{-| Where `v` sits on a linear param's travel.
+-}
+normOf : Param -> Float -> Float
+normOf p v =
+    (v - p.min) / (p.max - p.min)
+
+
 suite : Test
 suite =
     describe "Ui.Control"
@@ -82,6 +106,112 @@ suite =
                         , \_ -> Expect.equal 0 (Control.atNorm (param "ALGO.TRNSP") 0.5)
                         ]
                         ()
+            , test "a_continuous_param_is_never_snapped" <|
+                \_ ->
+                    let
+                        rate : Param
+                        rate =
+                            mk Protocol.Cont 0.01 20 0.15
+
+                        level : Param
+                        level =
+                            mk Protocol.Cont 0 1 0.0078125
+                    in
+                    Expect.equal [ 0.05, 0.8, 0.01 ]
+                        [ Control.atNorm rate (normOf rate 0.05), Control.atNorm level 0.8, Control.atNorm rate 0 ]
+            , test "a_stepped_param_lands_on_its_steps_from_zero" <|
+                \_ ->
+                    let
+                        note : Param
+                        note =
+                            mk Protocol.Stepped 0 1 0.1
+                    in
+                    Expect.equal [ 0.6, 0, 1, 0.3 ]
+                        [ Control.atNorm note 0.55, Control.atNorm note 0.04, Control.atNorm note 0.97, Control.atNorm note 0.33 ]
+            , test "a_stepped_param_below_zero_rounds_away_from_zero" <|
+                \_ ->
+                    let
+                        t : Param
+                        t =
+                            mk Protocol.Stepped -24 24 1
+                    in
+                    Expect.equal [ -3, -4, -4, 3 ]
+                        [ Control.atNorm t (normOf t -3.4), Control.atNorm t (normOf t -3.6), Control.atNorm t (normOf t -3.5), Control.atNorm t (normOf t 3.4) ]
+            , test "a_step_of_0_snaps_nothing" <|
+                \_ ->
+                    Expect.within (Expect.Absolute 1.0e-9) 0.33 (Control.atNorm (mk Protocol.Stepped 0 1 0) 0.33)
+            , test "an_octave_param_keeps_its_place" <|
+                \_ ->
+                    Expect.within (Expect.Absolute 0.01) 632.46 (Control.atNorm (param "FILTER.CUTOFF") 0.5)
+            , test "a_wheel_from_the_units_printed_norm_moves_a_step" <|
+                \_ ->
+                    let
+                        q : Param
+                        q =
+                            mk Protocol.Stepped 0 127 1
+                    in
+                    -- 1 on 0..127, as the unit prints its f32 norm: 0.0078740.
+                    Expect.equal [ 2, 0 ]
+                        [ Control.nudged q { from = 0.007874, by = 1, wheel = 1 / 127 }
+                        , Control.nudged q { from = 0.007874, by = -1, wheel = 1 / 127 }
+                        ]
+            , test "a_wheel_steps_every_stepped_shape_one_step_each_way" <|
+                \_ ->
+                    let
+                        printed : Param -> Float -> Float
+                        printed p v =
+                            toFloat (round (normOf p v * 1.0e7)) / 1.0e7
+
+                        notch : Param -> Float -> Int -> Float
+                        notch p v by =
+                            Control.nudged p { from = printed p v, by = by, wheel = p.step / (p.max - p.min) }
+
+                        wrong : Param -> Int -> Maybe String
+                        wrong p k =
+                            let
+                                v : Float
+                                v =
+                                    p.min + toFloat k * p.step
+
+                                up : Float
+                                up =
+                                    notch p v 1
+
+                                want : Float
+                                want =
+                                    min p.max (v + p.step)
+
+                                near : Float -> Float -> Bool
+                                near x y =
+                                    abs (x - y) < 1.0e-6
+                            in
+                            if not (near up want) then
+                                Just (String.fromFloat p.min ++ ".." ++ String.fromFloat p.max ++ " from " ++ String.fromFloat v ++ " up: " ++ String.fromFloat up)
+
+                            else if v < p.max && not (near (notch p up -1) v) then
+                                Just (String.fromFloat p.min ++ ".." ++ String.fromFloat p.max ++ " from " ++ String.fromFloat up ++ " down: " ++ String.fromFloat (notch p up -1))
+
+                            else
+                                Nothing
+
+                        shapes : List Param
+                        shapes =
+                            [ mk Protocol.Stepped 0 127 1
+                            , mk Protocol.Stepped -127 127 1
+                            , mk Protocol.Stepped 0 255 1
+                            , mk Protocol.Stepped 30 300 1
+                            , mk Protocol.Stepped 0 7 0.1
+                            ]
+                    in
+                    shapes
+                        |> List.concatMap (\p -> List.range 0 (round ((p.max - p.min) / p.step)) |> List.filterMap (wrong p))
+                        |> List.take 3
+                        |> Expect.equal []
+            , test "a_wheel_moves_a_continuous_param_by_its_notch" <|
+                \_ ->
+                    Expect.within (Expect.Absolute 1.0e-4)
+                        (0.5 + 1 / 64)
+                        (Control.nudged (mk Protocol.Cont 0 1 0.0078125) { from = 0.5, by = 1, wheel = 1 / 64 })
             , test "stored_values_are_plain_decimals" <|
                 \_ ->
                     Control.atNorm (param "FILTER.RESO") (1 / 3)
@@ -193,7 +323,7 @@ updates =
     , test "a_wheel_notch_steps_a_value_and_a_choice" <|
         \_ ->
             run [ Step cutoff Up, Step kind Down, Step kind Up ]
-                |> Expect.equal [ SetNorm cutoff (0.5 + 1 / 64), SetOption kind (opt 0), SetOption kind (opt 2) ]
+                |> Expect.equal [ Nudge cutoff { from = 0.5, by = 1, wheel = 1 / 64 }, SetOption kind (opt 0), SetOption kind (opt 2) ]
     , test "a_step_stops_at_the_ends" <|
         \_ ->
             Control.update (\_ -> Just (Discrete { options = [ opt 0, opt 1 ], current = opt 1 })) (Step kind Up) Control.idle
