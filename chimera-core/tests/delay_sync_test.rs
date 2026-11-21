@@ -775,3 +775,15 @@ fn an_off_step_note_loads_to_the_nearest() {
     assert_eq!(fx.delay.note(), DelayNote::at(v));
     assert!((v - 0.6).abs() < 1e-6, "{v}");
 }
+
+/// Each note's value is a fixed point of the spec's `quantize`: a load
+/// writes back the bits it read (ADR 0306).
+#[test]
+fn each_notes_value_is_what_quantize_stores() {
+    let spec = find_spec(&DELAY_SPECS, DelayParams::NOTE).unwrap();
+    for i in 0..DelayNote::COUNT {
+        let v = DelayNote::new(i).value();
+        assert_eq!(spec.quantize(v).to_bits(), v.to_bits(), "{i}");
+        assert_eq!(DelayNote::at(v).index(), i);
+    }
+}

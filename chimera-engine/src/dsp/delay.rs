@@ -125,9 +125,14 @@ impl DelayNote {
         self.0 as usize
     }
 
-    /// As `DelayParams::more` holds it.
+    /// NOTE's step: a note a tick.
+    pub const STEP: f32 = 1.0 / (Self::COUNT - 1) as f32;
+
+    /// As `DelayParams::more` holds it: `i` steps, the very bits the
+    /// spec's `quantize` stores (ADR 0306), so a load writes it back
+    /// unchanged.
     pub const fn value(self) -> f32 {
-        self.0 as f32 / (Self::COUNT - 1) as f32
+        self.0 as f32 * Self::STEP
     }
 
     /// The note value.
@@ -444,7 +449,7 @@ pub static DELAY_SPECS: [ParamSpec; 14] = [
         false,
         Motion::Continuous(Smoothing::Own),
     )
-    .stepping(1.0 / (DelayNote::COUNT - 1) as f32)
+    .stepping(DelayNote::STEP)
     .ident("NOTE"),
 ];
 
