@@ -79,7 +79,7 @@ pub(crate) mod walk;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
+use crate::storage::{BootNote, Card, CardEvent, Exit, LoadError, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
     ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
@@ -794,6 +794,25 @@ impl UiState {
             _ => busy::Toast::ERROR_MS,
         };
         self.toast.show(busy::Toast { text: n.line(), ms });
+    }
+
+    /// SYSTEM's boot note, after `boot_project`: a SYSTEM file this
+    /// firmware can't read kept the defaults, so NEW's toast gives way to
+    /// why (#197). No card, no file or a card fault: the project's note,
+    /// which mounted the card itself, stands.
+    pub fn show_system_note(&mut self, note: Option<BootNote>) {
+        match note {
+            Some(BootNote::Error(LoadError::File(err))) => self.show_note(ProjectNote::File {
+                err,
+                subject: project::Subject::System,
+            }),
+            Some(
+                BootNote::NoCard
+                | BootNote::NoFile
+                | BootNote::Error(LoadError::Store(_) | LoadError::Missing | LoadError::Busy),
+            )
+            | None => {}
+        }
     }
 
     /// A load's note. A NEW that came up partial says so instead
