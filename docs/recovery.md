@@ -11,15 +11,21 @@ The bootloader is Xavier Hosxe's (Ixox), from the stock PreenFM3 firmware:
 github.com/Ixox/preenfm3 (`bootloader/`). It is not Chimera's code, and
 Chimera never writes it.
 
-There are two copies:
+Chimera doesn't carry a copy. The bootloader is Ixox's software, with
+Ixox's own update mechanism and instructions, and Chimera rides on it (ADR
+0314):
 
-- the repo keeps one, `preenfm3-bootloader-backup.bin` at the root, pinned
-  to a known version;
-- `just backup-bootloader` takes a local one, read off your own unit, into
+- **Where to get it:** the stock PreenFM3 firmware releases,
+  https://github.com/Ixox/preenfm3/releases, and the source in that repo's
+  `bootloader/`. Follow Ixox's instructions there to install or restore it.
+- **The version Chimera expects:** bootloader 1.09, `p3_boot_1_09.bin`,
+  inside the stock v1.03 release's `pfm3_firmware_1_03.zip`
+  (https://github.com/Ixox/preenfm3/releases/tag/v1.03).
+- `just backup-bootloader` takes a local copy, read off your own unit, into
   `~/chimera-backups/`.
 
-Whether the repo keeps its copy, and how the bootloader is licensed with
-Chimera, the owner decides both at V1. Until then, leave both as they are.
+If Ixox ships a new bootloader (a PreenFM3 2.0, say), Chimera follows it:
+check it against Chimera on a unit, then update this page.
 
 ## Taking a backup
 
@@ -53,8 +59,8 @@ means Chimera's `dfu` cannot be reached, so the jumper is the way in.
    cd ~/chimera-backups && sha256sum -c preenfm3-bootloader-<date>.bin.sha256
    ```
 
-2. Write the bootloader back at `0x08000000` (the repo's
-   `preenfm3-bootloader-backup.bin` works in place of a local backup):
+2. Write the bootloader back at `0x08000000` from your backup (without one,
+   use Ixox's release and instructions, above):
 
    ```
    dfu-util -a0 -d 0483:df11 -s 0x08000000 -D ~/chimera-backups/preenfm3-bootloader-<date>.bin
