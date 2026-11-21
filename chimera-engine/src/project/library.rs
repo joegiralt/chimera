@@ -12,17 +12,20 @@ use super::guard::Confirmed;
 use super::sources::source_cost;
 use super::store::{CardOut, MAX_LISTED, split};
 use super::{
-    Absence, PartFrom, PartId, PartSource, PoolFull, Project, ReplaceError, SlotId, SourceRef,
+    Absence, KitDoor, KitMark, KitPut, KitScan, LibraryKit, PartFrom, PartId, PartSource, PoolFull,
+    Project, ReadKit, ReplaceError, SlotId, SourceRef,
 };
+use crate::dsp::drum::types::Kit;
 use crate::midi_map::KeptMap;
 use crate::name::SoundName;
 use crate::params::EngineType;
 use crate::preset::Sound;
 use crate::storage::{
-    BuildStamp, Card, CardFault, FileError, Generation, HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId,
-    LibKind, LibraryDecoder, LoadError, NextId, Note, Peek, SaveError, Side, SideState, SoundCheck,
-    UserId, check_file, encode_library_part, held_for_file_len, lib_id, library_file,
-    load_ab_in_place, next_user_id, peek_library, save_ab, sound_crc, source_file, user_file,
+    BuildStamp, Card, CardFault, Check, DecodeInPlace, Event, FileError, FileKind, Generation,
+    HEADER_LEN, ID_WINDOW, LIB_PEEK, LibId, LibKind, LibraryDecoder, LoadError, NextId, Note, Peek,
+    RecordWriter, SaveError, Side, SideState, SoundCheck, UserId, check_file, encode_library_part,
+    held_for_file_len, lib_id, library_file, load_ab_in_place, next_user_id, peek_library, save_ab,
+    sound_crc, source_file, user_file,
 };
 
 /// What a library operation says to the screen.
@@ -31,6 +34,9 @@ pub enum LibNote {
     Store(StoreError),
     File(FileError),
     NoIds,
+    /// A DRUM Part's save with bank 2 closed: its kit can't be written,
+    /// so nothing is (ADR 0305).
+    KitClosed,
     /// A listed file is not what the card has now.
     Changed,
     Gone,
@@ -43,6 +49,7 @@ impl LibNote {
             LibNote::Store(e) => e.message(),
             LibNote::File(e) => e.message(),
             LibNote::NoIds => "NO SOUND IDS LEFT",
+            LibNote::KitClosed => "KIT NOT SAVED \u{b7} NEEDS UPDATE",
             LibNote::Changed => "FILE CHANGED",
             LibNote::Gone => "FILE IS GONE",
         }
@@ -108,8 +115,92 @@ fn free_id<S: Store>(s: &mut S, r: &crate::storage::Ready) -> Result<UserId, Lib
     }
 }
 
+/// What a library save writes of a Part (ADR 0305): a DRUM Part's Sound
+/// goes with its kit, any other Sound alone. No other pairing exists.
+#[derive(Clone, Copy, Debug)]
+pub enum PartSave<'a> {
+    Drum { sound: &'a Sound, kit: &'a Kit },
+    Sound(&'a Sound),
+}
+
+impl<'a> PartSave<'a> {
+    #[optimize(size)]
+    fn sound(&self) -> &'a Sound {
+        match *self {
+            PartSave::Drum { sound, .. } | PartSave::Sound(sound) => sound,
+        }
+    }
+
+    /// The kit's records after the Sound's, and what became of them.
+    #[optimize(size)]
+    fn put_kit(&self, w: &mut RecordWriter<'_>) -> Result<KitPut, StoreError> {
+        Ok(match *self {
+            PartSave::Sound(_) => KitPut::NotDrum,
+            PartSave::Drum { kit, .. } => match KitDoor::put(kit, w)? {
+                Some(crc) => KitPut::Written(crc),
+                None => KitPut::Closed,
+            },
+        })
+    }
+}
+
+impl Project {
+    /// What Part `id`'s library save writes: by its engine, nothing else.
+    #[optimize(size)]
+    pub fn part_save(&self, id: PartId) -> PartSave<'_> {
+        let sound: &Sound = &self.part(id).sound;
+        match sound.engine() {
+            EngineType::Drum => PartSave::Drum {
+                sound,
+                kit: self.kits.kit(id),
+            },
+            EngineType::Algo | EngineType::Modal | EngineType::Tape | EngineType::Va => {
+                PartSave::Sound(sound)
+            }
+        }
+    }
+
+    /// Part `p`'s Sound is in the library as it sounds: its shifts are
+    /// its own values now, so CC 64 is the Sound as saved (ADR 0263), and
+    /// the kit the file holds is the Part's mark (ADR 0305). Only a save
+    /// makes a `SavedPart`.
+    #[optimize(size)]
+    pub fn library_saved(&mut self, saved: SavedPart) {
+        self.bump();
+        self.perf.parts[saved.part.index()].env = [0; 2];
+        if let Some(mark) = saved.kit {
+            self.kits.set_mark(saved.part, mark);
+        }
+    }
+}
+
+/// A Part's library save, done: the file's id, and the mark of the kit
+/// it holds, if it holds one. `Project::library_saved` takes it.
+#[must_use]
+#[derive(Debug)]
+pub struct SavedPart {
+    part: PartId,
+    id: UserId,
+    kit: Option<KitMark>,
+}
+
+impl SavedPart {
+    #[optimize(size)]
+    pub fn id(&self) -> UserId {
+        self.id
+    }
+
+    /// The mark of the kit the file holds; `None` for a Sound with none.
+    #[optimize(size)]
+    pub fn kit(&self) -> Option<KitMark> {
+        self.kit
+    }
+}
+
 /// Part `part`'s Sound as `save_library_sound` saves it, with the map
-/// record its closed door kept (#862).
+/// record its closed door kept (#862) and, for a DRUM Part, its kit
+/// (ADR 0305). A DRUM Part with bank 2 closed is refused, nothing left
+/// on the card: its file would hold no kit.
 #[optimize(size)]
 pub fn save_library_part<S: Store>(
     card: &mut Card,
@@ -118,14 +209,29 @@ pub fn save_library_part<S: Store>(
     part: PartId,
     name: SoundName,
     stamp: &BuildStamp,
-) -> CardOut<Result<UserId, LibNote>> {
-    let s = &p.part(part).sound;
-    save_library(card, store, s, &p.kept[part.index()], name, stamp)
+) -> CardOut<Result<SavedPart, LibNote>> {
+    let CardOut { out, event } = save_library(
+        card,
+        store,
+        p.part_save(part),
+        &p.kept[part.index()],
+        name,
+        stamp,
+    );
+    let out = out.map(|(id, put)| SavedPart {
+        part,
+        id,
+        kit: match put {
+            KitPut::Written(crc) => Some(KitMark::held(crc)),
+            KitPut::NotDrum | KitPut::Closed => None,
+        },
+    });
+    CardOut { out, event }
 }
 
 /// `s` as a new library file named `name`: the directories made first, the
 /// id the next free one, the file read back whole. Any failure after the
-/// write began deletes it.
+/// write began deletes it. A Sound alone: no Part, so no kit.
 #[optimize(size)]
 pub fn save_library_sound<S: Store>(
     card: &mut Card,
@@ -134,25 +240,39 @@ pub fn save_library_sound<S: Store>(
     name: SoundName,
     stamp: &BuildStamp,
 ) -> CardOut<Result<UserId, LibNote>> {
-    save_library(card, store, s, &KeptMap::EMPTY, name, stamp)
+    let CardOut { out, event } = save_library(
+        card,
+        store,
+        PartSave::Sound(s),
+        &KeptMap::EMPTY,
+        name,
+        stamp,
+    );
+    CardOut {
+        out: out.map(|(id, _)| id),
+        event,
+    }
 }
 
 #[optimize(size)]
 fn save_library<S: Store>(
     card: &mut Card,
     store: &mut S,
-    s: &Sound,
+    save: PartSave<'_>,
     kept: &KeptMap,
     name: SoundName,
     stamp: &BuildStamp,
-) -> CardOut<Result<UserId, LibNote>> {
+) -> CardOut<Result<(UserId, KitPut), LibNote>> {
     let run = card.run(store, |st, r| {
         st.make_dir(r.volume(), Dir::Chimera)?;
         st.make_dir(r.volume(), Dir::Sounds)?;
         let id = free_id(st, r)?;
         let file = user_file(id);
-        let saved = save_ab(st, r, file, &mut SoundCheck::new(), Some(name), &mut |w| {
-            encode_library_part(s, kept, stamp, w)
+        let mut put = KitPut::NotDrum;
+        let saved = save_ab(st, r, file, &mut PartCheck::new(), Some(name), &mut |w| {
+            encode_library_part(save.sound(), kept, stamp, w)?;
+            put = save.put_kit(w)?;
+            Ok(())
         })
         .map_err(|e| match e {
             SaveError::Store(e) => LibNote::Store(e),
@@ -160,7 +280,8 @@ fn save_library<S: Store>(
             SaveError::Damaged => LibNote::File(FileError::Corrupt),
         })
         .and_then(|_| {
-            match check_file(st, r, file.side(Side::A), &mut SoundCheck::new())? {
+            // The kit's records too, read back (`PartCheck`).
+            match check_file(st, r, file.side(Side::A), &mut PartCheck::new())? {
                 SideState::Present { err: None, .. } => Ok(()),
                 SideState::Torn(e)
                 | SideState::Headerless(e)
@@ -168,11 +289,15 @@ fn save_library<S: Store>(
                 SideState::Missing => Err(LibNote::File(FileError::Truncated)),
             }
         });
+        let saved = match (saved, put) {
+            (Ok(()), KitPut::Closed) => Err(LibNote::KitClosed),
+            (saved, KitPut::Closed | KitPut::Written(_) | KitPut::NotDrum) => saved,
+        };
         if saved.is_err() {
             // Best effort: nothing else names this id.
             let _ = st.delete(r.volume(), file.side(Side::A));
         }
-        saved.map(|()| id)
+        saved.map(|()| (id, put))
     });
     let (out, event) = split(run);
     CardOut { out, event }
@@ -191,6 +316,9 @@ pub struct LibFile {
     pub id: LibId,
     pub vol: VolumeId,
     pub seen: LibSeen,
+    /// The file's engine as the listing peeked it; `None` unknown. A
+    /// load's guard reads it: a DRUM Sound brings a kit (ADR 0305).
+    pub engine: Option<EngineType>,
 }
 
 /// One row: the newer readable side's name, engine and stamp, or the
@@ -339,6 +467,7 @@ impl LibPage {
             id: e.id,
             vol: self.vol?,
             seen: e.seen,
+            engine: e.engine,
         })
     }
 }
@@ -652,7 +781,8 @@ pub struct Adopted {
 
 #[derive(Debug, PartialEq)]
 pub enum AdoptError {
-    /// The Part moved since it was confirmed.
+    /// The Part or its kit moved since it was confirmed, or the scratch
+    /// is no longer the read's.
     Changed,
     /// `None`: every slot taken.
     Full(Option<PoolFull>),
@@ -755,16 +885,163 @@ pub fn peek_note<S: Store>(
     }
 }
 
-/// `file` decoded into the pool's scratch, nothing else touched: its
+/// A library Sound file's check, with no target: the Sound's
+/// (`SoundCheck`), and a DRUM Part's kit records' through `KitDoor` (ADR
+/// 0305). The one checker of every library file that is not being
+/// loaded: a save's read-back, the console's `put`, its delete and its
+/// pair judge. `SoundCheck` itself refuses a kit record, so only here
+/// and in a load's `PartDecoder` is one accepted.
+pub struct PartCheck {
+    sound: SoundCheck,
+    scan: KitScan,
+}
+
+impl PartCheck {
+    #[optimize(size)]
+    pub fn new() -> Self {
+        PartCheck {
+            sound: SoundCheck::new(),
+            scan: KitScan::NEW,
+        }
+    }
+}
+
+impl Default for PartCheck {
+    #[optimize(size)]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Check for PartCheck {
+    const KIND: FileKind = <SoundCheck as Check>::KIND;
+
+    #[optimize(size)]
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        if KitDoor::scan(&mut self.scan, &e, None)? {
+            return Ok(());
+        }
+        self.sound.event(e)
+    }
+
+    #[optimize(size)]
+    fn end(&mut self) -> Result<(), FileError> {
+        KitDoor::found(&self.scan)?;
+        self.sound.end()
+    }
+
+    #[optimize(size)]
+    fn side(&mut self, s: Side) {
+        self.sound.side(s)
+    }
+}
+
+/// A library file as a Part's load reads it: the Sound onto the pool's
+/// scratch (`LibraryDecoder`) and a DRUM Sound's kit onto the scratch
+/// kit (ADR 0305). Pass 1 checks every kit record and touches nothing;
+/// pass 2 writes the scratch, which only `adopt` reads. A kit record is
+/// the kit's alone: the Sound's decoder never sees it.
+struct PartDecoder<'a> {
+    sound: LibraryDecoder<'a>,
+    kit: &'a mut Kit,
+    scan: KitScan,
+    found: ReadKit,
+}
+
+impl Check for PartDecoder<'_> {
+    const KIND: FileKind = <LibraryDecoder<'_> as Check>::KIND;
+
+    #[optimize(size)]
+    fn event(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        if KitDoor::scan(&mut self.scan, &e, None)? {
+            return Ok(());
+        }
+        self.sound.event(e)
+    }
+
+    #[optimize(size)]
+    fn end(&mut self) -> Result<(), FileError> {
+        KitDoor::found(&self.scan)?;
+        self.sound.end()
+    }
+}
+
+impl DecodeInPlace for PartDecoder<'_> {
+    #[optimize(size)]
+    fn apply(&mut self, e: Event<'_>) -> Result<(), FileError> {
+        if KitDoor::scan(&mut self.scan, &e, Some(&mut *self.kit))? {
+            return Ok(());
+        }
+        self.sound.apply(e)
+    }
+
+    #[optimize(size)]
+    fn finish(&mut self) -> Result<(), FileError> {
+        self.found = KitDoor::found(&self.scan)?;
+        self.sound.finish()
+    }
+}
+
+/// A library file read into the scratch for one confirmed load: what
+/// `adopt` takes, and the only thing it takes. Not `Copy`: one read, one
+/// adopt. It holds the confirmation, what the read said, the file's kit
+/// and the scratch's epoch, which every scratch writer moves, so a kit
+/// or Sound from another file or an earlier read can't land.
+#[must_use]
+#[derive(Debug)]
+pub struct ReadPart {
+    go: Confirmed<LibraryKit>,
+    read: LibRead,
+    kit: ReadKit,
+    epoch: u16,
+}
+
+impl ReadPart {
+    #[optimize(size)]
+    pub fn part(&self) -> PartId {
+        self.go.target().part()
+    }
+
+    #[optimize(size)]
+    pub fn file(&self) -> LibFile {
+        self.go.target().file()
+    }
+
+    #[optimize(size)]
+    pub fn read(&self) -> LibRead {
+        self.read
+    }
+
+    #[optimize(size)]
+    pub fn kit(&self) -> ReadKit {
+        self.kit
+    }
+
+    /// A read that never ran, for a pending load's tests.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn for_test(p: &Project, go: Confirmed<LibraryKit>, read: LibRead) -> ReadPart {
+        ReadPart {
+            go,
+            read,
+            kit: ReadKit::Closed,
+            epoch: p.pool.scratch_epoch(),
+        }
+    }
+}
+
+/// `go`'s file decoded into the pool's scratch, nothing else touched: its
 /// sides re-peeked first, so a pair gone or re-written since the listing
-/// refuses. A clobbered scratch is harmless: only `adopt` reads it.
+/// refuses. A clobbered scratch is harmless: only `adopt` reads it, and
+/// only through this read's `ReadPart`.
 #[optimize(size)]
 pub fn read_library_sound<S: Store>(
     card: &mut Card,
     store: &mut S,
     p: &mut Project,
-    file: LibFile,
-) -> CardOut<Result<LibRead, LibNote>> {
+    go: Confirmed<LibraryKit>,
+) -> CardOut<Result<ReadPart, LibNote>> {
+    let file = go.target().file();
     let run = card.run(store, |s, r| {
         let vol = r.volume();
         if let Err(n) = recheck(s, vol, file)? {
@@ -772,7 +1049,12 @@ pub fn read_library_sound<S: Store>(
         }
         let ab = library_file(file.id);
         let (scratch, kept) = p.pool.scratch_kept();
-        let mut d = LibraryDecoder::new(scratch, kept);
+        let mut d = PartDecoder {
+            sound: LibraryDecoder::new(scratch, kept),
+            kit: p.kits.scratch_mut(),
+            scan: KitScan::NEW,
+            found: ReadKit::Closed,
+        };
         match load_ab_in_place(s, r, ab, &mut d) {
             // The newer side failing its CRC leaves the older: not the row.
             Ok(h) => {
@@ -789,20 +1071,33 @@ pub fn read_library_sound<S: Store>(
                 };
             }
         }
-        let (skips, over) = (d.skips(), d.over_budget());
+        let (mut skips, over, kit) = (d.sound.skips(), d.sound.over_budget(), d.found);
+        // A kit value read as another is a skip, as a Sound's is.
+        if matches!(kit, ReadKit::Found(f) if f.lossy()) {
+            skips = skips.saturating_add(1);
+        }
         let source = match p.pool.scratch_ref().source_ref() {
             Some(sr) => source_need(s, vol, p, sr)?,
             None => None,
         };
-        Ok(Ok(LibRead {
-            skips,
-            over,
-            source,
-        }))
+        Ok(Ok((
+            LibRead {
+                skips,
+                over,
+                source,
+            },
+            kit,
+        )))
     });
     let (out, event) = split(run);
+    let epoch = p.pool.scratch_epoch();
     CardOut {
-        out: out.and_then(|r| r),
+        out: out.and_then(|r| r).map(|(read, kit)| ReadPart {
+            go,
+            read,
+            kit,
+            epoch,
+        }),
         event,
     }
 }
@@ -873,28 +1168,27 @@ impl Project {
         Ok(dedupe)
     }
 
-    /// The scratch Sound into the first free slot (or the one holding it),
-    /// with `staged`'s source, and the Part loaded from it: the witness
-    /// re-checked, then the budget, before anything moves. A refusal
-    /// changes nothing. Only a library load's confirmation adopts:
+    /// `r`'s Sound, in the scratch, into the first free slot (or the one
+    /// holding it), with `staged`'s source, the Part loaded from it and,
+    /// for a DRUM Sound, the Part's kit replaced by the file's: both
+    /// confirmations re-checked and the scratch still this read's, then
+    /// the budget, before anything moves. A refusal changes nothing.
+    /// Only a read adopts, and only once:
     ///
     /// ```compile_fail,E0308
-    /// use chimera_engine::project::{PartSource, Project, ReplaceGuard, TemplateCrc};
-    /// fn f(p: &mut Project, t: TemplateCrc, s: PartSource) {
+    /// use chimera_engine::project::{LibraryPart, Project, ReplaceGuard, TemplateCrc};
+    /// fn f(p: &mut Project, t: TemplateCrc, s: LibraryPart) {
     ///     if let Ok(c) = ReplaceGuard::check(p, t, s) {
     ///         let _ = p.adopt(c, None);
     ///     }
     /// }
     /// ```
     #[optimize(size)]
-    pub fn adopt(
-        &mut self,
-        c: Confirmed<LibraryPart>,
-        staged: Option<Staged>,
-    ) -> Result<Adopted, AdoptError> {
-        if !c.holds(self) {
+    pub fn adopt(&mut self, r: ReadPart, staged: Option<Staged>) -> Result<Adopted, AdoptError> {
+        if !r.go.still(self) || r.epoch != self.pool.scratch_epoch() {
             return Err(AdoptError::Changed);
         }
+        let part = r.go.target().part();
         let need = staged.map(|s| match s {
             Staged::Read(n) => n,
             Staged::Missing(r) => SourceNeed {
@@ -929,10 +1223,15 @@ impl Project {
             }
         };
         self.load_part(PartSource {
-            part: c.target().part,
+            part,
             from: PartFrom::Slot(slot),
         })
         .expect("a slot just checked or stored decodes");
+        match r.kit {
+            ReadKit::Found(found) => KitDoor::land(self, part, found),
+            // Bank 2 closed at the read: the Part's kit stays.
+            ReadKit::Closed => {}
+        }
         Ok(Adopted {
             slot,
             deduped: dedupe.is_some(),

@@ -13,7 +13,7 @@ use chimera_core::params::EngineType;
 use chimera_core::preset::Sound;
 use chimera_core::project::test_support::set_free_to;
 use chimera_core::project::{
-    LoadLink, PartId, PartStatus, ProjectStatus, SourceRef, part_status, save_library_sound,
+    LoadLink, PartId, ProjectStatus, SoundStatus, SourceRef, save_library_sound, sound_status,
 };
 use chimera_core::storage::{
     BuildStamp, Card, FileKind, Generation, Header, LibId, RecordTag, SourceHead, SystemSettings,
@@ -436,7 +436,7 @@ fn edit_loads_into_the_part_and_the_project_reads_modified() {
             .matches(&factory_sound(0))
     );
     let p = r.ui.project();
-    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(P1), p.pool()), SoundStatus::Clean);
     assert_eq!(r.ui.project_status(), ProjectStatus::Modified);
 }
 
@@ -482,8 +482,8 @@ fn save_part_first_that_takes_the_room_refuses_and_keeps_the_save() {
     r.work();
     let p = r.ui.project();
     assert_eq!(
-        part_status(p.part(P1), p.pool()),
-        PartStatus::Clean,
+        sound_status(p.part(P1), p.pool()),
+        SoundStatus::Clean,
         "saved"
     );
     assert!(p.part(P1).sound.bits_eq(&edited), "not replaced");
@@ -1133,7 +1133,7 @@ fn factory_load_goes_through_guard_and_adopt() {
     assert_eq!(r.toast(), format!("LOADED TO SLOT {}", slot.index() + 1));
     let p = r.ui.project();
     assert!(p.pool().get(slot).unwrap().matches(&factory_sound(2)));
-    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Clean);
+    assert_eq!(sound_status(p.part(P1), p.pool()), SoundStatus::Clean);
 }
 
 /// 48 to a page, lowest id first: `NEXT ›` turns to the last 2, whose page
@@ -1344,4 +1344,81 @@ fn ed_part_during_a_library_load_is_swallowed_as_its_key_is() {
     chimera_core::bank2::ed_apply(&mut q, &mut r.ui);
     assert_eq!(r.ui.active_part, P1);
     assert_eq!(r.ui.location(), at);
+}
+
+/// A DRUM Sound's library file beside the rig, and Part 1 on INIT DRUM
+/// with one pad off its default.
+fn kit_rig() -> Rig {
+    use chimera_core::dsp::drum::types::{Machine, PadId};
+    let mut r = Rig::new();
+    let mut s = Sound::init(EngineType::Drum);
+    s.name = SoundName::new("A KIT").unwrap();
+    r.library_with(&s);
+    screen::load_init(&mut r.ui, EngineType::Drum);
+    r.ui.project_mut()
+        .kit_mut(P1)
+        .pad_mut(PadId::ALL[0])
+        .set_machine(Machine::PlainSine);
+    r
+}
+
+/// Whether the open prompt is the kit's question (`None`: no prompt).
+fn kit_asked(r: &Rig) -> Option<bool> {
+    let (_, why) = r.ui.prompt_words_for_test()?;
+    Some(why.as_str() == "KIT NOT IN LIBRARY")
+}
+
+/// I-a (#949): a kit-only edit under a DRUM library load asks about the
+/// kit, REPLACE or CANCEL: no SAVE PART FIRST, which a slot can't keep,
+/// so no slot is saved however it is answered.
+#[test]
+fn a_kit_only_edit_asks_about_the_kit_not_the_sound() {
+    use chimera_core::dsp::drum::types::Kit;
+    let mut r = kit_rig();
+    let slots = r.ui.project().pool().sound_count();
+    r.start_load();
+    // The library's one prompt state, its reason the kit.
+    assert_eq!(r.ui.prompt_kind_for_test(), Some(AskKind::LoadLibrary));
+    let (q, why) = r.ui.prompt_words_for_test().unwrap();
+    assert_eq!(
+        (q.as_str(), why.as_str()),
+        ("LOAD INTO P1?", "KIT NOT IN LIBRARY")
+    );
+    // It opens on CANCEL: a reflex EDIT loses nothing.
+    let kit = *r.ui.project().kit(P1);
+    tap(&mut r.ui, ButtonId::Edit);
+    assert!(!r.ui.prompt_open() && !r.ui.card_pending());
+    assert_eq!(*r.ui.project().kit(P1), kit);
+    assert_eq!(r.ui.project().pool().sound_count(), slots);
+    // Asked again, REPLACE: the one load's slot, the file's kit.
+    r.press(ButtonId::Edit);
+    assert_eq!(kit_asked(&r), Some(true));
+    r.turn(EncoderId::A, -1);
+    tap(&mut r.ui, ButtonId::Edit);
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "));
+    assert_eq!(*r.ui.project().kit(P1), Kit::DEFAULT);
+    assert_eq!(r.ui.project().pool().sound_count(), slots + 1);
+}
+
+/// The Sound edited too: SAVE PART FIRST saves it once, then the kit's
+/// question, then the load.
+#[test]
+fn save_part_first_then_the_kits_question() {
+    use chimera_core::dsp::drum::types::Kit;
+    let mut r = kit_rig();
+    r.edit_part();
+    let slots = r.ui.project().pool().sound_count();
+    r.start_load();
+    assert_eq!(kit_asked(&r), Some(false));
+    // SAVE PART FIRST is the pill it opens on.
+    tap(&mut r.ui, ButtonId::Edit);
+    assert_eq!(r.ui.project().pool().sound_count(), slots + 1);
+    assert_eq!(kit_asked(&r), Some(true));
+    // A second EDIT on its opening pill, CANCEL, saves no second slot.
+    r.turn(EncoderId::A, -1);
+    tap(&mut r.ui, ButtonId::Edit);
+    r.work();
+    assert_eq!(*r.ui.project().kit(P1), Kit::DEFAULT);
+    assert_eq!(r.ui.project().pool().sound_count(), slots + 2);
 }

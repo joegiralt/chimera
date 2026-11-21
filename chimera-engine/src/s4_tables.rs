@@ -22,3 +22,9 @@ pub const STEREO_DOOR_ADDR: u32 = PART_PEAKS_DOOR_ADDR + DOOR_TABLE_STRIDE;
 /// The compressor's KEY's table (`comp_key::door::KeyDoor`, ADR 0303): the
 /// next.
 pub const COMP_KEY_DOOR_ADDR: u32 = STEREO_DOOR_ADDR + DOOR_TABLE_STRIDE;
+/// A kit's library records' and marks' table (`project::KitDoor`, ADR
+/// 0305): the next, the last, in four strides' room (`KIT_DOOR_ROOM`).
+pub const KIT_DOOR_ADDR: u32 = COMP_KEY_DOOR_ADDR + DOOR_TABLE_STRIDE;
+/// `KitDoor`'s room: a mark and its entries. A table after it starts
+/// this far on.
+pub const KIT_DOOR_ROOM: u32 = 4 * DOOR_TABLE_STRIDE;

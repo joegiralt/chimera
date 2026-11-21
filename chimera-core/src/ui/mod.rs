@@ -2550,16 +2550,7 @@ impl UiState {
                 }
                 Reply::Cancel => {}
             },
-            Answered::LoadLibrary(r) => match r {
-                Reply::Confirmed(c) => self.queue(Job::LibraryLoad(c)),
-                Reply::SaveFirst(ask) => self.save_first(
-                    ask,
-                    Offer::first_save,
-                    Ask::LoadLibrary,
-                    UiState::queue_library,
-                ),
-                Reply::Cancel => {}
-            },
+            Answered::LoadLibrary(r) => self.library_answered(r),
             Answered::UpdateStale(reverts, a) => {
                 if a.picked() == Some(U::Update) {
                     // Each as offered: a Part edited since refuses its own.

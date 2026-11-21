@@ -810,7 +810,7 @@ impl Marks {
         Marks {
             rev: p.rev(),
             project: ui.project_status(),
-            sounds: PartId::ALL.map(|n| part_status(p.part(n), p.pool())),
+            sounds: PartId::ALL.map(|n| part_status(p, n)),
             age: 0,
         }
     }

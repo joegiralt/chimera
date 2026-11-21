@@ -40,12 +40,11 @@ use chimera_hal::store::{CHUNK, Dir, FileName, Files, ReadSink, StoreError};
 
 use super::{Arg, CardImage, Out, STAGED, Stalled, Words, sound_file::exists};
 use crate::bank2::{Seal, Version};
-use crate::project::{ProjectCheck, peek_entry, project_file};
+use crate::project::{PartCheck, ProjectCheck, peek_entry, project_file};
 use crate::storage::{
     AbFile, Card, CardFault, Check, Crc32, Event, FileError, FileKind, Framer, Generation,
-    HEADER_LEN, Header, LibId, Pick, ProjectId, Ready, SaveError, Side, SideState, SoundCheck,
-    check_file, check_frame, library_file, peek_header, pick, save_target, write_file,
-    write_target,
+    HEADER_LEN, Header, LibId, Pick, ProjectId, Ready, SaveError, Side, SideState, check_file,
+    check_frame, library_file, peek_header, pick, save_target, write_file, write_target,
 };
 #[cfg(feature = "source-writer")]
 use crate::storage::{
@@ -533,8 +532,8 @@ fn transfer<F: Files, P: Out>(
                     }
                     session(s, r, Dir::Sounds, port, due, |s, port| {
                         let mut src = Incoming::new(arg, port, due);
-                        save::<_, _, SoundCheck>(s, r, file, &mut src, |s, g| {
-                            judge_pair::<_, SoundCheck>(s, r, file, g)
+                        save::<_, _, PartCheck>(s, r, file, &mut src, |s, g| {
+                            judge_pair::<_, PartCheck>(s, r, file, g)
                         })
                     })
                 })

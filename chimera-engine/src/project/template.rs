@@ -151,8 +151,8 @@ mod tests {
     use crate::params::EngineType;
     use crate::preset::Sound;
     use crate::project::{
-        Origin, PartFrom, PartId, PartSource, PartStatus, ProjectStatus, part_status,
-        project_status,
+        Origin, PartFrom, PartId, PartSource, ProjectStatus, SoundStatus, project_status,
+        sound_status,
     };
 
     /// CLEAR's records, built a Sound at a time, are NEW's own.
@@ -190,7 +190,7 @@ mod tests {
             let part = p.part(id);
             assert_eq!(part.sound.name.as_str(), name, "{id:?}");
             assert!(matches!(part.origin(), Origin::Slot { .. }), "{id:?}");
-            assert_eq!(part_status(part, p.pool()), PartStatus::Clean, "{id:?}");
+            assert_eq!(sound_status(part, p.pool()), SoundStatus::Clean, "{id:?}");
         }
         let six = p.part(PartId::ALL[5]);
         assert_eq!(six.origin(), Origin::Init(EngineType::Algo));

@@ -195,7 +195,8 @@ pub(super) fn sound_line(
     w.write_str(QUOTE_SHUT.get())?;
     w.write_str(match status {
         PartStatus::Clean => CLEAN.get(),
-        PartStatus::Edited => EDITED.get(),
+        // The Sound's, the kit's or both (ADR 0305): one word on the wire.
+        PartStatus::Edited(_) => EDITED.get(),
         PartStatus::Stale(_) => STALE.get(),
     })?;
     w.write_char('\n')

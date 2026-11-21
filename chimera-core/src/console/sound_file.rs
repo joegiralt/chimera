@@ -11,9 +11,10 @@ use chimera_hal::store::{CHUNK, FileName, Files, ReadSink, Store, StoreError};
 
 use super::put::{SOUNDS, map_pair, numbered, tuning};
 use super::{Arg, Out, Stalled, Words};
+use crate::project::PartCheck;
 use crate::storage::{
     AbFile, Card, CardFault, Check, Crc32, FileError, FileKind, LibId, Pick, Ready, Side,
-    SoundCheck, check_file, check_frame, delete_ab, delete_order, library_file, pick,
+    check_file, check_frame, delete_ab, delete_order, library_file, pick,
 };
 
 /// `/CHIMERA/SOUNDS/S0000012` or `/CHIMERA/MAPS/FADE3C04`, any case: the
@@ -149,7 +150,7 @@ pub fn rm<F: Files>(arg: RmArg, f: &mut F, out: &mut impl Out) -> Result<(), Sta
                 let file = arg.file();
                 match (exists(s, r, file)?, arg) {
                     (false, _) => Err(Fail::NotFound),
-                    (true, PairArg::Sound(_)) => Ok(delete_ab(s, r, file, &mut SoundCheck::new())?),
+                    (true, PairArg::Sound(_)) => Ok(delete_ab(s, r, file, &mut PartCheck::new())?),
                     (true, PairArg::Map(_)) => {
                         let st =
                             |s: &mut F, sd| check_frame(s, r, file.side(sd), FileKind::Controller);
@@ -266,7 +267,7 @@ pub fn get<F: Files, P: Out>(arg: PairArg, f: &mut F, out: &mut P) -> Result<(),
     };
     let r = Card::new()
         .run(f, |s, r| {
-            let mut c = SoundCheck::new();
+            let mut c = PartCheck::new();
             let mut side = |sd| match arg {
                 PairArg::Sound(_) => {
                     c.side(sd);

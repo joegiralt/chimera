@@ -28,8 +28,8 @@ use chimera_core::note_queue::{NoteEvent, NoteKind};
 use chimera_core::params::{EngineType, FilterParams};
 use chimera_core::preset::Sound;
 use chimera_core::project::{
-    Confirmed, Line, LoadLink, PartFrom, PartId, PartSource, PartStatus, ProjectSource,
-    ProjectStatus, ReplaceGuard, part_status,
+    Confirmed, Line, LoadLink, PartFrom, PartId, PartSource, ProjectSource, ProjectStatus,
+    ReplaceGuard, SoundStatus, sound_status,
 };
 use chimera_core::scope::ScopeWriter;
 use chimera_core::storage::{Card, SystemSync};
@@ -239,7 +239,7 @@ fn cc_moves_cutoff() {
     assert_eq!(b.stored(P1, CUTOFF), spec(CUTOFF).min);
     let p = b.ui.project();
     assert_ne!(p.part(P1).sound.stamp(), stamp, "the Sound was written");
-    assert_eq!(part_status(p.part(P1), p.pool()), PartStatus::Edited);
+    assert_eq!(sound_status(p.part(P1), p.pool()), SoundStatus::Edited);
 }
 
 /// CC 1 is INIT's wheel through a route (#876), not a map entry: moving
@@ -248,12 +248,12 @@ fn cc_moves_cutoff() {
 fn cc1_leaves_init_unedited() {
     let mut b = Bench::new(Sound::init(EngineType::Algo));
     let p = b.ui.project();
-    let (stamp, status) = (p.part(P1).sound.stamp(), part_status(p.part(P1), p.pool()));
+    let (stamp, status) = (p.part(P1).sound.stamp(), sound_status(p.part(P1), p.pool()));
     b.pass(&[(1, 127)]);
     b.passes(12);
     let p = b.ui.project();
     assert_eq!(p.part(P1).sound.stamp(), stamp, "the Sound was not written");
-    assert_eq!(part_status(p.part(P1), p.pool()), status);
+    assert_eq!(sound_status(p.part(P1), p.pool()), status);
 }
 
 /// A factory Sound whose LFO 1 moves something keeps CC 1 → LFO 1 DEPTH

@@ -20,8 +20,9 @@ use crate::ui::theme;
 
 pub use chimera_engine::confirm::{
     AlsoUsesAnswer, Answer, Answers, CardChangedAnswer, Choice, ClearAnswer, ClearSceneAnswer,
-    DeleteAnswer, DfuAnswer, LibraryAnswer, LoadAnswer, NameExistsAnswer, Opts, PurgeAnswer,
-    ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer, SaveSceneOverAnswer,
+    DeleteAnswer, DfuAnswer, KitAnswer, LibraryAnswer, LoadAnswer, NameExistsAnswer, Opts,
+    PurgeAnswer, ReloadAnswer, ReloadSceneAnswer, ReplaceAnswer, SaveOverAnswer,
+    SaveSceneOverAnswer,
 };
 
 /// A prompt answer's words on its pill.
@@ -46,6 +47,7 @@ pills!(
     ReplaceAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
     ReloadAnswer { SavePartFirst => "SAVE PART FIRST", Reload => "RELOAD", Cancel => "CANCEL" };
     LibraryAnswer { SavePartFirst => "SAVE PART FIRST", Replace => "REPLACE", Cancel => "CANCEL" };
+    KitAnswer { Replace => "REPLACE", Cancel => "CANCEL" };
     AlsoUsesAnswer { Update => "UPDATE", Leave => "LEAVE" };
     NameExistsAnswer { KeepBoth => "KEEP BOTH", Overwrite => "OVERWRITE THAT ONE" };
     DeleteAnswer { Delete => "DELETE", Cancel => "CANCEL" };
@@ -229,6 +231,19 @@ impl Prompt for LoadLibrary {
         let p = part(self.part);
         let _ = write!(q, "LOAD INTO P{p}?");
         let _ = write!(r, "P{p} IS EDITED");
+    }
+}
+
+/// A DRUM library Sound over a kit in no library file (ADR 0305).
+pub struct KitUnsaved {
+    pub part: PartId,
+}
+
+impl Prompt for KitUnsaved {
+    type Answer = KitAnswer;
+    fn words(&self, q: &mut Line, r: &mut Line) {
+        let _ = write!(q, "LOAD INTO P{}?", part(self.part));
+        let _ = r.write_str("KIT NOT IN LIBRARY");
     }
 }
 

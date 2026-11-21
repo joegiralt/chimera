@@ -337,14 +337,15 @@ fn list_and_read(s: &Slot, adopt: bool) {
         let e = page.entries().iter().flatten().next().unwrap();
         let file = page.file(e).unwrap();
         let (mut p, template) = Project::boxed();
-        read_library_sound(&mut card, &mut st, &mut p, file)
+        let part = PartId::ALL[0];
+        let c: Confirmed<LibraryPart> =
+            ReplaceGuard::check(&p, template, LibraryPart { part, file }).unwrap();
+        let c = ReplaceGuard::kit(&p, template, c).unwrap();
+        let read = read_library_sound(&mut card, &mut st, &mut p, c)
             .out
             .unwrap();
         if adopt {
-            let part = PartId::ALL[0];
-            let c: Confirmed<LibraryPart> =
-                ReplaceGuard::check(&p, template, LibraryPart { part, file }).unwrap();
-            p.adopt(c, None).unwrap();
+            p.adopt(read, None).unwrap();
         }
     }
 }
