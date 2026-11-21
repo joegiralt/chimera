@@ -5,6 +5,10 @@
 //! output is hashed (FNV-1a over the bits) over a note, a release and its
 //! tail.
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use core::mem::MaybeUninit;

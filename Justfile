@@ -761,6 +761,9 @@ clippy:
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features bank2-gate -- -D warnings
     cargo clippy -p chimera-core --features bank2-gate --all-targets -- -D warnings
+    # bank2's tests, the door's proxies among them (#811, #1018).
+    cargo clippy -p chimera-core --features bank2,test-support --all-targets -- -D warnings
+    cargo clippy -p chimera-engine --features bank2,test-support --all-targets -- -D warnings
     cargo clippy -p chimera-core --features walk-styles --test tape_walk_glyph_test -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
