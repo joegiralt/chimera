@@ -414,11 +414,16 @@ impl Renderer {
                 }
             }
             VizType::CompressorCurve => {
-                use crate::dsp::comp::RATIOS;
-                let last = RATIOS.len() - 1;
-                let ratio = RATIOS[((a(1) * last as f32 + 0.5) as usize).min(last)];
-                let key = f.fx.comp.key.name();
-                viz::compressor(display, -40.0 + 40.0 * a(0), ratio, f.master_gr_db, key);
+                // The key that plays: FULL while bank 2 needs an update.
+                let comp = &f.fx.comp;
+                let key = comp.key.in_effect(crate::comp_key::door::state()).name();
+                viz::compressor(
+                    display,
+                    -40.0 + 40.0 * a(0),
+                    comp.ratio(),
+                    f.master_gr_db,
+                    key,
+                );
             }
             VizType::About => crate::ui::about_page::draw_viz(display, f.bank2.as_ref()),
             VizType::Orbit => orbit::orb(display, &f.orbit, f.ctx.ring),
