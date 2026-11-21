@@ -458,7 +458,7 @@ async function main() {
     .filter((p) => /^(PART3(_SND)?|CHORUS|DELAY|REVERB|TAPE|COMP)\./.test(p.addr) && p.addr !== "REVERB.TYPE");
   await sweep(mixerShown, " MIXER", new Set(), (a) => /\.(RESERVE|MAX_VOICES)$/.test(a));
   // 0.4's mixer params (ADR 0296 SMART EQ, ADR 0302 the delay's SYNC): each described, so each in the sweep above.
-  for (const a of ["PART3.ROLE", "COMP.SMART_EQ", "COMP.AMOUNT", "REVERB.ROLE", "DELAY.SYNC", "DELAY.TIME", "DELAY.NOTE"])
+  for (const a of ["PART3.ROLE", "COMP.SMART_EQ", "COMP.AMOUNT", "COMP.KEY", "COMP.MAKEUP", "REVERB.ROLE", "DELAY.SYNC", "DELAY.TIME", "DELAY.NOTE"])
     if (!mixerShown.some((p) => p.addr === a)) fail(a, "describe", "not among the params MIXER shows");
   // The delay's TIME cell is the DELAY panel: the ms under FREE, the note
   // under SYNC. The sweep left SYNC on FREE.

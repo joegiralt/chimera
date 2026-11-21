@@ -19,3 +19,6 @@ pub const PART_EQ_DOOR_ADDR: u32 = VA_SOLO_DOOR_ADDR + DOOR_TABLE_STRIDE;
 pub const PART_PEAKS_DOOR_ADDR: u32 = PART_EQ_DOOR_ADDR + DOOR_TABLE_STRIDE;
 /// The stereo's table (`stereo::door::StereoDoor`, ADR 0294): the next.
 pub const STEREO_DOOR_ADDR: u32 = PART_PEAKS_DOOR_ADDR + DOOR_TABLE_STRIDE;
+/// The compressor's KEY's table (`comp_key::door::KeyDoor`, ADR 0303): the
+/// next.
+pub const COMP_KEY_DOOR_ADDR: u32 = STEREO_DOOR_ADDR + DOOR_TABLE_STRIDE;

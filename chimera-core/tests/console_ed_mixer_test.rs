@@ -369,6 +369,35 @@ fn the_delays_time_cell_is_the_note_under_sync() {
     assert!(lines[0].ends_with(" \"1/8\""), "{lines:?}");
 }
 
+/// The compressor's KEY (ADR 0303) is set by its option's name, or by
+/// its index where the name is two words (`PART 3`: a name is one word,
+/// as for every choice), and `since` says the one line.
+#[test]
+fn the_compressors_key_is_set_by_name_and_said_in_since() {
+    let mut f = Fake::new();
+    let (_, mut m, _, _) = since(&mut f, 0);
+    for (word, stored, text) in [
+        ("HIT", 3.0, "HIT"),
+        ("#6", 6.0, "PART 3"),
+        ("FULL", 0.0, "FULL"),
+    ] {
+        set(&mut f, "COMP.KEY", word);
+        assert_eq!(
+            get(&mut f, "COMP.KEY"),
+            (stored, text.to_string()),
+            "{word}"
+        );
+        let (lines, n, _, _) = since(&mut f, m);
+        m = n;
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("val COMP.KEY "), "{lines:?}");
+        assert!(lines[0].ends_with(&format!(" \"{text}\"")), "{lines:?}");
+    }
+    assert_eq!(get(&mut f, "COMP.RATIO").0, 0.0);
+    set(&mut f, "COMP.RATIO", "MAX");
+    assert_eq!(get(&mut f, "COMP.RATIO"), (8.0, "MAX".to_string()));
+}
+
 #[test]
 fn the_mixer_copy_holds_its_slots() {
     assert_eq!(ed_slots_used(Schema::Mixer), ED_MIXER_SLOTS);

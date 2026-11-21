@@ -156,7 +156,7 @@ OK
 page 8 MST of 34
 panel MST -
 param COMP.THRESH "THRESH" cont lin 0 1 0.0078125 0.7 m
-param COMP.RATIO "RATIO" choice lin 0 7 1 0 -
+param COMP.RATIO "RATIO" choice lin 0 8 1 0 -
 opt COMP.RATIO 0 "1:1"
 opt COMP.RATIO 1 "1.5:1"
 opt COMP.RATIO 2 "2:1"
@@ -165,15 +165,27 @@ opt COMP.RATIO 4 "4:1"
 opt COMP.RATIO 5 "6:1"
 opt COMP.RATIO 6 "10:1"
 opt COMP.RATIO 7 "20:1"
+opt COMP.RATIO 8 "MAX"
 param COMP.ATK "ATK" cont lin 0 1 0.0078125 0.5 m
 param COMP.REL "REL" cont lin 0 1 0.0078125 0.5 m
-param COMP.MAKEUP "MAKEUP" cont lin 0 1 0.0078125 0 m
+param COMP.KEY "KEY" choice lin 0 9 1 0 -
+opt COMP.KEY 0 "FULL"
+opt COMP.KEY 1 "LOW"
+opt COMP.KEY 2 "HIGH"
+opt COMP.KEY 3 "HIT"
+opt COMP.KEY 4 "PART 1"
+opt COMP.KEY 5 "PART 2"
+opt COMP.KEY 6 "PART 3"
+opt COMP.KEY 7 "PART 4"
+opt COMP.KEY 8 "PART 5"
+opt COMP.KEY 9 "PART 6"
 param COMP.MIX "MIX" cont lin 0 1 0.0078125 1 m
 OK
 page 9 LVL of 34
 panel LVL -
 param COMP.VOL "VOL" cont lin 0 1 0.0078125 1 m
 param COMP.PAN "PAN" cont lin -1 1 0.015625 0 m
+param COMP.MAKEUP "MAKEUP" cont lin 0 1 0.0078125 0 m
 param COMP.SMART_EQ "SMART EQ" toggle lin 0 1 1 0 -
 opt COMP.SMART_EQ 0 "OFF"
 opt COMP.SMART_EQ 1 "ON"

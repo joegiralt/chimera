@@ -227,7 +227,7 @@ pub fn fx_on() -> FxParams {
             ..Default::default()
         },
         comp: CompParams {
-            ratio: 3,
+            ratio: chimera_core::dsp::comp::Ratio::ALL[3],
             makeup: 0.1,
             ..Default::default()
         },

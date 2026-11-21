@@ -12,11 +12,11 @@ pub use chimera_engine::{MidiChannel, MidiNote, Velocity};
 #[cfg(feature = "probe")]
 pub use chimera_engine::probe;
 pub use chimera_engine::{
-    addr, audio_out, block, board, boot, budget, clock_plan, dsp, factory, hw, import, in_place,
-    instrument, lfo_glyph, meter, midi_in, midi_map, mod_path, modulation, mpe, name, note_queue,
-    nrpn, orbit, out_ring, params, part, part_eq, part_peaks, perf, played, preset, project,
-    randomize, reset, scala_name, scope, source_table, stereo, storage, stream, sym_alloc, taps,
-    tracked, triple, tuning, voice_alloc, voice_limit,
+    addr, audio_out, block, board, boot, budget, clock_plan, comp_key, dsp, factory, hw, import,
+    in_place, instrument, lfo_glyph, meter, midi_in, midi_map, mod_path, modulation, mpe, name,
+    note_queue, nrpn, orbit, out_ring, params, part, part_eq, part_peaks, perf, played, preset,
+    project, randomize, reset, scala_name, scope, source_table, stereo, storage, stream, sym_alloc,
+    taps, tracked, triple, tuning, voice_alloc, voice_limit,
 };
 
 // The engine's TAPE (`bank2` brings it) with the UI that loads its sources,

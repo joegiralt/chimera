@@ -34,6 +34,7 @@ use chimera_engine::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use chimera_engine::dsp::algo::plan::{EvalPlan, OPS};
 use chimera_engine::dsp::algo::tx::FEEDBACK_CYCLES;
 use chimera_engine::dsp::algo::waves::WaveId;
+use chimera_engine::dsp::comp::Ratio;
 use chimera_engine::dsp::engines::{EngineSlot, SlotKind};
 use chimera_engine::dsp::filter::{FilterKind, FilterMode, K2040Voice};
 use chimera_engine::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
@@ -499,7 +500,8 @@ fn worst_tape(s: &mut AudioShared) {
 /// three DAC pairs (`MasterComp::process` always runs every pair).
 fn worst_comp(s: &mut AudioShared) {
     let c = &mut s.fx.comp;
-    (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) = (0.0, 7, 0.0, 0.0, 0.5, 1.0);
+    (c.thresh, c.ratio, c.attack, c.release, c.makeup, c.mix) =
+        (0.0, Ratio::ALL[7], 0.0, 0.0, 0.5, 1.0);
 }
 
 const ROUTING_ROWS: usize = 93;
