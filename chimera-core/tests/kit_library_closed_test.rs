@@ -105,7 +105,12 @@ fn closed_is_handled_not_silent() {
 
     // Open: the file's kit (the default) lands, after its question.
     DOOR_CELL.open_host();
-    let c = ReplaceGuard::check(&p, t, LibraryPart { part: P1, file }).unwrap();
+    // (The Sound loaded closed reads Edited once open: its slot was
+    // written as a closed door writes.)
+    let c = match ReplaceGuard::check(&p, t, LibraryPart { part: P1, file }) {
+        Ok(c) => c,
+        Err(n) => n.into_pending().anyway(&p),
+    };
     let c = ReplaceGuard::kit(&p, t, c)
         .unwrap_err()
         .into_pending()

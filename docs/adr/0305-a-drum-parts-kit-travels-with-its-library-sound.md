@@ -1,72 +1,79 @@
-# 0305. A DRUM Part's kit travels with its library Sound, and a kit edit makes the Part Edited
+# 0305. A DRUM Part's kit travels with its library Sound, and only a library load weighs it
 
 - **Status:** Proposed
-- **Deciders:** firmware (#949, verified on 0.4 dac1fa97); the owner's review decides
+- **Deciders:** the owner's reviews of PR #1058 (2026-11-21: the design correction below is their ruling), firmware
 
 ## Context
-A DRUM Part keeps its kit on the Part, beside its Sound (ADR 0265): `project::Kits`, in ITCM, saved with the project's Part records (`Kit`, then a `KitSound` a pad, ADR 0269, 0270). Two things followed, both found in DRUM slice 1's review and verified on 0.4 dac1fa97 with host tests (private issue #949):
+A DRUM Part keeps its kit on the Part, beside its Sound (ADR 0265): `project::Kits`, in ITCM, saved with the project's Part records (`Kit`, then a `KitSound` a pad, ADR 0269, 0270). Two things followed, found in DRUM slice 1's review and verified on 0.4 dac1fa97 with host tests (private issue #949):
 
 1. **A library save dropped the kit.** `encode_library_part` wrote the Sound and the kept map record only; `adopt` and `load_part` never wrote `kits`. A DRUM Part with all 12 pads changed, saved and loaded back, came out with 12 of 12 pads different from the source: the Sound landed on INIT's kit, or on whatever kit the target Part had.
-2. **A kit edit was invisible to the replace guard.** `part_status` compared the Sound with its slot and nothing else, so a Part with only its kit edited read Clean and a load or replace went ahead with no SAVE PART FIRST prompt.
+2. **Nothing asked before a kit was lost.** `part_status` compared the Sound with its slot and nothing else.
 
-A project's save and load were right (0 of 12 pads differ).
+A project's save and load were right.
 
 What the code had:
-- A library file is a Sound file (`FileKind::Sound`): `Engine`, `Build`, `Note`, the Sound's records, a Part's kept map record. `SoundCheck` refused `Kit` and `KitSound` there as a project's own records (`Corrupt`).
+- A library file is a Sound file (`FileKind::Sound`): `Engine`, `Build`, `Note`, the Sound's records, a Part's kept map record. `SoundCheck` refused `Kit` and `KitSound` there as a project's own records.
 - A library load reads the file into the pool's scratch Sound (`read_library_sound`), maybe streams a source over several passes, then `adopt` stores the scratch in a slot and loads the Part from that slot. A refusal changes nothing.
-- A pool slot holds a Sound's records and, closed, its map record. It holds no kit.
-- SAVE PART FIRST saves to a pool slot (`part_actions`), then asks the guard again.
+- A pool slot holds a Sound's records and, closed, its map record. It holds no kit. SAVE PART FIRST saves to a pool slot.
+
+### The first cut, and why it was wrong
+This PR's first cut made a kit edit part of `part_status` and of `PartSource`'s guard: any replace of a DRUM Part with an edited kit asked SAVE PART FIRST. Both reviews failed it:
+- A program change on a DRUM Part with a kit-only edit was dropped silently (the guard refused it).
+- SAVE PART FIRST on a kit-only edit saved a new slot on every press and stayed Edited: a slot can't hold a kit.
+- A kit edited on DRUM, the Part then switched to another engine: a DRUM library load replaced the dormant kit unasked, and an edit after the confirmation passed its witness.
+- A project load marked each kit as safe, though the project's file is its only copy and the next save writes over it.
 
 ## Decision
-1. **The library file carries the kit as records after the Sound's.** A DRUM Part's save (`save_library_part`) writes, after `encode_library_part`'s records, the project's own `Kit` record (157 B) and 12 `KitSound` records (58 B each), through `put_kit` and `put_kit_sounds`: 905 B a file with their heads. A Part on any other engine writes none, and neither does `save_library_sound` (a Sound with no Part has no kit). No new tag, no new file kind, no version.
-2. **A Sound file passes over kit records.** `SoundCheck` treats `Kit` and `KitSound` after `Engine` as it treats `Build` and `Note`: not the Sound's, any repeat, any length. So every reader of a Sound file (the save's read-back, the console's `put`, a delete's check, a slot's decode) takes the new files. Before `Engine` they are `Corrupt`, as any record is.
-3. **A library load reads them onto a scratch kit.** `read_library_sound` decodes through `PartDecoder`: the `LibraryDecoder` and the scratch kit (`Kits::scratch_mut`, a seventh kit after the Parts', which no `PartId` reaches). In pass 2 the file's header resets the scratch kit to `Kit::DEFAULT`, and each kit record lands on it through the project's decoders (`get_kit`, `get_kit_sound`); the wrong length or a pad there is none of is `Bounds` and fails the read. Pass 1 leaves kit records to `SoundCheck`: a bad one is found in pass 2, where only the scratch is written, and only `adopt` reads the scratch.
-4. **Adopting a DRUM Sound replaces the Part's kit** with the scratch kit, after the Part's load, so a refusal still changes nothing. A Sound of another engine leaves the Part's kit as it is (ADR 0265: every Part has one, and an engine switch keeps it).
-5. **A file with no kit loads the default kit.** A DRUM library Sound from before this ADR, or one a Sound's own save wrote, has no kit records: the scratch kit is still `Kit::DEFAULT`, and that lands. It does not keep the target Part's kit: a stale kit under a loaded Sound's name is the bug. No user has such a file (DRUM is 0.4's); it must load safely, not sound the same.
-6. **Each kit has a mark, and a DRUM Part off its mark is Edited.** `KitMark` (`Init`, or `At` the kit's CRC, the CRC of its records) is set to the kit as it is by what loads or holds it: NEW (`Init`), a project load (each Part's kit as read), a library load's adopt, and a DRUM Part's library save (`Project::library_saved`, which was `reset_shift`: the UI calls it after a save, as before). `part_status(&Project, PartId)` is the Sound's status, and `Edited` too while the Part plays DRUM and its kit's CRC is not its mark's. Turned back to the marked values it is Clean again. A Part on another engine never reads its kit: out of play, it asks nothing.
-7. **The Sound's own status keeps its meaning under a new name.** `sound_status(&Part, &Pool)` is what `part_status` was. What a slot can answer weighs it: `part_actions` and `apply_part_action`, a save's Stale Parts, a project save's `differ`, a program change and KEEP MAP. The Part's `*` (`PartMark`) and the replace guard weigh `part_status`.
-8. **The guard's witness holds the kit.** `Target for PartSource` hashes `KitSeen`'s witness (the kit's CRC, inverted while it is edited; 0 for a Part not on DRUM) after the Sound's CRC and Origin: a kit edit between the confirmation and the replace refuses it (`Changed`). `LibraryPart` shares both.
-9. **A slot holds no kit, and nothing here pretends it does.** A slot load, INIT and a revert leave the Part's kit as it is (ADR 0265, unchanged). A save to a slot saves the Sound and leaves the kit's mark: a kit-edited Part stays Edited after SAVE TO PROJ, and SAVE PART FIRST on a kit edit saves the Sound, then asks again (REPLACE or CANCEL). Only a library save, which holds the kit, clears it. That is the honest state until slots carry kits: private issue #1050.
-10. **Bank 2, behind `KitDoor`.** The kit's records, CRC, mark, landing and the DRUM test are `project::kit_library::kern`, an S4 group. The door's own table is full (ADR 0283), so `KitDoor` (a mark and six entries: `put`, `read`, `land`, `settle`, `saved`, `seen`, 28 B) has its own slot in the S4 groups' tables, a stride after the stereo's (`KIT_DOOR_ADDR` 0x08180440, two strides' room, `KIT_DOOR_ROOM`), checked at boot with the others (`kit_door_ok`). Bank 1 gains the door's calls and the boot's check. Closed, a save writes no kit, a load reads none and leaves the Part's kit, and no kit edit is seen: as before this ADR.
+The correction (the owner's ruling, 2026-11-21): **a kit lives on the Part and is touched only by a library load of a DRUM Sound. So the kit is at risk in exactly one operation, and the guard weighs it there and nowhere else.**
+
+### The file
+1. **The library file carries the kit as records after the Sound's.** A DRUM Part's save writes, after `encode_library_part`'s records, the project's own `Kit` record (157 B) and 12 `KitSound` records (58 B each) through `put_kit` and `put_kit_sounds`: 905 B a file with their heads. No new tag, no new file kind, no version.
+2. **What a save writes is a type.** `PartSave::{Drum { sound, kit }, Sound(sound)}`, built by the one total `Project::part_save` from the Part's engine: no save can pair another engine's Sound with a kit. `save_library_sound` (a Sound with no Part) is `PartSave::Sound`.
+3. **A closed door is a value.** The kit's writer answers `KitPut::{Written(KitCrc), NotDrum, Closed}`. A DRUM Part's save with bank 2 closed is refused whole and its file deleted (`LibNote::KitClosed`, `KIT NOT SAVED · NEEDS UPDATE` on the error line, no SAVED toast): its file would hold no kit under a kit's name.
+4. **A save returns its proof.** `save_library_part` returns `SavedPart { part, id, kit: Option<KitMark> }`, the mark made from the CRC of the records written; `Project::library_saved(SavedPart)` (which was `reset_shift`) consumes it. Nothing else marks a kit as the library's.
+
+### The read
+5. **Kit records are checked in pass 1 and written in pass 2.** `PartDecoder` (the `LibraryDecoder`, the scratch kit and a `KitScan`) sends every event through `KitDoor::scan`, with no target in pass 1; `PartCheck` does the same for a save's read-back. So a malformed kit is refused with its own error (`Bounds`, `Corrupt`) before anything is written; a failure in pass 2 alone would read `BadCrc`.
+6. **One accumulator, the project decoder's.** `codec::KitRead { kit, pads }` is what `ProjectCheck` kept as two fields: a second `Kit` or a pad's second `KitSound` is `Corrupt`, the wrong length or a pad there is none of `Bounds`. The library adds its own: a kit record in a file whose `Engine` is not DRUM's, or before `Engine`, is `Corrupt`; `KitSound`s with no `Kit` are a kit in part, `Corrupt`. `scan` names every `RecordTag`: a new tag is weighed there before it compiles. A value this firmware reads as another counts as one of the read's skips (`SKIPPED`).
+7. **A read answers `FileKit::{Absent, Whole(pads)}`.** A `Kit` whose pads lack their own `KitSound` is whole: those pads take the Sound's FILTER and AMP at the landing (ADR 0269, `codec::fill_pad_sounds`, shared with the project decoder). With the door closed the read says `ReadKit::Closed`.
+8. **A read is the only thing `adopt` takes.** `read_library_sound(.., go: Confirmed<LibraryKit>) -> ReadPart`, and `Project::adopt(ReadPart, staged)`. `ReadPart` is not `Copy`; it holds the confirmation, the `LibRead`, the file's kit and the scratch's epoch, which every hand-out of the scratch to a writer moves (`Pool::scratch`, `scratch_kept`). A kit or Sound from another file or an earlier read can't land (`AdoptError::Changed`). A project load can't run while a library load's source streams (the UI's card jobs exclude each other: `a_pending_load_blocks_every_other_card_start`); the epoch holds without that.
+9. **The landing is one exhaustive match on the Sound's engine and the file's kit** (`kern::land`): DRUM with a whole kit takes the scratch kit, fills its missing pad sounds and marks it; DRUM with none takes `Kit::DEFAULT`, never the target's stale kit; any other engine leaves the Part's kit (every Part has one, and an engine switch keeps it, ADR 0265).
+10. **A file with no kit loads the default kit.** A DRUM library Sound from before this ADR, or a Sound's own save, has no kit records. No user has such a file (DRUM is 0.4's); it must load safely, not sound the same.
+
+### The guard
+11. **`PartSource` does not weigh the kit.** A slot load, INIT, RELOAD, an engine switch and a MIDI program change replace the Sound and leave the kit: they ask about the Sound alone (`sound_status`), as before this PR.
+12. **A library load asks twice, in types.** `LibraryPart` is the Sound's question, as `PartSource`'s. Its confirmation loads nothing: `ReplaceGuard::kit(Confirmed<LibraryPart>)` makes the only `LibraryKit`, whose confirmation is what `read_library_sound` takes. So the Sound's SAVE PART FIRST flow runs first and whole, then the kit's question.
+13. **The kit is at risk** when the file may be a DRUM Sound's (the listing's peeked engine, carried in `LibFile.engine`; unknown counts) and the Part's kit is neither `Kit::DEFAULT` nor the kit its mark says the library holds: whatever engine the Part plays now, and whatever loaded the kit. `KitSeen::{Closed, Default(crc), InLibrary(crc), Unsaved(crc)}` says which.
+14. **Its prompt is `Prompt::KitUnsaved`: `LOAD INTO P1?` / `KIT NOT IN LIBRARY`, REPLACE or CANCEL** (`KitAnswer`), opening on CANCEL. Never SAVE PART FIRST: a slot can't save a kit. To keep the kit, cancel and SAVE TO LIBRARY.
+15. **`LibraryKit`'s witness always covers the kit:** the Part's own witness, then `KitSeen`'s tag and CRC, never empty. `Confirmed<LibraryKit>::still` also holds the Part to the witness the Sound's question confirmed. An edit of the Sound or the kit after either answer refuses the adopt, in every engine state.
+16. **`KitMark` is the library's copy, and only the library sets it:** `Option<KitCrc>` in one representation, set by a library load's landing and by `library_saved`. A project load sets none: a kit that came from a project is not in the library until it is saved there. `KitCrc` is its own type; a Sound's CRC can't stand in for it.
+
+### The status
+17. **`SoundStatus` and `PartStatus` are two types.** `sound_status(&Part, &Pool) -> SoundStatus` is what `part_status` was, and every caller that asks what a slot can answer takes it by type (the guards, Part actions, a save's Stale Parts, `differ`, a program change, KEEP MAP, the UI's Part mark). `PartStatus::{Clean, Edited(Edits), Stale(slot)}` with `Edits::{Sound, Kit, Both}` is made only by the total `PartStatus::of(SoundStatus, KitState)`; `part_status(&Project, PartId)` reads it, and `test_support::same` compares it. No guard reads it. The UI's Part mark stays the Sound's for now: a `*` no SAVE TO PROJ can clear would mislead until slots hold kits (#1050).
+
+### Flash
+18. **Bank 2, behind `KitDoor`.** The kit's records, scan, CRC, mark and landing are `project::kit_library::kern`, an S4 group. The door's own table is full (ADR 0283), so `KitDoor` (a mark and five entries: `put`, `scan`, `found`, `land`, `seen`, 24 B) has its own slot in the S4 groups' tables, a stride after the compressor KEY's (`KIT_DOOR_ADDR` 0x08180450, four strides' room, `KIT_DOOR_ROOM`), checked at boot with the others (`kit_door_ok`). The kit's four coders, `KitRead` and `fill_pad_sounds` are inlined: a project's codec keeps its one copy in bank 1 and `kern` has its own in bank 2.
+19. **`SoundCheck` passes over `Kit` and `KitSound` after `Engine`,** as it does `Build` and `Note`, in every Sound-kind file. Narrowing that to a library Part's file would take a mode in `SoundCheck` and a second constructor at each of its generic users (the console's `put`, its delete and its pair judge name `SoundCheck` by type), all bank 1's. The library's own readers (`PartDecoder`, `PartCheck`) check every kit record; a pool slot's or a project `Slot`'s decode skips one, and nothing writes one there.
 
 ## Alternatives considered
-- **The kit inside the pool's slots** (a slot's entry ends with the kit's records, as it ends with a kept map record): the whole answer, since a DRUM Sound would then be one thing in a slot, the library and a project, and SAVE PART FIRST would hold the kit. It changes the pool's entry, its CRC and `matches`, the project file's `Slot` context, pass 1's costs, a program change's recall copy and `ed`, all bank 1's. Too wide for this fix; it is #1050, and this ADR's records and marks carry over to it.
-- **A slot or INIT load resets the kit to the default.** Uniform ("a DRUM Sound's load brings its kit, or the default"), but RELOAD and a program change would wipe a kit no slot can give back.
-- **The kit as the project's alone, like the Part's mix: no Part status.** Then a library load, the one thing that replaces a kit outside a project load, would replace it unasked.
-- **A slot save clears the kit's mark.** The prompt would close after SAVE PART FIRST and the library load would then discard a kit saved nowhere.
-- **A new record tag, or a `Kit` file kind.** The project's records already say it, with their decoders and lossy rules; a second encoding is a second thing to keep right.
-- **The kit's baseline as a copy, not a CRC.** 964 B a Part against 8 B.
+- **The kit in every guard and in the Part's status** (this PR's first cut): see above.
+- **The kit inside the pool's slots** (a slot's entry ends with the kit's records): then a DRUM Sound is one thing in a slot, the library and a project, and SAVE PART FIRST could hold a kit. It changes the pool's entry, its CRC and `matches`, the project file's `Slot` context, pass 1's costs, a program change's recall copy and `ed`, all bank 1's: private issue #1050.
+- **A slot or INIT load resets the kit to the default.** RELOAD and a program change would wipe a kit no slot can give back.
+- **A project load settles the kit as safe.** The project's file is its only copy then, and the next save writes over it.
+- **SAVE PART FIRST on the kit's prompt.** It saves to a slot; a slot holds no kit.
+- **A new record tag, or a `Kit` file kind.** The project's records already say it, with their decoders and lossy rules.
+- **The kit's mark as a copy, not a CRC.** 964 B a Part against 8 B.
 - **Decoding the kit straight onto the Part at the read.** The read comes before the budget and a streamed source; `adopt` may still refuse.
+- **A closed-door DRUM save that writes the Sound alone.** A file named for a kit that loads the default kit.
 
 ## Consequences
-- A DRUM Part's library file is 905 B longer. A released firmware (0.3 and before) has no `Kit` tag: it skips the records as unknown ones and loads the Sound. A 0.4 build from before this ADR refuses the new files as `Corrupt`; none shipped.
-- A `Kit` or `KitSound` record in a project's `Slot` context is now passed over instead of refused. #1050 will read it.
-- `Kits` grows by the scratch kit (964 B) and six marks (48 B): 5,828 B to 6,840 B, in ITCM (ADR 0266, 0286), with the margin kept (`itcm.x`'s assert; `memory_budget_test`).
-- A Part's status costs one kit CRC (two while its mark is `Init`) for a DRUM Part, about 0.9 KB hashed, on the paths that already hash the Sound.
-- `part_status`'s signature changed; its 69 test uses that mean the Sound's status are `sound_status` now.
-- A project load marks each kit as loaded: a kit edited before the project's save reads Clean after its load, where a Sound edited from its slot still reads Edited. The kit has no slot to differ from until #1050.
-- **Bank 1 grows by 460 B on `orbit`, an ADR 0198 exception.** What it gains is the door's side only: `KitDoor`'s calls (a save's `put`, a load's `read` and `land`, a project load's `settle`, `library_saved`, the one out-of-line `seen` the status and the witness share), `part_status` over `sound_status`, the boot's `kit_door_ok`, the marks' build and reset, and the scratch kit as a seventh in the kits' one loop. The kit's four coders are inlined (`put_kit`, `get_kit`, `put_kit_sounds`, `get_kit_sound`): a project's codec keeps its one copy in bank 1 as before, and `kern` has its own in bank 2. A first cut cost 956 B; the DRUM test, the scratch's reset and the witness's fold moved behind the door. Bank 1 on `orbit` is 906,444 B, 11,060 B under the stock bootloader's SD-flash limit (917,504 B).
-- **Bank 2 grows by 1,568 B on `orbit`,** all in S4: 586,944 B used, S4-S5 191,360 B free; S0-S3 unchanged at 7,072 B free.
-
-Every set against origin/0.4 dac1fa97 (its budget lines are its measure: checked on `orbit`, `default`, `bank2-gate` and `fault-inject`), the lines raised by exactly these:
-
-| Set | Bank 1 (B) | Bank 2 used (B) |
-|---|---:|---:|
-| orbit | +460 | +1,568 |
-| default | +520 | +1,600 |
-| bank2-gate | +504 | +1,568 |
-| orbit,usb-config-writer | +476 |  |
-| fault-inject | +304 |  |
-| bench-algo | +316 |  |
-| bench-algo,master-tape | +300 |  |
-| bench-routing | +308 |  |
-| bench-memory | +328 |  |
-| bench-stress | +320 |  |
-| bench-orbit | +308 |  |
-| bench-tape | +324 |  |
-| filter-probes | +304 |  |
+- A DRUM Part's library file is 905 B longer. A 0.4 build from before this ADR refuses the new files as `Corrupt`; none shipped.
+- A kit loaded from a project asks before a DRUM library load even if it once came from the library: the mark is not stored. Saving it to the library answers it.
+- `Kits` grows by the scratch kit (964 B) and six marks (48 B): 5,828 B to 6,840 B, in ITCM (ADR 0266, 0286), with the margin kept. `Pool` gains the scratch's epoch (2 B).
+- `part_status`'s old meaning is `sound_status` and its type `SoundStatus`; its test uses were renamed.
+- FLASH_DELTA
 
 ## Sources
-- private issue #949 and its verification comment (2026-11-20); the verifier's host tests.
-- ADR 0265 (the kit on the Part), 0269 (pad sounds), 0270 (TONAL's byte), 0087 (the pool), 0198 and 0251 (bank 1 frozen), 0266 and 0286 (ITCM), 0253 (KEEP MAP's status).
-- `chimera-engine/src/project/kit_library.rs`, `kit_library/kern.rs`, `library.rs`, `marks.rs`, `guard.rs`, `codec.rs`; `chimera-core/tests/kit_library_test.rs`, `kit_library_closed_test.rs`.
+- private issue #949 and its verification comment (2026-11-20); PR #1058's two reviews and the ruling on them (2026-11-21).
+- ADR 0265 (the kit on the Part), 0269 (pad sounds), 0270 (TONAL's byte), 0087 (the pool), 0198 and 0251 (bank 1 frozen), 0266 and 0286 (ITCM), 0283 (the S4 tables), 0303 (the table before this one).
+- `chimera-engine/src/project/kit_library.rs`, `kit_library/kern.rs`, `library.rs`, `marks.rs`, `guard.rs`, `codec.rs`; `chimera-core/tests/kit_library_test.rs`, `kit_library_closed_test.rs`, `library_ui_test.rs`, `midi_program_test.rs`.
