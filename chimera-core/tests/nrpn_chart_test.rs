@@ -279,7 +279,8 @@ impl Bank {
 
 /// `steps` and Index7 count values a step apart: every stepped param
 /// steps by 1 between whole bounds, but an ALGO operator's FDBK, which
-/// steps by a tenth (ADR 0299) and so counts 0..=70.
+/// steps by a tenth (ADR 0299) and so counts 0..=70, and DELAY's NOTE, a
+/// place in its notes by tenths of 0..1 (ADR 0306), 0..=10.
 #[test]
 fn stepped_params_step_by_one() {
     use chimera_core::dsp::algo::params::{AlgoOpParams, Fdbk};
@@ -292,16 +293,17 @@ fn stepped_params_step_by_one() {
     for b in BlockRef::ALL {
         for s in b.specs().iter().filter(|s| s.kind == ParamKind::Stepped) {
             let fdbk = matches!(b, BlockRef::AlgoOp(_)) && s.id == AlgoOpParams::FEEDBACK;
-            assert_eq!(
-                s.step,
-                if fdbk { Fdbk::STEP } else { 1.0 },
-                "{b:?} {}",
-                s.ident
-            );
-            let n = if fdbk {
-                u16::from(Fdbk::MAX.get())
-            } else {
-                (s.max - s.min) as u16
+            let note = b == BlockRef::Delay && s.id == chimera_core::dsp::delay::DelayParams::NOTE;
+            let want = match (fdbk, note) {
+                (true, _) => Fdbk::STEP,
+                (false, true) => 0.1,
+                (false, false) => 1.0,
+            };
+            assert_eq!(s.step, want, "{b:?} {}", s.ident);
+            let n = match (fdbk, note) {
+                (true, _) => u16::from(Fdbk::MAX.get()),
+                (false, true) => 10,
+                (false, false) => (s.max - s.min) as u16,
             };
             assert_eq!(nrpn::steps(s), n, "{b:?} {}", s.ident);
             assert!(

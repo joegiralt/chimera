@@ -367,6 +367,17 @@ fn every_engine_variant_is_a_panel() {
     );
 }
 
+/// DELAY's note is a place in its list, stored `i / 10` (ADR 0302): a
+/// stepped param, so a number between two notes lands on one, on the box
+/// and from `ed set` alike (#1055, ADR 0306).
+#[test]
+fn the_delays_note_is_stored_on_a_note() {
+    let mut f = fake(EngineType::Algo);
+    set(&mut f, "DELAY.NOTE", "0.55");
+    let (stored, _) = get(&mut f, "DELAY.NOTE");
+    assert!((stored - 0.6).abs() < 1e-6, "{stored}");
+}
+
 /// A param line's kind is its spec's: a named one (`choice`, `toggle`)
 /// picks by name; else `cont` a `ParamKind::Continuous`, `stepped` one
 /// `quantize` rounds to its step (`Stepped`, `Enum`). The editor snaps

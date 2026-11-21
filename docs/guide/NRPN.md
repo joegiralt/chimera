@@ -442,7 +442,7 @@ Each release also ships this chart as `NRPN.json`, for a script that builds a co
 | DENSITY | 21:9 (2697) | 14-bit | 0 to 16383, lowest to highest |
 | PITCH | 21:10 (2698) | MSB | 0 to 48 (-24 to 24) |
 | TEXTURE | 21:11 (2699) | 14-bit | 0 to 16383, lowest to highest |
-| NOTE | 21:13 (2701) | 14-bit | 0 to 16383, lowest to highest |
+| NOTE | 21:13 (2701) | MSB | 0 to 10 |
 
 ### REVERB
 

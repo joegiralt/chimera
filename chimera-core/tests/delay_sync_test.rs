@@ -759,3 +759,19 @@ fn host_cost() {
         println!("{name}: {best:.0} ns a block ({sum:e})");
     }
 }
+
+/// A project stored with NOTE between two notes (an editor's drag before
+/// NOTE was stepped, ADR 0306) loads to the nearest note, and the engine
+/// reads it through `DelayNote::at` as before.
+#[test]
+fn an_off_step_note_loads_to_the_nearest() {
+    let mut saved = FxParams::default();
+    saved.delay.write(DelayParams::NOTE, 0.55);
+    let mut rec = RecordBuf::new();
+    encode_block(BlockRef::Delay, &saved.delay, None, &mut rec);
+    let mut fx = FxParams::default();
+    decode_block(rec.as_slice(), &[], &[], Some(&mut Fx(&mut fx))).unwrap();
+    let v = fx.delay.get(DelayParams::NOTE);
+    assert_eq!(fx.delay.note(), DelayNote::at(v));
+    assert!((v - 0.6).abs() < 1e-6, "{v}");
+}

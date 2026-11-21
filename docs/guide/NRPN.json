@@ -5678,9 +5678,9 @@
       "msb": 21,
       "lsb": 13,
       "nrpn": 2701,
-      "kind": "14bit",
+      "kind": "msb",
       "min": 0,
-      "max": 16383,
+      "max": 10,
       "screen": null,
       "codes": null
     },

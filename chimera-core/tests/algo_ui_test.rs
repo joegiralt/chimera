@@ -437,13 +437,13 @@ fn fdbk_runs_the_tx81zs_range_in_tenths() {
         nrpn::law(BlockRef::AlgoOp(Op::A), s),
         ValueLaw::Index7
     ));
-    // Every other stepped param still counts whole numbers.
+    // Every other stepped param still counts whole numbers, but DELAY's
+    // NOTE, a place in its ten steps (ADR 0306).
     for b in BlockRef::ALL {
-        for p in b
-            .specs()
-            .iter()
-            .filter(|p| p.id != FDBK || !matches!(b, BlockRef::AlgoOp(_)))
-        {
+        for p in b.specs().iter().filter(|p| {
+            !(p.id == FDBK && matches!(b, BlockRef::AlgoOp(_)))
+                && !(p.id == chimera_core::dsp::delay::DelayParams::NOTE && b == BlockRef::Delay)
+        }) {
             if p.kind == chimera_core::block::ParamKind::Stepped {
                 assert_eq!(p.step, 1.0, "{b:?} {}", p.label);
                 assert_eq!(nrpn::steps(p), (p.max - p.min).round() as u16);
