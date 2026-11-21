@@ -393,6 +393,37 @@ impl Bank2Answer {
     }
 }
 
+/// The restart a console answer ends in (the shell holds the typed tokens).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestartKind {
+    Dfu,
+    Sweep,
+    Bank2,
+}
+
+/// Which restart, if any, after an answer: `dfu` first, then `sweep`'s
+/// request, each only once its answer is `sent` (a stalled one keeps the
+/// unit up for the host to ask again); an install that opened the door
+/// whether or not its answer stalled, as its USB needs the boot either
+/// way (#1064).
+pub fn restart_after(
+    dfu: bool,
+    sweep: Option<super::SweepAsk>,
+    bank2: Option<&Bank2Answer>,
+    sent: bool,
+) -> Option<RestartKind> {
+    use super::SweepAsk;
+    let opened = bank2.is_some_and(Bank2Answer::restarts);
+    match (dfu, sweep, opened) {
+        (true, _, _) => sent.then_some(RestartKind::Dfu),
+        (false, Some(SweepAsk::Requested), _) => sent.then_some(RestartKind::Sweep),
+        (false, _, true) => Some(RestartKind::Bank2),
+        (false, None | Some(SweepAsk::Unsaved | SweepAsk::Unused | SweepAsk::Failed(_)), false) => {
+            None
+        }
+    }
+}
+
 /// `bank2 install`'s first refusal, before anything is read or written:
 /// card work pending, then unsaved changes, which the restart an opening
 /// install ends in (`Bank2Answer::restarts`) would lose, as `sweep`'s.

@@ -10,8 +10,8 @@ use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
-    Hand, Hands, LoopTimer, Out, PEEK_AT, Refusal, Request, Served, Stalled, Stats, SweepAsk, Unit,
-    WallClock, answer, serial_hex,
+    Hand, Hands, LoopTimer, Out, PEEK_AT, Refusal, Request, RestartKind, Served, Stalled, Stats,
+    SweepAsk, Unit, WallClock, answer, restart_after, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -588,18 +588,11 @@ impl Usb {
             if unit.forget {
                 ui.forget_library();
             }
-            let opened = bank2.as_ref().is_some_and(Bank2Answer::restarts);
-            let restart = match (dfu, sweep_ask, opened) {
-                (true, _, _) => Restart::Dfu(DfuAsked(())),
-                (false, Some(SweepAsk::Requested), _) => Restart::Sweep(SweepAsked(())),
-                (false, _, true) => Restart::Bank2(Bank2Opened(())),
-                _ => return None,
+            let restart = match restart_after(dfu, sweep_ask, bank2.as_ref(), sent.is_ok())? {
+                RestartKind::Dfu => Restart::Dfu(DfuAsked(())),
+                RestartKind::Sweep => Restart::Sweep(SweepAsked(())),
+                RestartKind::Bank2 => Restart::Bank2(Bank2Opened(())),
             };
-            // A stalled answer keeps the unit up, but bank 2 is open
-            // either way: its USB still needs the boot (#1064).
-            if sent.is_err() && !matches!(restart, Restart::Bank2(_)) {
-                return None;
-            }
             // `flush` empties the class's buffer, not the endpoint: polls
             // until the host has had time to collect the last IN packet.
             let start = crate::controls::now_ms();

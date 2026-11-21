@@ -1243,6 +1243,48 @@ fn an_install_waits_for_card_work_and_refuses_unsaved_changes() {
     assert_eq!(install_guard(true, true), Some(Bank2Refusal::Busy));
 }
 
+/// Which restart a console answer ends in, over every input: `dfu` first,
+/// then `sweep`'s request, each only once its answer is out; an install
+/// that opened the door even if its answer stalled (#1064).
+#[test]
+fn the_restart_table() {
+    use chimera_core::console::{RestartKind, restart_after};
+    let open = Bank2Answer::Open {
+        version: v020(),
+        audio: AUDIO,
+    };
+    let sweeps = [
+        None,
+        Some(SweepAsk::Requested),
+        Some(SweepAsk::Unsaved),
+        Some(SweepAsk::Unused),
+        Some(SweepAsk::Failed(StoreError::NoCard)),
+    ];
+    let installs = [None, Some(open), Some(Bank2Answer::Already)];
+    for dfu in [false, true] {
+        for sweep in sweeps {
+            for bank2 in installs {
+                for sent in [false, true] {
+                    let want = if dfu {
+                        sent.then_some(RestartKind::Dfu)
+                    } else if sweep == Some(SweepAsk::Requested) {
+                        sent.then_some(RestartKind::Sweep)
+                    } else if bank2 == Some(open) {
+                        Some(RestartKind::Bank2)
+                    } else {
+                        None
+                    };
+                    assert_eq!(
+                        restart_after(dfu, sweep, bank2.as_ref(), sent),
+                        want,
+                        "dfu {dfu} sweep {sweep:?} bank2 {bank2:?} sent {sent}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn key_and_turn_queue_then_ok() {
     let mut u = Fake::new();
