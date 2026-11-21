@@ -559,10 +559,18 @@ pub struct Tail {
 }
 
 impl Tail {
-    /// From `REVERB_PARAMS`' set values (normalized) under TYPE `t`, the
-    /// focused one's index in them, and the UI clock's `frame` (20 fps).
+    /// From `REVERB_PARAMS`' set values (normalized) under TYPE `t` and
+    /// SYNC `sync` at the reverb's `clock` (its tempo and its synced
+    /// time's fold: the lengths it plays, #366), the focused one's index
+    /// in them, and the UI clock's `frame` (20 fps).
     #[inline(never)]
-    pub fn from_set(t: ReverbType, set: [f32; 11], focus: Option<usize>, frame: u32) -> Self {
+    pub fn from_set(
+        t: ReverbType,
+        set: [f32; 11],
+        (sync, clock): (RevSync, (Tempo, FoldState)),
+        focus: Option<usize>,
+        frame: u32,
+    ) -> Self {
         let p = ReverbParams {
             kind: t,
             size: set[0],
@@ -575,13 +583,13 @@ impl Tail {
             diffuse: set[7],
             predelay: set[8],
             shape: set[9],
-            sync: RevSync::Off,
+            sync,
             role: crate::dsp::reverb::WASH_ROLE,
             density: set[10],
             ..ReverbParams::DEFAULT
         };
-        // Unsynced: the set values alone, at the default tempo.
-        let k = knobs(&p, Tempo::DEFAULT, &mut FoldState(0));
+        let (tempo, mut fold) = clock;
+        let k = knobs(&p, tempo, &mut fold);
         let span = tail_span_ms(t);
         let n = TAIL_COLS as f32;
         let edge = clampf(k.length_ms / span * n, 0.0, n) as u8;

@@ -1168,7 +1168,13 @@ impl Renderer {
                                 frame,
                             ))
                         } else {
-                            Gauge::Tail(Tail::from_set(f.ctx.rev, set, focus, frame))
+                            Gauge::Tail(Tail::from_set(
+                                f.ctx.rev,
+                                set,
+                                (f.fx.reverb.sync, f.rev_clock),
+                                focus,
+                                frame,
+                            ))
                         }
                     }
                 }
