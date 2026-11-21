@@ -59,19 +59,16 @@ whatever the last frame left.
 | ![](pickup_hint.png) | ALG › PIT | FINE bound to a PICKUP CC heard below it: the band says which way to turn |
 | ![](algo_pit_glide.png) | ALG › PIT | STEAL at GLIDE |
 | ![](algo_wave.png) | OSC | Operator waves, op 2 a few steps in |
-| ![](algo_crs.png) | OSC › CRS | Coarse ratio, ops 1–6 |
-| ![](algo_fin.png) | OSC › FIN | Fine ratio, ops 1–6 |
+| ![](algo_fine_ratio.png) | OSC › FIN | Fine ratio, ops 1–6, the ratio it makes in the band |
 | ![](algo_det.png) | OSC › DET | Detune, ops 1–6 |
 | ![](algo_level.png) | OSC › LVL | Output level, op 2 turned |
 | ![](algo_vel.png) | OSC › VEL | Velocity sensitivity, ops 1–6 |
 | ![](algo_ar.png) | OSC › AR | Envelope attack rate, ops 1–6 |
-| ![](algo_d1r.png) | OSC › D1R | Envelope first decay rate |
 | ![](algo_d1l.png) | OSC › D1L | Envelope first decay level |
 | ![](algo_d2r.png) | OSC › D2R | Envelope second decay rate |
 | ![](algo_rr.png) | OSC › RR | Envelope release rate |
 | ![](algo_rs.png) | OSC › RS | Rate scaling, ops 1–6 |
 | ![](algo_osc_last.png) | OSC › FBK | Feedback, the last OSC sub-page |
-| ![](algo_drv.png) | DRV | Drive: DRIVE, TONE, MIX |
 | ![](bigviz_filter.png) | FLT | Filter response, resonance up, cutoff focused |
 | ![](flt_mode.png) | FLT › FMD | MODE at BP12, DRIVE and LFO extras |
 | ![](amp_vel_dimmed.png) | AMP | Fold up; VEL focused, dimmed (no route to the VCA) |
@@ -88,7 +85,6 @@ the atlas on Modal.
 | ![](mod_matrix_wide.png) | Algo MOD › MTX | Eight primed columns, scrolled: `<` and `>` |
 | ![](mod_matrix_morph_inert.png) | Algo MOD › MTX | A route to MORPH while MORPH is inert |
 | ![](env_a.png) | Algo MOD › E1 | Type A envelope (AHDSR) |
-| ![](algo_e2.png) | Algo MOD › E2 | E2 at INIT: type A |
 | ![](env_b_env_ad.png) | Algo MOD › E3 | Type B, ENV · AD |
 | ![](env_b_env_ahr.png) | Algo MOD › E3 | Type B, ENV · AHR |
 | ![](env_b_env_cycle.png) | Algo MOD › E3 | Type B, ENV · CYCLE |
@@ -103,7 +99,7 @@ the atlas on Modal.
 | ![](lfo_func.png) | Algo MOD › L1 | TYPE FUNC: the function generator |
 | ![](algo_l2.png) | Algo MOD › L2 | LFO 2 at INIT |
 | ![](algo_l3.png) | Algo MOD › L3 | LFO 3 at INIT |
-| ![](modal_mtx.png) | Modal MOD › MTX | The matrix at INIT |
+| ![](mod_matrix_modal.png) | Modal MOD › MTX | The matrix |
 | ![](modal_e1.png) | Modal MOD › E1 | Envelope 1 at INIT |
 | ![](modal_e2.png) | Modal MOD › E2 | Envelope 2 at INIT |
 | ![](modal_e3.png) | Modal MOD › E3 | Envelope 3 at INIT |
@@ -134,7 +130,6 @@ per model.
 | ![](modal_pitch.png) | RES › PIT | PITCH −12 focused; STEAL CUT |
 | ![](modal_pit_glide.png) | RES › PIT | STEAL at GLIDE |
 | ![](modal_flt.png) | FLT | Filter response at INIT |
-| ![](modal_mde.png) | FLT › MDE | MODE and the kind's extras at INIT |
 | ![](modal_amp.png) | AMP | Fold / VCA at INIT |
 
 ## Mixer (MIX + B1)
