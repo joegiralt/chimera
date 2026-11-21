@@ -18,6 +18,7 @@ use crate::dsp::rev::sync::Tempo;
 use crate::hw::{BLOCK_SIZE, Cost, MAX_PARTS};
 use crate::instrument::{AudioShared, Instrument, NoteOrigin, NoteSet};
 use crate::note_queue::{NoteEvent, NoteKind, RealTime};
+use crate::part::{Held, LiveSnap};
 use crate::source_table::GateView;
 use crate::stream::port::{NoPorts, VoicePorts};
 use crate::triple::TripleBuffer;
@@ -335,6 +336,9 @@ pub struct OrbitRunner {
     take: Take,
     /// The harmony last handed to the `Instrument`: a change re-snaps.
     harmony: Option<Harmony>,
+    /// Each Part's SNAP and HELD last handed on: an edit re-snaps its held
+    /// keys at once, as a harmony change does (#322).
+    snaps: [(LiveSnap, Held); MAX_PARTS],
     /// The external tempo the reverb follows, a beat in samples, with the
     /// BPM set when it was taken (`follow`).
     ext: Option<(u32, Bpm)>,
@@ -378,6 +382,7 @@ impl OrbitRunner {
             fired: [0; RINGS],
             take: Take::new(),
             harmony: None,
+            snaps: [(LiveSnap::Off, Held::Stay); MAX_PARTS],
             ext: None,
         }
     }
@@ -596,10 +601,12 @@ impl OrbitRunner {
         Self::send(inst, (shared, src), &sent, &mut self.fired, ports);
         #[cfg(feature = "probe")]
         crate::probe::stamp(8);
-        if h.is_some() && h != self.harmony {
+        let snaps = core::array::from_fn(|p| (shared.parts[p].mix.snap, shared.parts[p].mix.held));
+        if h.is_some() && (h != self.harmony || snaps != self.snaps) {
             inst.resnap(shared);
         }
         self.harmony = h;
+        self.snaps = snaps;
         #[cfg(feature = "probe")]
         crate::probe::stamp(9);
         // After the last stamp: no phase bills it.

@@ -509,3 +509,89 @@ impl chimera_core::addr::Blocks for One<'_> {
         (b == BlockRef::Part).then_some(chimera_core::addr::BlockViewMut::Plain(&mut *self.0))
     }
 }
+
+/// Three keys share one voice (C, then D, then C#, all snapping to C in
+/// A minor's chord): C#'s key-up leaves D, the latest key still down, as
+/// the one it re-snaps from, as a mono synth's last-note priority does.
+/// G major then moves it to D, not C's B
+/// (private issue #321).
+#[test]
+fn a_shared_voice_resnaps_from_the_latest_key_still_down() {
+    let mut r = rig();
+    r.shared.parts[0].mix.snap = LiveSnap::Chord;
+    r.shared.parts[0].mix.held = Held::Resnap;
+    let am = harmony(AM.0, AM.1);
+    r.inst.set_harmony(Some(am));
+    for k in [60, 62, 61] {
+        assert_eq!(to_chord(k, am), 60);
+        r.note_on(0, k);
+        r.render(2);
+    }
+    assert_eq!(held_notes(&r.inst, P1), [60], "one voice");
+    r.note_off(0, 61);
+    r.render(2);
+    let g = harmony(G.0, G.1);
+    assert_eq!((to_chord(62, g), to_chord(60, g)), (62, 59));
+    r.inst.set_harmony(Some(g));
+    r.inst.resnap(&r.shared);
+    assert_eq!(
+        held_notes(&r.inst, P1),
+        [62],
+        "from D, the latest still down"
+    );
+    // D up too: C names it.
+    r.note_off(0, 62);
+    r.inst.set_harmony(Some(am));
+    r.inst.resnap(&r.shared);
+    assert_eq!(held_notes(&r.inst, P1), [60]);
+    r.note_off(0, 60);
+    assert!(held_notes(&r.inst, P1).is_empty());
+}
+
+/// A SNAP or HELD edit while a key is held re-snaps it at once, not at the
+/// next chord: STAY to RE-SNAP moves nothing yet (it already sits on the
+/// chord), CHORD to SCALE moves it to the key's scale, OFF back to the raw
+/// key, and a STAY Part keeps where it is
+/// (private issue #322).
+#[test]
+fn a_snap_or_held_edit_resnaps_a_held_key_at_once() {
+    let mut rig = OrbitRig::on_init();
+    for ring in &mut rig.song().live_mut_for_test().rings {
+        ring.ring.mute = true;
+    }
+    let mix = &mut rig.project.edit_part(P1).mix;
+    mix.snap = LiveSnap::Chord;
+    mix.held = Held::Stay;
+    rig.play(true);
+    rig.run(4);
+    rig.key(0, 66, true);
+    rig.run(2);
+    let chord = rig.view().chord;
+    let seg = rig.view().seg;
+    let on_chord = snap(Note::new(66).unwrap(), SnapTo::Chord(chord)).get();
+    assert_eq!(held_notes(rig.inst(), P1), [on_chord]);
+    let key = rig.working().chords.key();
+    let on_scale = snap(Note::new(66).unwrap(), SnapTo::Scale(key)).get();
+    assert_ne!(on_scale, on_chord, "the scale moves F# elsewhere");
+
+    // STAY: a SNAP edit leaves the held key where it is.
+    rig.project.edit_part(P1).mix.snap = LiveSnap::Scale;
+    rig.run(2);
+    assert_eq!(held_notes(rig.inst(), P1), [on_chord], "STAY keeps it");
+
+    rig.project.edit_part(P1).mix.held = Held::Resnap;
+    rig.run(2);
+    assert_eq!(held_notes(rig.inst(), P1), [on_scale], "RE-SNAP at once");
+
+    rig.project.edit_part(P1).mix.snap = LiveSnap::Chord;
+    rig.run(2);
+    assert_eq!(held_notes(rig.inst(), P1), [on_chord]);
+
+    rig.project.edit_part(P1).mix.snap = LiveSnap::Off;
+    rig.run(2);
+    assert_eq!(held_notes(rig.inst(), P1), [66], "OFF: the raw key");
+    assert_eq!(rig.view().seg, seg, "all inside one segment");
+    rig.key(0, 66, false);
+    rig.run(2);
+    assert!(held_notes(rig.inst(), P1).is_empty());
+}

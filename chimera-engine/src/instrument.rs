@@ -786,7 +786,7 @@ pub struct Instrument {
     /// The keys down on each voice, by MIDI note: two keys that snap to one
     /// pitch share a voice (a Poly re-strike), and it is let go when the
     /// last of them is up.
-    held_keys: [NoteSet; MAX_VOICES],
+    held_keys: [HeldKeys; MAX_VOICES],
     /// ORBIT's key and chord now; `None` while it is stopped (spec § 5.2).
     harmony: Option<Harmony>,
     /// ORBIT's clock: what the reverb's synced times follow.
@@ -923,7 +923,7 @@ impl Instrument {
             addr_of_mut!((*p).note_channel).write([MidiChannel::clamped(0); MAX_VOICES]);
             addr_of_mut!((*p).note_origin).write([NoteOrigin::Live; MAX_VOICES]);
             addr_of_mut!((*p).keys).write([MidiNote::A4; MAX_VOICES]);
-            addr_of_mut!((*p).held_keys).write([NoteSet::EMPTY; MAX_VOICES]);
+            addr_of_mut!((*p).held_keys).write([HeldKeys::EMPTY; MAX_VOICES]);
             addr_of_mut!((*p).harmony).write(None);
             addr_of_mut!((*p).tempo).write(Tempo::DEFAULT);
             addr_of_mut!((*p).resnap_to).write([None; MAX_VOICES]);
@@ -1488,7 +1488,7 @@ impl Instrument {
                     let base = if joins {
                         self.held_keys[v]
                     } else {
-                        NoteSet::EMPTY
+                        HeldKeys::EMPTY
                     };
                     self.held_keys[v] = base.with(ev.note);
                     self.alloc.book(vi, q, mode, note, cost);
@@ -1616,7 +1616,7 @@ impl Instrument {
                         continue;
                     }
                     self.held_keys[v] = self.held_keys[v].without(ev.note);
-                    if let Some(left) = self.held_keys[v].lowest() {
+                    if let Some(left) = self.held_keys[v].latest() {
                         // A key still down names it now, its pressure
                         // unheard yet.
                         self.keys[v] = left;
@@ -1772,7 +1772,7 @@ impl Instrument {
                         && self.note_origin[v] == NoteOrigin::Live
                         && !self.held_keys[v].is_empty()
                     {
-                        self.held_keys[v] = NoteSet::EMPTY;
+                        self.held_keys[v] = HeldKeys::EMPTY;
                         if self.pedal_down(self.master[v]) {
                             self.sustained[v] = true;
                         } else {
@@ -1796,7 +1796,7 @@ impl Instrument {
     /// Voice `v` fades out now, whatever holds it (CC 120's).
     fn sound_off(&mut self, v: VoiceIdx) {
         let i = v.index();
-        self.held_keys[i] = NoteSet::EMPTY;
+        self.held_keys[i] = HeldKeys::EMPTY;
         self.sustained[i] = false;
         self.resnap_to[i] = None;
         self.alloc.kill(v);
@@ -1905,7 +1905,6 @@ impl Instrument {
                 || s.dying()
                 || self.note_origin[v] != NoteOrigin::Live
                 || part.mix.held != Held::Resnap
-                || part.mix.snap == LiveSnap::Off
             {
                 continue;
             }
@@ -2116,7 +2115,7 @@ impl Instrument {
             };
             let v = vi.index();
             let was = *self.alloc.slot(vi);
-            self.held_keys[v] = NoteSet::EMPTY.with(key);
+            self.held_keys[v] = HeldKeys::EMPTY.with(key);
             self.alloc.book_hit(vi, q, mode, key, cost);
             let waits = self.voices[v].is_active();
             if waits && !was.dying() {
@@ -2952,5 +2951,64 @@ impl NoteSet {
     /// The lowest key in the set.
     pub(crate) fn lowest(self) -> Option<MidiNote> {
         (!self.is_empty()).then(|| MidiNote::new(self.0.trailing_zeros() as u8))?
+    }
+}
+
+/// The keys down on a voice, and the latest few in strike order: a shared
+/// voice re-snaps from the latest key still down, last-note priority
+/// (private issue #321). Past `RECENT` keys on
+/// one voice, the oldest drop from the order and the lowest stands in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HeldKeys {
+    set: NoteSet,
+    /// Newest first; only keys in `set`.
+    recent: [Option<MidiNote>; HeldKeys::RECENT],
+}
+
+impl HeldKeys {
+    const RECENT: usize = 4;
+
+    pub(crate) const EMPTY: HeldKeys = HeldKeys {
+        set: NoteSet::EMPTY,
+        recent: [None; HeldKeys::RECENT],
+    };
+
+    /// `n` struck: now the latest.
+    pub(crate) fn with(self, n: MidiNote) -> HeldKeys {
+        let mut recent = [None; HeldKeys::RECENT];
+        recent[0] = Some(n);
+        let older = self.recent.into_iter().flatten().filter(|&k| k != n);
+        for (slot, k) in recent[1..].iter_mut().zip(older) {
+            *slot = Some(k);
+        }
+        HeldKeys {
+            set: self.set.with(n),
+            recent,
+        }
+    }
+
+    pub(crate) fn without(self, n: MidiNote) -> HeldKeys {
+        let mut recent = [None; HeldKeys::RECENT];
+        let rest = self.recent.into_iter().flatten().filter(|&k| k != n);
+        for (slot, k) in recent.iter_mut().zip(rest) {
+            *slot = Some(k);
+        }
+        HeldKeys {
+            set: self.set.without(n),
+            recent,
+        }
+    }
+
+    pub(crate) const fn contains(self, n: MidiNote) -> bool {
+        self.set.contains(n)
+    }
+
+    pub(crate) const fn is_empty(self) -> bool {
+        self.set.is_empty()
+    }
+
+    /// The latest key struck that is still down.
+    pub(crate) fn latest(self) -> Option<MidiNote> {
+        self.recent[0].or_else(|| self.set.lowest())
     }
 }
