@@ -220,6 +220,7 @@ fn other_prints_in(n: usize) -> Vec<u64> {
 
 /// AM's five rows of `OTHER` with bank 2's door closed: bank 1's
 /// uncorrected product, as at origin/0.4 `807e740d` (#660).
+#[cfg(all(feature = "bank2", feature = "test-support"))]
 const AM_CLOSED: [u64; 5] = [
     0x8152a1739d7c09a5,
     0x1a344d7a77fd13d5,
