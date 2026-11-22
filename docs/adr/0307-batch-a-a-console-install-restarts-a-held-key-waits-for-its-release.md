@@ -52,6 +52,7 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 
 ## Consequences
 - After a console install that opens bank 2 the unit restarts; anything that drives `bank2 install` waits for the console again (the tool does), and saves first.
+- Measured against 0.4 at 521712eb2 (batch C merged), both trees built: bank 1 +696 B default (895,112 B), +624 B ORBIT (909,152 B), +456 to +920 B on the other sets; bank 2 +96 B on default, ORBIT and gate. Every line in `tools/bank1-budget.txt` and `tools/bank2-budget.txt` is set to its measure.
 - Bank 1 grows by the fixes (#1064's restart, #1000's read, #197's note, #315's filter, #766's stamp, #943's re-aim); the measured lines in `tools/bank1-budget.txt` cite this ADR. Bank 2 moves within its 64 B.
 - Owner's rulings (2026-11-21): #943's runtime-closed-door poll (gate builds only) and GET_LINE_CODING items are won't-fix; #305 closes with docs/recovery.md's leave-twice; #710 (the card's block count, about 1 KB of bank 1) waits for 0.5, once the card path is in bank 2.
 
