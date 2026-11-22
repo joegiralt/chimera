@@ -103,6 +103,19 @@ class StackDepth(unittest.TestCase):
         voice = sd.depth(self.funcs, "<chimera_core::dsp::voice::Voice>::render", charge)[0]
         self.assertEqual(voice, 8 + 0x40 + charge)
 
+    def test_a_direct_only_function_a_data_word_matches_is_not_a_target(self):
+        # `by_data`'s address is in .rodata, as a BlockDef's packed bytes
+        # once matched bank 2's install: named direct-only, it is no target.
+        old = sd.DIRECT_ONLY
+        sd.DIRECT_ONLY = ("by_data",)
+        try:
+            out = io.StringIO()
+            charge = sd.pointer_charge(self.img, out)
+            self.assertNotIn("by_data", out.getvalue())
+            self.assertLess(charge, 0x500)
+        finally:
+            sd.DIRECT_ONLY = old
+
     def test_nested_frames_sum_and_a_tail_call_replaces(self):
         total, chain, cut, ind = sd.depth(self.funcs, "main")
         # deep's own frame and its tail call's are never live together:

@@ -936,10 +936,15 @@ impl UiState {
             }
             // Plain loops, no `Option` combinator: a core instance would be
             // bank 1's (ADR 0175).
+            // Its own rows and its controller map's layer rows, as
+            // `cc_control` walks them (#944).
             let map = &self.project.part(q).sound.map;
+            let layer = *self.cc.ui().ctl.layer(q.index());
             let m = self.cc.part(q.index());
-            for (k, e) in map.entries().iter().enumerate() {
-                if e.target.addr() == a {
+            for k in 0..BINDS {
+                if let Some(e) = bind_at(map, &layer, k)
+                    && e.target.addr() == a
+                {
                     m.ramps[k].cancel(0.0);
                     m.pend[k] = NO_BIN;
                 }

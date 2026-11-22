@@ -8,6 +8,7 @@ use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::instrument::{AudioShared, Instrument};
+use crate::orbit::runner::OrbitRunner;
 
 /// How long the UI waits for the ack before it publishes anyway.
 pub const LOAD_ACK_TIMEOUT_MS: u32 = 10;
@@ -220,19 +221,26 @@ impl LoadGate {
     }
 
     /// Before the drain: kills and acks as `step` says. Returns whether
-    /// to drain.
+    /// to drain. A gate build's `bank2 erase` shuts TAPE's voices and
+    /// ORBIT (`orbit`) first, and says quiet once neither sounds (#784).
     #[optimize(size)]
     pub fn before_block(
         &mut self,
         link: &LoadLink,
         inst: &mut Instrument,
         shared: &AudioShared,
+        #[cfg_attr(not(feature = "bank2-gate"), allow(unused_variables))] orbit: Option<
+            &mut OrbitRunner,
+        >,
     ) -> bool {
         #[cfg(feature = "bank2-gate")]
         if link.tape_shut.load(Ordering::Acquire) {
+            let stopped = orbit.is_none_or(|o| o.shut(inst, shared));
             inst.sound_off_tape(shared);
             link.tape_quiet
-                .store(!inst.tape_sounding(shared), Ordering::Release);
+                .store(stopped && !inst.tape_sounding(shared), Ordering::Release);
+        } else if let Some(o) = orbit {
+            o.reopen();
         }
         let s = self.step(link.epoch(), shared.epoch, inst.quiet());
         if s.kill {
