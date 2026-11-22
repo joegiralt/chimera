@@ -1,4 +1,4 @@
-# 0323. The sine table folds to a quarter turn; WAVE MORPH is frozen as 0.4 rendered it
+# 0325. The sine table folds to a quarter turn; WAVE MORPH is frozen as 0.4 rendered it
 
 - **Status:** Accepted (2026-11-22)
 - **Deciders:** owner (2026-11-22: "freeze WAVE MORPH", then apply the fold); firmware (bug batch D3)
