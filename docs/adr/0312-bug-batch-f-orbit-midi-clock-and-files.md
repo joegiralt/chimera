@@ -34,7 +34,7 @@ Batch F's real bugs, fixed for 0.4, left seven rules later work has to keep:
 ## Consequences
 - A steady external clock moves the synced reverb and delay a few times in its first seconds (at 2, 4, 8 … beats), each move smaller; after a minute the tempo holds within a few thousandths of a BPM. `steady_clocks_never_retarget` and `a_jittering_clock_never_moves_the_synced_delay` now hold "few moves, converging, then still".
 - An old project whose Sounds hold entries this firmware doesn't know loads as Modified (no users yet: owner's rule).
-- Bank 1 grows by `HeldKeys`, `Route` and the gate's ORBIT step; the budget lines name this ADR.
+- Bank 1 grows by 1,376 B on the default build (1,704 B with ORBIT, 1.7 to 2.1 KB on the bench sets): `HeldKeys`, `Route`, the gate's ORBIT step, `check_name`'s and the decoder's rules, all in place on paths bank 1 already runs. Bank 2 grows by 352 B (768 B with ORBIT). The budget lines name this ADR.
 
 ## Sources
 - private issue #321, 322, 1046, 784, 250, 318, 291
