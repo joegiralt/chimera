@@ -1173,3 +1173,41 @@ fn both_rings_share_one_budget() {
         assert_eq!(b.place(P1, k.addr), 1.0, "{:?} arrives", k.addr);
     }
 }
+
+/// A mapped CC on TAPE MODEL writes its machine's defaults, as the
+/// encoder's turn does (`machine_edit`, #381): the deck and ENV 1 land
+/// where the same MODEL set by hand leaves them, not where they were.
+#[test]
+fn a_cc_on_model_writes_its_machines_defaults() {
+    let odd = |b: &mut Bench| {
+        let s = b.ui.project_mut().edit_part(P1).sound;
+        let mut t = s.params.block_mut(BlockRef::TapeEngine).unwrap();
+        for sp in t.specs() {
+            if sp.id != MODEL.param {
+                t.set(sp.id, sp.denormalize(0.37));
+            }
+        }
+    };
+    let mut by_cc = Bench::new(Sound::plain_init(EngineType::Tape));
+    odd(&mut by_cc);
+    by_cc.map(P1, 30, MODEL);
+    let before = by_cc.stored(P1, MODEL);
+    by_cc.pass(&[(30, 127)]);
+    by_cc.passes(4);
+    let model = by_cc.stored(P1, MODEL);
+    assert_ne!(model, before, "the CC moved MODEL");
+
+    let mut by_hand = Bench::new(Sound::plain_init(EngineType::Tape));
+    odd(&mut by_hand);
+    assert!(by_hand.ui.edit_to(P1, MODEL, model));
+    let deck = |b: &Bench| {
+        let s = &b.ui.project().part(P1).sound;
+        (s.params.tape, format!("{:?}", s.params.envelopes[0]))
+    };
+    let (cc, hand) = (deck(&by_cc), deck(&by_hand));
+    assert!(cc.0 == hand.0, "the machine's defaults, as by hand");
+    assert_eq!(cc.1, hand.1, "ENV 1's, as by hand");
+    let mut untouched = Bench::new(Sound::plain_init(EngineType::Tape));
+    odd(&mut untouched);
+    assert!(deck(&untouched).0 != cc.0, "the defaults moved knobs");
+}

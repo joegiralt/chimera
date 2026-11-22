@@ -1083,6 +1083,25 @@ mod tests {
         );
     }
 
+    /// A publish the audio reads but renders no block of (a desktop take
+    /// shorter than a block, #529) loses no move: the next publish's delta
+    /// still holds it, since the moves are counted from the audio's last
+    /// `seen`, not per publish.
+    #[test]
+    fn a_publish_read_unrendered_loses_no_move() {
+        let mut pb = KnobPublisher::new();
+        let mut s = Tracked::fresh(Sound::init(EngineType::Algo));
+        s.params.filter.cutoff = 250.0;
+        let seen = pb.publish(0, &s, Loads::NONE).count;
+        s.params.filter.cutoff = 500.0;
+        let _unrendered = pb.publish(0, &s, Loads::NONE);
+        s.params.filter.cutoff = 1000.0;
+        let next = pb.publish(0, &s, Loads::NONE);
+        let k = &KNOBS[index(cutoff())];
+        let tos: alloc::vec::Vec<_> = next.since(seen).unwrap().map(|m| m.to).collect();
+        assert_eq!(tos, [k.place(500.0), k.place(1000.0)]);
+    }
+
     /// The publisher sends a move for what changed, from where it was to
     /// where it goes, and nothing else; an unwritten Sound, nothing; a new
     /// one, nothing (it lands).
