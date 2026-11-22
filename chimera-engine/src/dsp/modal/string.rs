@@ -115,6 +115,9 @@ impl KsString {
     /// Room for a loop of up to `period` samples, the line where it is:
     /// grown once, as a glide starts, not a step each block.
     pub(super) fn fit(&mut self, period: f32) {
+        // A glide's growth, as `fit_bytes` bills it to the clear budget.
+        #[cfg(any(test, feature = "test-support"))]
+        cleared::add(self.fit_bytes(period));
         self.grow(Self::fit_len(period));
     }
 
@@ -280,7 +283,8 @@ impl KsString {
     /// it wrote. The line comes to rest as `clear` leaves one (the
     /// shortest ring from the start), so it is silent above `dirty`
     /// whatever plays it next, and its note's `clear` writes the rest.
-    #[optimize(size)]
+    /// Inlined: bank 2's `kern::pre_clear` is its one caller.
+    #[inline(always)]
     pub(super) fn clear_some(&mut self, max: usize) -> usize {
         let n = (max / size_of::<f32>()).min(self.dirty);
         let to = self.dirty - n;

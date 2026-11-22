@@ -227,21 +227,26 @@ impl FollowState {
 /// its outlined pieces, 90; `Places::ease`'s loop, 20 × 27 less the 19 in
 /// the body, 521; both `AmpEnv::coefs` with `ACoefs::new`, 2 × 387;
 /// `denormalize` 4 × 72; three lane compares, 3 × 27; the copies at 13
-/// instructions a 16 B pass plus 10 a call (40 for the byte-wise
-/// `__aeabi_memcpy`), 80 B, 64 B and 2 × 36 B, 305: 2,710 instructions
-/// and 21 divides, ceil5((2,710 × 1.606 + 12 × 21) / 64) = 75. Unit read
-/// owed (#1026).
+/// instructions a 16 B pass plus 10 a call and the ~20 of
+/// `__aeabi_memcpy4`'s tail into `compiler_builtins::memcpy` (40 for the
+/// byte-wise `__aeabi_memcpy`), 80 B, 64 B and 2 × 36 B: about 2,800
+/// instructions and 21 divides, 74 a sample at most (the #1080 review's
+/// recount reads 72.9–73.5): 75. Unit read owed (#1026).
 pub const FOLLOW_GLIDE_COST: Cost = Cost(75);
 
 /// A publish's block on top of the glide's, as an upper bound:
 /// `KitView::sound_if_newer` (168) with its 70-byte read at its three
 /// tries (3 × 5 × 76), the clear (79); the default pad (113) and its
-/// copy; `PadSound::from_bytes` (316) with its loops over 57 bytes (861)
-/// and three `Reader::env` (192); the decode branch's copies, 64 B, 3 ×
-/// 80 B and 160 B (457); both `PadSound::places` (2 × 338, 24 divides
-/// each): 4,094 instructions and 48 divides, ceil5((4,094 × 1.606 + 12 ×
-/// 48) / 64) = 115. Unit read owed (#1026).
-pub const FOLLOW_DECODE_COST: Cost = Cost(115);
+/// copy; `PadSound::from_bytes` (316) with its loops over 57 bytes and
+/// their overhead, seven `Reader::f32_or` and two `Reader::env`; the
+/// decode branch's copies, 64 B, 3 × 80 B and 160 B, and two more 80 B,
+/// each with memcpy4's tail; both `PadSound::places` with their 20-trip
+/// zero fill and the outlined normalize pieces (4 + 3, 7 divides more).
+/// The first count (115) missed the zero fill, the loop overhead, the
+/// outlined pieces, the two 80 B copies, `f32_or` and memcpy4's tail; the
+/// #1080 review's recount reads about 127 a sample: 130. Unit read owed
+/// (#1026).
+pub const FOLLOW_DECODE_COST: Cost = Cost(130);
 
 impl DrumEngine {
     /// Idle: no hit.

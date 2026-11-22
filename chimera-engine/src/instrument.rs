@@ -890,20 +890,10 @@ pub const SYM_CLEAR_CYCLES_PER_BYTE: u32 = 8;
 pub const BLOCK_OVERHEAD: Cost = Cost(160);
 pub const PART_OVERHEAD: Cost = Cost(230);
 
-/// The bytes a block may clear (#306, ADR 0311): what is left of the
-/// deadline (the audio share over `AUDIO_BUDGET_PERCENT`) once `booked`
-/// and the overhead of `parts` Parts are spent, at the clear's rate; at
-/// most one worst note-on. Booked at the share, six Parts sounding, rev
-/// V still clears 7,680 B a block: a worst note-on in five blocks.
-pub fn sym_clear_room(budget: SampleBudget, booked: Cost, parts: usize) -> usize {
-    // A sample's cycles stay far under `u32::MAX / 100` at any clock.
-    let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
-    let used = booked
-        .0
-        .saturating_add(BLOCK_OVERHEAD.0 + PART_OVERHEAD.0 * parts as u32);
-    let room = deadline.saturating_sub(used) * (BLOCK_SIZE as u32 / SYM_CLEAR_CYCLES_PER_BYTE);
-    (room as usize).min(SYM_CLEAR_BUDGET)
-}
+/// A note more the block may book after a clear is judged, cycles a
+/// sample: about the costliest voice (A16+17 915 and its chain), so the
+/// clear leaves it room. ORBIT's burst is in the reserve already.
+pub const SYM_CLEAR_NOTE_MARGIN: Cost = Cost(1_000);
 
 crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });
 
@@ -1959,7 +1949,7 @@ impl Instrument {
             }
             if self.voices[v].kind() == SYMPATHETIC {
                 let bytes = self.voices[v].retune_clear(&self.sym, to);
-                if self.clear_backlog || bytes > self.clear_left {
+                if self.clear_backlog || bytes > self.clear_avail() {
                     continue;
                 }
                 self.clear_left -= bytes;
@@ -2224,12 +2214,14 @@ impl Instrument {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
-        if self.voices[v].is_active() {
-            // A glide steal on a sounding voice clears only its rings'
-            // growth and must not wait (a wait drops it out): it spends
-            // the room without pacing (ADR 0311's limit).
-            let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
-            self.clear_left = self.clear_left.saturating_sub(bytes);
+        if let Some(bytes) = self.voices[v].sym_strike_adds(&self.sym, note, params) {
+            // A re-strike, or STEAL GLIDE's growth, adds to what rings: it
+            // fits the block's room, or the note takes the deferred path
+            // (a fade, then a paced start). A CUT is a fresh note.
+            if bytes > self.clear_avail() {
+                return false;
+            }
+            self.clear_left -= bytes;
             return true;
         }
         if self.clear_backlog {
@@ -2237,10 +2229,11 @@ impl Instrument {
         }
         let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
         debug_assert!(bytes <= SYM_CLEAR_BUDGET);
-        if bytes > self.clear_left {
+        let avail = self.clear_avail();
+        if bytes > avail {
             // The block's room clears its lines ahead; it waits for the
             // rest (#306).
-            let done = self.voices[v].sym_pre_clear(&mut self.sym, self.clear_left);
+            let done = self.voices[v].sym_pre_clear(&mut self.sym, avail);
             self.clear_left -= done;
             self.clear_backlog = true;
             return false;
@@ -2356,26 +2349,14 @@ impl Instrument {
         }
     }
 
-    /// The next block's clear room (`sym_clear_room`): its bookings, the
-    /// reserve and each Part with a voice booked. Out of line: bank 1's.
-    #[inline(never)]
-    #[optimize(size)]
-    fn clear_room(&self) -> usize {
-        let parts = self
-            .alloc
-            .slots()
-            .iter()
-            .filter_map(|s| s.part())
-            .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p));
-        // The block's notes may book the pool to its budget, and a Part
-        // its first voice, before the clear runs.
-        let budget = self.alloc.budget();
-        let booked = self.alloc.sounding_cost() + self.reserved();
-        sym_clear_room(
-            budget,
-            booked.max(budget.as_cost()),
-            (parts.len() + 1).min(MAX_PARTS),
-        )
+    /// What this block may still clear (#306, ADR 0311): its room as the
+    /// bookings stand (bank 2's, behind `AdmitDoor`; one worst note-on with
+    /// the door closed, as before) less what it has cleared, within the
+    /// one worst note-on a block `clear_left` keeps.
+    fn clear_avail(&self) -> usize {
+        let room = Self::admission(|d| d.clear_room(self)).unwrap_or(SYM_CLEAR_BUDGET);
+        room.saturating_sub(SYM_CLEAR_BUDGET - self.clear_left)
+            .min(self.clear_left)
     }
 
     /// Each Part's kit bill as published, with each ringing hit's struck
@@ -2824,7 +2805,7 @@ impl Instrument {
         self.publish_lfo_view();
         crate::meter::publish_sounding_parts(self.sounding_set());
         self.publish_pads();
-        self.clear_left = self.clear_room();
+        self.clear_left = SYM_CLEAR_BUDGET;
 
         // 1b. Each Part's EQ, before its level, pan and sends (ADR 0284).
         self.part_eq(shared, &written, &mut sides);

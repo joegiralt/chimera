@@ -4,11 +4,8 @@
 
 mod common;
 
-use chimera_core::dsp::fx_bus::FxBus;
-use chimera_core::dsp::lfo::LfoClock;
 use chimera_core::dsp::modal::{ResonatorMode, out_gain};
 use chimera_core::dsp::note_to_freq;
-use chimera_core::dsp::voice::Voice;
 use chimera_core::hw::{MAX_VOICES, SampleBudget};
 use chimera_core::instrument::AudioShared;
 use chimera_core::note_queue::{NoteEvent, NoteKind};
@@ -34,31 +31,14 @@ fn off(ch: u8, note: u8) -> NoteEvent {
     ev(ch, note, NoteKind::Off)
 }
 
-/// A budget with room for `voices` voices of `cost` beside the whole FX bus.
-fn budget(cost: u32) -> SampleBudget {
-    // And the knobs, reserved beside the bus (ADR 0116).
-    let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
-    SampleBudget::for_cpu(
-        ((reserved + cost) as u64 * 4_800_000)
-            .div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32,
-    )
-}
-
-use chimera_core::dsp::knobs::Knobs;
 use common::InstRig as Rig;
 
 impl Rig {
-    /// Room for one voice of Part 1's Sound: every other note steals.
-    fn one_voice(shared: &AudioShared) -> Self {
-        Self::voices(shared, 1)
-    }
-
-    /// Room for `n` voices of Part 1's Sound, and two Parts' knobs (ADR
-    /// 0112): never room for one more voice.
-    fn voices(shared: &AudioShared, n: u32) -> Self {
-        let p = &shared.parts[0];
-        let cost = Voice::cost(&p.params, &p.mod_state).0;
-        Self::with_budget(budget(n * cost + 2 * Knobs::COST.0))
+    /// Rev V's budget, Part 1 capped by its MAX VOICES (`part`, `cap`):
+    /// a note past the cap steals its own. A Part's cap, not a starved budget: the clear
+    /// room is a real chip's (ADR 0311).
+    fn capped() -> Self {
+        Self::with_budget(SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V))
     }
 
     /// `blocks` blocks of Part `part`'s bus, and each block's glide ratio of
@@ -90,7 +70,18 @@ fn part(engine: EngineType, mode: Option<ResonatorMode>, steal: Steal) -> AudioS
     // The Parts carry INIT's wheel route: LFO 1 at its rest.
     p.lfos[0].depth = 0.0;
     *shared.parts[0].params = p;
+    cap(&mut shared, 1);
     shared
+}
+
+/// Part 1's MAX VOICES at `n` (ADR 0281): a note past it steals its own.
+fn cap(shared: &mut AudioShared, n: u8) {
+    use chimera_core::voice_limit::{Asked, MaxVoices, Reserve, VoiceCap};
+    let max = MaxVoices::Cap(VoiceCap::new(n).expect("a cap of 1 to 8"));
+    shared.parts[0].mix.set_voices(Asked {
+        max,
+        reserve: Reserve::NONE,
+    });
 }
 
 const MODELS: [(&str, EngineType, Option<ResonatorMode>); 5] = [
@@ -113,7 +104,7 @@ fn c3_then_g3(shared: &AudioShared, after: usize) -> (Vec<f32>, Vec<f32>) {
 
 /// `from` played and released, then `to`, which steals its voice.
 fn steal(shared: &AudioShared, (from, to): (u8, u8), after: usize) -> (Vec<f32>, Vec<f32>) {
-    let mut rig = Rig::one_voice(shared);
+    let mut rig = Rig::capped();
     let (mut out, mut ratios) = (Vec::new(), Vec::new());
     rig.inst.handle(on(0, from), shared);
     rig.run(shared, HELD, &mut out, &mut ratios);
@@ -253,7 +244,7 @@ fn another_parts_steal_cuts() {
     let mut shared = part(EngineType::Modal, Some(ResonatorMode::String), Steal::Glide);
     *shared.parts[1].params = (*shared.parts[0].params).clone();
     shared.parts[1].mix.channel = MidiChannel::new(1).unwrap();
-    let mut rig = Rig::one_voice(&shared);
+    let mut rig = Rig::capped();
     let (mut out, mut ratios) = (Vec::new(), Vec::new());
     rig.inst.handle(on(0, C3), &shared);
     rig.run(&shared, 40, &mut out, &mut ratios);
@@ -346,7 +337,7 @@ fn a_fast_glide_down_carries_the_old_ring() {
         for time in [0.0, 0.3] {
             let mut shared = part(EngineType::Modal, Some(mode), Steal::Glide);
             shared.parts[0].params.pitch.glide_time = time;
-            let mut rig = Rig::one_voice(&shared);
+            let mut rig = Rig::capped();
             let (mut out, mut ratios) = (Vec::new(), Vec::new());
             rig.inst.handle(on(0, 72), &shared);
             rig.run(&shared, 40, &mut out, &mut ratios);
@@ -370,12 +361,13 @@ fn a_fast_glide_down_carries_the_old_ring() {
 /// one note-on's worst, takes both.
 #[test]
 fn two_symp_glide_steals_in_a_block_both_glide() {
-    let shared = part(
+    let mut shared = part(
         EngineType::Modal,
         Some(ResonatorMode::Sympathetic),
         Steal::Glide,
     );
-    let mut rig = Rig::voices(&shared, 2);
+    cap(&mut shared, 2);
+    let mut rig = Rig::capped();
     let (mut out, mut ratios) = (Vec::new(), Vec::new());
     for n in [24, 31] {
         rig.inst.handle(on(0, n), &shared);

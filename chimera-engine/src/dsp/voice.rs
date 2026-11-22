@@ -733,6 +733,23 @@ impl Voice {
             .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
     }
 
+    /// What a Sympathetic note-on of `note` here writes when its strike
+    /// adds to the sounding engine (`ModalEngine::strike_clear`): a
+    /// re-strike's none, STEAL GLIDE's growth; `None` when it starts
+    /// fresh, a CUT among them.
+    pub fn sym_strike_adds(
+        &self,
+        pool: &SymPool,
+        note: MidiNote,
+        params: &ParamSnapshot,
+    ) -> Option<usize> {
+        let glide = self.starts_now(params, pool) && params.pitch.steal == Steal::Glide;
+        match &self.slot {
+            EngineSlot::Modal(m) => m.strike_clear(note.get(), glide, self.sample_rate, pool),
+            _ => None,
+        }
+    }
+
     /// Up to `max` bytes of a waiting Sympathetic note's clear done ahead
     /// (`SymPool::pre_clear`): its lines only while the voice is idle, the
     /// set it will ring at any time. What it cleared.

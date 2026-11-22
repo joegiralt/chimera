@@ -14,7 +14,7 @@ use chimera_core::hw::{CPU_HZ_REV_V, MAX_VOICES, SampleBudget};
 use chimera_core::instrument::{AudioShared, DacBlocks, Instrument, SYM_CLEAR_BUDGET};
 use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, ModState, VCA};
 use chimera_core::note_queue::{NoteEvent, NoteKind};
-use chimera_core::params::{EngineType, ParamSnapshot};
+use chimera_core::params::{EngineType, ParamSnapshot, Steal};
 use chimera_core::part::PartMode;
 use chimera_core::project::PartId;
 use chimera_core::scope::ScopeWriter;
@@ -1097,4 +1097,144 @@ fn a_note_retriggered_mid_clear_sounds_once_as_alone() {
     a.block();
     assert_eq!(got, from_first_sound(&mut a, 4, 24));
     assert_eq!(s.voices_of(4), 1, "one voice");
+}
+
+/// Parts 1 to 4 holding ALGO notes up to the budget, room left for one
+/// Sympathetic voice; Part 5 on Sympathetic in `mode` with STEAL `steal`,
+/// holding `first` long enough for its lines to fill.
+fn full_with(mode: PartMode, steal: Steal, first: u8) -> Stage {
+    let mut p = sym();
+    p.pitch.steal = steal;
+    let mut parts = vec![(ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly); 4];
+    parts.push((p, mode));
+    let mut s = Stage::with_budget(&parts, SampleBudget::for_cpu(CPU_HZ_REV_V));
+    let bill = |p: &chimera_core::instrument::PartAudio| Voice::cost(&p.params, &p.mod_state).0;
+    let room = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0
+        - FxBus::COST.0
+        - chimera_core::budget::CONTROL_RESERVE.0
+        - bill(&s.shared.parts[4]);
+    let n = (room / bill(&s.shared.parts[0])).saturating_sub(1).min(7) as u8;
+    for k in 0..n {
+        s.on(usize::from(k % 4), 60 + k);
+        s.block();
+    }
+    s.on(4, first);
+    for _ in 0..24 {
+        s.block();
+    }
+    assert!(
+        s.inst.part_bus(4).iter().any(|&x| x != 0.0),
+        "{first} rings"
+    );
+    assert_eq!(s.inst.allocator().refused(), 0, "the load fits");
+    let _ = take_cleared_bytes();
+    s
+}
+
+/// `blocks` blocks of `s`, each within its deadline by `model`.
+fn under_deadline(s: &mut Stage, blocks: usize, what: &str) {
+    for b in 0..blocks {
+        s.block();
+        let c = take_cleared_bytes();
+        let m = model(s, c);
+        assert!(
+            m <= deadline(),
+            "{what}, block {b}: {m} > {} ({c} B cleared)",
+            deadline()
+        );
+    }
+}
+
+/// A mono Sympathetic Part retriggered at STEAL CUT on a full pool: the
+/// cut restarts its voice clean, so its whole clear is paced like a
+/// fresh note's, never one block's (#306 review C1).
+#[test]
+fn a_mono_cut_retrigger_on_a_full_pool_keeps_every_block_under_its_deadline() {
+    let mut s = full_with(PartMode::Mono, Steal::Cut, 0);
+    s.on(4, 1);
+    under_deadline(&mut s, 24, "CUT 0 → 1");
+    assert_eq!(s.inst.allocator().refused(), 0);
+    assert!(s.inst.part_bus(4).iter().any(|&x| x != 0.0), "1 sounds");
+}
+
+/// A STEAL GLIDE from a high note down to MIDI 0 on a full pool: its
+/// rings' growth is most of a worst note-on, so it waits out a fade and
+/// starts paced rather than clear it in one block (#306 review I3).
+#[test]
+fn a_long_glide_down_on_a_full_pool_keeps_every_block_under_its_deadline() {
+    let mut s = full_with(PartMode::Mono, Steal::Glide, 96);
+    s.on(4, 0);
+    under_deadline(&mut s, 24, "GLIDE 96 → 0");
+    assert_eq!(s.inst.allocator().refused(), 0);
+    assert!(s.inst.part_bus(4).iter().any(|&x| x != 0.0), "0 sounds");
+}
+
+/// `loaded()`'s low note waiting mid-clear: blocks until its clear has
+/// begun, still silent.
+fn mid_clear() -> Stage {
+    let mut s = loaded();
+    s.on(4, 0);
+    for _ in 0..8 {
+        s.block();
+        if take_cleared_bytes() > 0 {
+            break;
+        }
+    }
+    assert!(
+        s.inst.part_bus(4).iter().all(|&x| x == 0.0),
+        "still clearing"
+    );
+    s
+}
+
+/// The first `blocks` blocks Part 5 sounds, from its first sound, or
+/// `None` if it stays silent `limit` blocks.
+fn heard(s: &mut Stage, blocks: usize, limit: usize) -> Option<Vec<Bits>> {
+    for _ in 0..limit {
+        if s.inst.part_bus(4).iter().any(|&x| x != 0.0) {
+            return Some(from_first_sound(s, 4, blocks));
+        }
+        s.block();
+        let _ = take_cleared_bytes();
+    }
+    None
+}
+
+/// Part 5's note `n` alone, as `a_paced_note_sounds_as_alone` hears it.
+fn alone5(n: u8, blocks: usize) -> Vec<Bits> {
+    let mut a = Stage::new(&vec![(sym(), PartMode::Poly); 5]);
+    short_part(&mut a, 4);
+    a.on(4, n);
+    a.block();
+    from_first_sound(&mut a, 4, blocks)
+}
+
+/// Mid-clear, the other Parts flood the pool: whatever they steal, every
+/// block stays within its deadline, the pool's books stay whole, and the
+/// waiting note, if it sounds, sounds as alone.
+#[test]
+fn a_flood_mid_clear_keeps_the_books_and_the_deadline() {
+    let mut s = mid_clear();
+    for k in 0..12u8 {
+        s.on(usize::from(k % 4), 40 + k);
+    }
+    under_deadline(&mut s, 16, "flood");
+    if let Some(got) = heard(&mut s, 16, 32) {
+        assert_eq!(got, alone5(0, 16));
+    }
+}
+
+/// Mid-clear the note is let go and another struck: the slot its clear
+/// was readying goes to whichever starts, and what starts sounds as
+/// alone, nothing of the old lines left.
+#[test]
+fn a_slot_handed_on_mid_clear_carries_nothing() {
+    let mut s = mid_clear();
+    s.off(4, 0);
+    s.on(4, 12);
+    let got = heard(&mut s, 16, 48).expect("a note sounds");
+    assert!(
+        got == alone5(12, 16) || got[..1] == alone5(0, 1)[..],
+        "what starts sounds as alone"
+    );
 }
