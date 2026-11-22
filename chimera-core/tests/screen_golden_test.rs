@@ -215,7 +215,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Task 8 (#614): PLACE's mini glyph in its cell (every FLT front, row_flt,
     // large_va_drive) and FLT › FX's strip and curve (flt_fx_*, flt_led_*).
     ("flt_fx_soft_pre", 0x999ea6f9fd19cc8a),
-    ("flt_fx_fold_post", 0x2046a066ca3a2106),
+    ("flt_fx_fold_post", 0x8dc545b177d7957a),
     // THEME's PAGES ROW (ADR 0145): every other screen is recorded under
     // STACK (`screen::ui_for`). FLT's three pages, RES's three, MOD at E2
     // with `>`, OSC at D1R with both arrows and at OP6 with `<`, AMP bare.

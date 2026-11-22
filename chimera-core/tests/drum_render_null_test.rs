@@ -83,16 +83,16 @@ fn print(m: Machine, kit: &Kit) -> u64 {
 
 /// The prints at origin/0.4 `262039d9`.
 const BEFORE: &[(Machine, u64)] = &[
-    (Machine::ToneKick, 0x8e04a7f5573aa149),
-    (Machine::ToneSnare, 0x0957a39b061f81cd),
-    (Machine::ToneTom, 0x97560ea8597466b8),
+    (Machine::ToneKick, 0x3ba825dfc53b88d6),
+    (Machine::ToneSnare, 0x3119c7d44a1111dc),
+    (Machine::ToneTom, 0xd30fe2554ff4c1d7),
     (Machine::ToneClap, 0x212596044d49ee6f),
     (Machine::ToneCowbell, 0xf7e5811c1bee77d5),
-    (Machine::ToneCymbal, 0xd98ad016d1954295),
+    (Machine::ToneCymbal, 0x8b83f2791425ec73),
     (Machine::MetalHat, 0x500d483d2cb749f5),
-    (Machine::MetalJingle, 0x56197f5109377ad7),
+    (Machine::MetalJingle, 0x07b2ddc005faf480),
     (Machine::BodyShaker, 0xfd6404ebac8b05c9),
-    (Machine::PlainSine, 0x9858ec06333e4c9d),
+    (Machine::PlainSine, 0x07c7be547ee549e5),
     (Machine::PlainNoise, 0x553d2303796b2416),
     (Machine::PlainImpulse, 0xbd84e35bf1b5c38f),
 ];

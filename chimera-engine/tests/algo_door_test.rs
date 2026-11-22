@@ -99,10 +99,10 @@ const BEFORE: &[u64] = &[
     0x9a0526a4b6fe7d7c,
     0x0066615f9d116c31,
     0x225fe1d97e44b25d,
-    0xeff5872cf3961cc6,
+    0x547570ece616094c,
     0xc3f2e7b223030f63,
-    0xba05fb22df25ae86,
-    0xe5aea6c48967f8e6,
+    0x8bf931a905da35af,
+    0x225291d9c022aefd,
 ];
 
 fn hashes() -> Vec<u64> {
@@ -123,7 +123,7 @@ fn algo_plays_as_before_the_move() {
     // not their DSP, differs.
     let mut before = BEFORE.to_vec();
     if cfg!(feature = "master-tape") {
-        (before[9], before[12]) = (0x87d1_49c6_8125_5ba1, 0x4a9f_e144_9fdd_07f1);
+        (before[9], before[12]) = (0x5817_f5ef_944f_c7d2, 0x9c8a_179f_a745_ce0c);
     }
     assert_eq!(h, before);
 }

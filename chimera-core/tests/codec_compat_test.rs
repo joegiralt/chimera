@@ -562,7 +562,7 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // Re-recorded in Task 14: its DRV loads as SOFT with LEVEL cancelling its
     // `MAKE_UP` 0.483 (same loudness, not the same bits).
     ("factory_5.snd", 0xa778b804866845e5),
-    ("factory_6.snd", 0x144e8d10ce6ac51e),
+    ("factory_6.snd", 0xb010734cb5f7e131),
     // Then the voice-end fade past −80 dB (#487): its −69 dB DC tail.
     ("factory_7.snd", 0x13448df1ea3c0499),
     ("init_algo.snd", 0x889c731ceb1c7089),

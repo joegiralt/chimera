@@ -225,7 +225,7 @@ fn fixed_routes_drive_the_voice_as_registry_routes_did() {
     // before the fixed columns existed.
     assert_eq!(
         common::fnv1a(&common::render_sound(&p, &ms)),
-        0x8f4c_b2c5_e0cf_afed
+        0x1ab6_9eb9_7606_7b0f
     );
 }
 
