@@ -337,3 +337,24 @@ fn stream_holds_for_an_hour() {
     clean(&model(-300.0, (0.6, 0.95), 0.0, 3_600, 98));
     clean(&model(300.0, (0.1, 0.3), 0.01, 3_600, 97));
 }
+
+/// GINTSTS.IISOIXFR says some isochronous IN missed its frame, not which:
+/// in duplex the playback's feedback endpoint (polled every 4th frame)
+/// raises it ~750 times a second. Only a capture packet whose own frame
+/// has passed is late; one aimed at the frame now or the next stays put,
+/// or a late interrupt would move a good packet a frame on and the host
+/// would read a zero-length packet (#973).
+#[test]
+fn only_a_packet_past_its_frame_is_late() {
+    use chimera_midi::uac::{Counts, Pacer, TARGET};
+    let mut p = Pacer::new();
+    let mut c = Counts::default();
+    let n = 100u16;
+    let _ = p.next(TARGET, n + 1, &mut c);
+    assert!(!p.late(n), "armed in frame n for n + 1");
+    assert!(!p.late(n + 1), "its frame is now: the feedback's miss");
+    assert!(p.late(n + 2), "its frame ended unsent");
+    // Wrapping at 11 bits.
+    let _ = p.next(TARGET, 0, &mut c);
+    assert!(!p.late(0x7FF) && !p.late(0) && p.late(1));
+}

@@ -313,10 +313,13 @@ pub(crate) mod door {
             // SAFETY: the stream's own IN endpoint's DIEPCTL; the bus
             // writes it only in `write` and its reset's configure, both
             // from this poll's context, never concurrently.
+            // Only a capture packet past its own frame: in duplex the
+            // feedback endpoint's misses raise the flag too (#973).
             unsafe {
                 let v = p.read_volatile();
-                if uac::armed(v) {
-                    p.write_volatile(uac::aim(v, now()));
+                let at = now();
+                if uac::armed(v) && s.pacer.late(at) {
+                    p.write_volatile(uac::aim(v, at));
                     s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
                 }
             }

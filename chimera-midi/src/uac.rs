@@ -90,6 +90,13 @@ impl Pacer {
         }
     }
 
+    /// Whether the packet last aimed missed its frame by `now`: its frame
+    /// has ended (GINTSTS.IISOIXFR names no endpoint, #973).
+    pub fn late(&self, now: u16) -> bool {
+        let gap = usize::from(now.wrapping_sub(self.last) & FRAME_MASK);
+        (1..=HIGH / NOMINAL).contains(&gap)
+    }
+
     /// The stream stopped: the next starts by priming.
     pub fn stop(&mut self) {
         self.primed = false;
