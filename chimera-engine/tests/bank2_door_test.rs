@@ -2,7 +2,10 @@
 //! door address opens it. A host has no bank 2, so nothing here is ever
 //! dereferenced: `with` is only called closed.
 
-use chimera_engine::bank2::{DOOR_ADDR, DoorCell, Judged};
+use chimera_engine::bank2::{
+    BENCH_DOOR_ADDR, BOARD_DOOR_ADDR, DOOR_ADDR, DOOR_ROOM, DoorCell, ED_DOOR_ADDR, Judged,
+    MIDI_UI_DOOR_ADDR, ORBIT_UI_DOOR_ADDR, UI_DOOR_ADDR,
+};
 use chimera_image::crc::Crc32;
 use chimera_image::{
     BANK2_BASE, Bank2Memory, Door, Header, IMAGE_BODY, ImageRead, ReadFail, Seal, Version,
@@ -111,4 +114,30 @@ fn a_door_that_fails_its_check_cannot_open() {
     // SAFETY: as `open`.
     let j = unsafe { Judged::of(&door(0x100).unwrap()) }.expect("this link's door");
     assert!(j.check(|_| false).is_none());
+}
+
+/// ADR 0320: the door's table has 0x180 of room (it filled 0x100 with
+/// ORBIT), and the fixed tables after it sit at their slots, each 0x80 on.
+/// `bank2.x` asserts the same addresses on the link.
+#[test]
+fn the_door_tables_room_and_slots_are_pinned() {
+    assert_eq!(DOOR_ROOM, 0x180);
+    assert_eq!(
+        [
+            BOARD_DOOR_ADDR,
+            UI_DOOR_ADDR,
+            BENCH_DOOR_ADDR,
+            ORBIT_UI_DOOR_ADDR,
+            MIDI_UI_DOOR_ADDR,
+            ED_DOOR_ADDR,
+        ],
+        [
+            0x0810_0280,
+            0x0810_0300,
+            0x0810_0380,
+            0x0810_0400,
+            0x0810_0480,
+            0x0810_0500
+        ]
+    );
 }

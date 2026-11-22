@@ -1059,21 +1059,53 @@ impl KitBill {
 /// costliest pad's mods and the costliest bill its machines can run up.
 pub fn kit_bill(kit: &Kit) -> KitBill {
     PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
-        let s = kit.pad(p).sound();
-        let f = FilterShape::of(s.filter.kind, s.filter.voice).bit();
-        let m = s.mods();
         let mc = KernelBill::worst(kit.pad(p).machine());
         KitBill {
-            shapes: b.shapes | f,
-            moving: b.moving | if s.routes.moves_filter() { f } else { 0 },
-            mods: b.mods.max(m),
             kernel: match b.kernel {
                 Some(was) if was.cost() >= mc.cost() => Some(was),
                 _ => Some(mc),
             },
-            gated: b.gated || s.amp.gate != lpg::Knobs::default(),
+            ..b.with(Runs::of(kit.pad(p).sound()))
         }
     })
+}
+
+/// What a pad plays, or a ringing hit runs, as a kit's bill folds it:
+/// its filter's shape, whether a route moves it, its mods and whether its
+/// gate runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Runs {
+    pub shape: FilterShape,
+    pub moving: bool,
+    pub mods: PadMods,
+    pub gated: bool,
+}
+
+impl Runs {
+    /// A pad's, from its sound.
+    pub fn of(s: &PadSound) -> Runs {
+        Runs {
+            shape: FilterShape::of(s.filter.kind, s.filter.voice),
+            moving: s.routes.moves_filter(),
+            mods: s.mods(),
+            gated: s.amp.gate != lpg::Knobs::default(),
+        }
+    }
+}
+
+impl KitBill {
+    /// `self` with what `r` runs: a pad's, or a ringing hit's
+    /// (`DrumEngine::runs`, #977).
+    pub fn with(self, r: Runs) -> KitBill {
+        let f = r.shape.bit();
+        KitBill {
+            shapes: self.shapes | f,
+            moving: self.moving | if r.moving { f } else { 0 },
+            mods: self.mods.max(r.mods),
+            gated: self.gated || r.gated,
+            ..self
+        }
+    }
 }
 
 /// A Part's voice bill split at its DRUM kernel (`Voice::drum_cost`): a

@@ -967,6 +967,11 @@ impl DrumHit {
         self.pitch
     }
 
+    /// Its pad's sound, its choices as struck, borrowed.
+    pub const fn sound(&self) -> &super::sound::PadSound {
+        self.params.sound()
+    }
+
     /// Its pad's sound, as a ringing hit follows it (`DrumEngine::follow`).
     pub(crate) fn sound_mut(&mut self) -> &mut super::sound::PadSound {
         self.params.sound_mut()
