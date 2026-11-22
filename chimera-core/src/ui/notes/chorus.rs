@@ -1,4 +1,4 @@
-//! The chorus's FLANGER and PHASER glyphs (ADR 0323), objects in the
+//! The chorus's FLANGER and PHASER glyphs (ADR 0324), objects in the
 //! braid's box: FLANGER a moiré, a fixed back comb of bars and a front
 //! comb sliding and stretching over it, bright where their bars line up;
 //! PHASER a blocky ray gun firing pulses along its beam. Bank 2's, through

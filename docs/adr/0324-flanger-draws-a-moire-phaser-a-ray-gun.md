@@ -1,4 +1,4 @@
-# 0323. FLANGER draws a moiré, PHASER a ray gun
+# 0324. FLANGER draws a moiré, PHASER a ray gun
 
 - **Status:** Accepted (2026-11-22)
 - **Deciders:** the owner (designs chosen 2026-11-22 from animated concepts: F1 moiré, P4 ray gun)

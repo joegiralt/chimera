@@ -566,7 +566,7 @@ impl UiDoor {
 }
 
 /// FLANGER's moiré or PHASER's ray gun through the UI door's `notes`
-/// (ADR 0323), out of line for the generic `braid`: whether it drew.
+/// (ADR 0324), out of line for the generic `braid`: whether it drew.
 /// Closed, false: the braid.
 #[inline(never)]
 pub(crate) fn chorus(

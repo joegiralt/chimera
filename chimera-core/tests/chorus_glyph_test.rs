@@ -1,4 +1,4 @@
-//! The chorus's FLANGER and PHASER glyphs (ADR 0323): a moiré of two
+//! The chorus's FLANGER and PHASER glyphs (ADR 0324): a moiré of two
 //! combs and a ray gun, in the braid's box. Chorus I, II and I+II keep
 //! the braid.
 

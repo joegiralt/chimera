@@ -1123,7 +1123,7 @@ where
     use crate::dsp::fast_sin;
     use core::f32::consts::{FRAC_PI_2, TAU};
     const STEP: i32 = 4;
-    // FLANGER's moiré and PHASER's ray gun are bank 2's (ADR 0323); closed,
+    // FLANGER's moiré and PHASER's ray gun are bank 2's (ADR 0324); closed,
     // the braid.
     if crate::bank2::chorus(&mut crate::ui::tape_strip::On(d), b) {
         return;

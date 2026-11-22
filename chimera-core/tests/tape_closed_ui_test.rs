@@ -121,7 +121,7 @@ fn closed_tape_ui_says_so_and_does_nothing() {
     let p = TapeEngineParams::default();
     assert_eq!(key(&Overview::EMPTY, TapeMachine::Walk, &p, Heads::NONE), 0);
 
-    // FLANGER and PHASER fall back to the braid closed (ADR 0323): its
+    // FLANGER and PHASER fall back to the braid closed (ADR 0324): its
     // strands behind the line in FAINT, which the moiré and the ray gun
     // never draw unfocused at MIX 1.
     let faint = |mode| {

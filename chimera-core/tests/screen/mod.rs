@@ -2067,7 +2067,7 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::C, 40));
     }),
-    // The chorus's FLANGER moiré and PHASER ray gun (ADR 0323), MODE in focus.
+    // The chorus's FLANGER moiré and PHASER ray gun (ADR 0324), MODE in focus.
     ("mixer_fx_chorus_flanger", |ui| {
         to_fx(ui, CHO);
         feed(ui, Input::turn(EncoderId::A, 3)); // MODE I → FLANGER
