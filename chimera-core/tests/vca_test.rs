@@ -537,19 +537,39 @@ fn a_vca_amount_turn_ramps_across_the_block() {
 /// The ratio to the unrouted note just before a matrix change at block
 /// 70, at the next block's first loud sample, and a block on.
 fn across_a_change(p: &ParamSnapshot, from: &ModState, to: &ModState, vel: u8) -> [f32; 3] {
-    let plain = render(p, &ModState::new(), 90, 90, vel);
-    let mut v = Rig::new(SR);
-    v.note_on(MidiNote::new(60).unwrap(), Velocity::new(vel).unwrap(), p);
-    let mut out = Vec::new();
-    let mut b = [0.0f32; BLOCK_SIZE];
+    across(p, (from, to), vel, false)
+}
+
+/// `across_a_change`, the note stolen at the change (a new note on the
+/// sounding voice, as a steal from another Part plays it), against the
+/// same steal unrouted.
+fn across(p: &ParamSnapshot, (from, to): (&ModState, &ModState), vel: u8, steal: bool) -> [f32; 3] {
     let turn = 70;
-    for i in 0..72 {
-        v.render(&mut b, p, if i < turn { from } else { to });
-        out.extend_from_slice(&b);
-    }
+    let play = |a: &ModState, b: &ModState| {
+        let mut v = Rig::new(SR);
+        let vel = Velocity::new(vel).unwrap();
+        v.note_on(MidiNote::new(60).unwrap(), vel, p);
+        let mut out = Vec::new();
+        let mut blk = [0.0f32; BLOCK_SIZE];
+        for i in 0..72 {
+            if steal && i == turn {
+                v.note_on(MidiNote::new(64).unwrap(), vel, p);
+            }
+            v.render(&mut blk, p, if i < turn { a } else { b });
+            out.extend_from_slice(&blk);
+        }
+        out
+    };
+    let none = ModState::new();
+    let plain = if steal {
+        play(&none, &none)
+    } else {
+        render(p, &none, 90, 90, vel)
+    };
+    let out = play(from, to);
+    let s = turn * BLOCK_SIZE;
     let ratio = |i: usize| out[i] / plain[i];
     let loud = |i: &usize| plain[*i].abs() > 1e-3;
-    let s = turn * BLOCK_SIZE;
     let before = (s - BLOCK_SIZE..s)
         .filter(loud)
         .map(ratio)
@@ -594,6 +614,21 @@ fn a_vca_route_deleted_moved_or_last_removed_ramps_out() {
     ];
     for (what, from, to) in cases {
         let [before, first, after] = across_a_change(&p, &from, &to, 100);
+        assert!((before - after).abs() > 0.1, "{what}: {before} → {after}");
+        assert!(
+            (first - before).abs() < 0.2 * (before - after).abs(),
+            "{what}: the block opens at {first}, from {before} toward {after}"
+        );
+    }
+    // A steal into an unrouted Part: the routed note's gain ramps into the
+    // new note's pass-through over a block, never a step.
+    {
+        let (what, from, to) = (
+            "stolen",
+            mods(&[(ModSource::Env2, VCA, 60), keep]),
+            mods(&[keep]),
+        );
+        let [before, first, after] = across(&p, (&from, &to), 100, true);
         assert!((before - after).abs() > 0.1, "{what}: {before} → {after}");
         assert!(
             (first - before).abs() < 0.2 * (before - after).abs(),

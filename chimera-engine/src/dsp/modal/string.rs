@@ -219,16 +219,20 @@ impl KsString {
         self.write_pos = len - 1;
     }
 
-    /// `excite` again at another period, on a line only `excite` has
-    /// written since its clear (a note's first block, before any sample):
-    /// the same line as a clear and an `excite` would leave, with no
-    /// second clear. Only the first fill's tail past the new loop (and
-    /// the ring's growth's copy of it) is zeroed, so the writes are about
-    /// a fill's, as the note-on's own (#233).
+    /// `excite` again at another period, on a line `excite` plucked and
+    /// nothing has played since (a note's first block, before any sample;
+    /// a glide's `fit` may have grown its ring): the same line as a clear
+    /// and an `excite` would leave, with no second clear. Only what the
+    /// first pluck left past the new loop (its fill's tail, a `fit`'s copy
+    /// of it, up to the old `dirty`) and the new ring's growth is zeroed,
+    /// so the writes stay within the note-on's (#233).
     #[inline(always)]
     pub(super) fn refill(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
-        let old = self.delay;
-        // `clear`'s resets but the buffer's: nothing past `old` was written
+        // the precondition: `excite` leaves the write at its loop's last
+        // sample, and a played sample moves it
+        debug_assert_eq!(self.write_pos + 1, self.delay, "refill on a line that played");
+        let dirty = self.dirty;
+        // `clear`'s resets but the buffer's: nothing past `dirty` was written
         self.write_pos = 0;
         self.delay = MIN_LINE;
         self.ring_len = MIN_LINE + 2;
@@ -239,8 +243,7 @@ impl KsString {
         for i in 0..len {
             self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
         }
-        // the first fill's tail, and what the ring's growth carried of it
-        let end = old.max(self.ring_len);
+        let end = dirty.max(self.ring_len);
         if end > len {
             self.buffer[len..end].fill(0.0);
         }
@@ -1117,7 +1120,13 @@ mod tests {
     /// down from the first.
     #[test]
     fn a_refill_is_a_clear_and_a_pluck() {
-        for (first, second) in [(60u8, 72u8), (60, 36), (31, 96), (96, 31)] {
+        // and after a glide's `fit` grew the ring first (ORBIT's re-snap,
+        // `ModalEngine::glide_to`, before the note's first block)
+        let cases = [(60u8, 72u8), (60, 36), (31, 96), (96, 31)];
+        for ((first, second), fit) in cases
+            .into_iter()
+            .flat_map(|c| [(c, None), (c, Some(2000.0))])
+        {
             let ens = Ensemble::new(0.0, 3.0, 48_000);
             let pluck = |v: &mut StringVoice, note: u8| {
                 let f = (note_to_freq(note), 48_000);
@@ -1125,12 +1134,15 @@ mod tests {
             };
             let mut a = voice();
             pluck(&mut a, first);
+            if let Some(p) = fit {
+                a.string.fit(p);
+            }
             a.repluck(note_to_freq(second), 48_000);
             let mut b = voice();
             pluck(&mut b, second);
             let (la, lb) = (a.string.line(), b.string.line());
-            assert_eq!(la.1, lb.1, "{first} → {second}: the dirty extent");
-            assert!(la.0[..] == lb.0[..], "{first} → {second}: the line");
+            assert_eq!(la.1, lb.1, "{first} → {second} {fit:?}: the dirty extent");
+            assert!(la.0[..] == lb.0[..], "{first} → {second} {fit:?}: the line");
             assert_eq!(a.string.noise_state, b.string.noise_state);
             assert_eq!(
                 (a.string.delay, a.string.ring_len, a.string.write_pos),
