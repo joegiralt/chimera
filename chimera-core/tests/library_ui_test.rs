@@ -116,6 +116,11 @@ struct Rig {
 
 impl Rig {
     fn new() -> Rig {
+        // Open, as the unit plays it: under `bank2` the door cell is the
+        // process's, and a closed one in a test beside an open one made
+        // these flip (#1060 item 6). The closed door's own tests are
+        // `kit_library_closed_test`.
+        chimera_core::bank2::DOOR_CELL.open_host_if_linked();
         let mut st = Counted {
             inner: MemStore::new(1),
             reads: 0,
