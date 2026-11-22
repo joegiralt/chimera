@@ -1,0 +1,42 @@
+# 0312. Bug batch F: a shared voice keeps the latest key, the external tempo is the run's mean, ORBIT shuts for bank 2, OUT crossfades
+
+- **Status:** Proposed
+- **Deciders:** firmware (bug batch F: ORBIT, MIDI, the editor protocol and the files), for the owner's review; ORBIT's calls by sequencer precedent (owner's rule)
+
+## Context
+Batch F's real bugs, fixed for 0.4, left seven rules later work has to keep:
+
+1. **#321.** Two or more held keys that snap to one pitch share a voice (ADR 0076). A key-up re-pointed the voice at the lowest key still down (`NoteSet::lowest`), while a strike points it at the latest. Hold C, D, C# (all C in A minor's chord), let C# go, then G major: the voice went to B (from C), not D.
+2. **#322.** A SNAP or HELD edit with a key held waited for the next chord change: the runner re-snapped only when the harmony it handed on changed.
+3. **#1046.** The external tempo the reverb and the delay follow was one beat's sum of 24 tick intervals, taken once and held until a beat of sums sat 1.5 blocks off it, then rounded to 0.25 BPM (ADR 0085, 0302). Tick times are drained a block (64 samples) at a time, so the sum taken could be up to a block off and stayed there: a 120 BPM clock held as 120.25 to 120.75. A synced 1/8D echo then drifts off a DAW's grid by 1.5 to 2.3 ms a repeat. The grid alone holds 141.7 BPM as 141.75.
+4. **#784.** A gate build's `bank2 erase` (ADR 0208) shut TAPE's voices before the door closed, but not ORBIT's. Once closed, ORBIT's runner is bank 2's code: its pending note-offs could not be sent, so its notes rang on, and a reopen resumed its transport and offs stale.
+5. **#250.** A Part's OUT switched its DAC pair at once, which clicks on a sounding Part.
+6. **#318.** A project load that skipped or defaulted ORBIT data read Modified (ADR 0078), but a Part's Sound read leniently (an unknown entry or enum code skipped) read Saved.
+7. **#291.** CLEAR of the loaded project with edits runs SAVE THEN LOAD's SAVE AS. NAME EXISTS offered OVERWRITE THAT ONE onto the file being cleared, so the edits landed there and the clear's witness then failed with FILE CHANGED after NEW had loaded.
+
+## Decision
+- **A shared voice re-snaps from the latest key still down** (#321): last-note priority, as a mono synth's and an Elektron box's note priority is. `HeldKeys` (`chimera-engine/src/instrument.rs`) keeps the voice's keys as a bit set and its latest four in strike order; past four, the oldest leave the order and the lowest key still down stands in. This supersedes the "after a key-up, from the lowest key still down" clause of ADR 0076.
+- **A SNAP or HELD edit re-snaps at once** (#322). `OrbitRunner` keeps each Part's `(SNAP, HELD)` as last handed on; a change re-snaps, as a harmony change does, while ORBIT plays. `Instrument::resnap` takes SNAP OFF Parts too, so a RE-SNAP Part set to OFF glides back to the raw key. STAY Parts never move, as before.
+- **The held external tempo is the run's mean** (#1046). `MidiClock::hold` takes the first full beat as before, then refines it to the mean over the whole run, `24 · span / intervals`, each time the run doubles (2, 4, 8 … beats). Endpoint jitter and drain then shrink with the run: within 0.05 BPM of the clock after 40 s at ±2 ms of jitter, at 87.3 to 141.7 BPM. A tempo change is a beat of sums `HOLD` (1.5 blocks) off the held beat on average, not 24 sums in a row each off; it takes the newest beat and starts a new run. `Tempo::from_beat` takes the beat as it is, with no 0.25 BPM grid; the cells still read it on the published word's quarter BPM (`meter::clock_word`). This supersedes in part ADR 0085 ("the tempo is quantised to 0.25 BPM") and ADR 0302's "on a 0.25 BPM grid". A steady clock now retargets a few times as the run refines, each move smaller than the last; it never hunts.
+- **ORBIT shuts before bank 2's door closes for a write** (#784). While `LoadLink::shut_tape` is set, `LoadGate::before_block` calls `OrbitRunner::shut` first. It runs through ORBIT's own block entry, so the door table keeps its size (the main table is full in an ORBIT gate build): `shut` marks the runner `Shut::Asked`, and the block's bank-2 body runs `shut_in` in place of a step. `shut_in` sends every pending off, lowers the transport, drops a waiting DAW Start or Stop and lets the harmony go. The gate reports quiet only once ORBIT is shut and no TAPE voice sounds. While shut, `block_ported` and `realtime` pass ORBIT by. `open_tape` reopens it stopped: nothing stale resumes, and B6 plays it again. `before_block` takes the runner as `Option<&mut OrbitRunner>`, `None` on a board build without ORBIT.
+- **An OUT move crossfades** (#250). `MixState`'s `Route` per Part crossfades its L and R from the pair it leaves to the new one, linearly over `GATE_BLOCKS` (15 blocks, 20 ms), as the stage gates do. The sends go with the new pair alone, since they do not depend on the pair. Moving back mid-fade carries on from where the fade is. A Part with no voices lands at once. A settled Part mixes bit for bit as before.
+- **Any lossy decode reads Modified** (#318). `ProjectCheck::close` counts a Sound's skipped or refused entries (`SoundCheck::skips`) as lossy, beside ORBIT's and the formant budget's. The card's bytes are never claimed to match what is in memory. This extends ADR 0078's ruling to the Parts.
+- **NAME EXISTS never offers the file a CLEAR inside the save overwrites** (#291). `check_name` skips that file when it looks for a taken name. The edits go to a fresh file under the name the user gave, and the clear then saves NEW over its own file.
+
+## Alternatives considered
+- **#321, keep the lowest and fix ADR 0076's wording:** two rules for one voice (latest on a strike, lowest on a key-up). Every sequencer and mono synth reference uses last-note priority.
+- **#1046, timestamp ticks within the block (sample-accurate arrival):** it removes the drain but not a DAW's own jitter. Every shell's MIDI path would need a timestamp. The run's mean removes both.
+- **#1046, average over a fixed longer window (96 ticks):** better, but still capped: ±0.2 BPM at 120 with ±2 ms of jitter, and four times slower to follow a change.
+- **#1046, keep the 0.25 BPM grid:** it is a bias of up to 0.125 BPM on its own: 0.04 to 0.4 ms an echo at 120 BPM.
+- **#784, let the closed door's proxy send the offs:** the offs are the runner's state, read and cleared by bank 2's code.
+- **#250, a dip (fade out, switch, fade in):** 40 ms with a gap, against a 20 ms crossfade with none.
+
+## Consequences
+- A steady external clock moves the synced reverb and delay a few times in its first seconds (at 2, 4, 8 … beats), each move smaller; after a minute the tempo holds within a few thousandths of a BPM. `steady_clocks_never_retarget` and `a_jittering_clock_never_moves_the_synced_delay` now hold "few moves, converging, then still".
+- An old project whose Sounds hold entries this firmware doesn't know loads as Modified (no users yet: owner's rule).
+- Bank 1 grows by `HeldKeys`, `Route` and the gate's ORBIT step; the budget lines name this ADR.
+
+## Sources
+- private issue #321, 322, 1046, 784, 250, 318, 291
+- ADR 0076 (live snap), 0078 (ORBIT's lossy loads), 0085 and 0302 (tempo sync), 0208 (ORBIT behind the door), 0046 (the load gate)
+- Tests: `orbit_snap_test` (`a_shared_voice_resnaps_from_the_latest_key_still_down`, `a_snap_or_held_edit_resnaps_a_held_key_at_once`), `delay_sync_clock_test::a_jittering_clock_is_held_to_its_tempo`, `bank2_close_test::closing_bank_two_stops_orbit_and_lets_its_notes_go`, `instrument_test::an_out_change_crossfades_between_pairs`, `orbit_codec_test::a_leniently_read_sound_reads_modified`, `settings_manage_test::clear_own_save_then_load_never_overwrites_the_cleared_file`
