@@ -338,23 +338,62 @@ fn stream_holds_for_an_hour() {
     clean(&model(300.0, (0.1, 0.3), 0.01, 3_600, 97));
 }
 
-/// GINTSTS.IISOIXFR says some isochronous IN missed its frame, not which:
-/// in duplex the playback's feedback endpoint (polled every 4th frame)
-/// raises it ~750 times a second. Only a capture packet whose own frame
-/// has passed is late; one aimed at the frame now or the next stays put,
-/// or a late interrupt would move a good packet a frame on and the host
-/// would read a zero-length packet (#973).
+/// GINTSTS.IISOIXFR is raised at EOPF of the frame an isochronous IN
+/// missed, not naming which (#973): handled before the next SOF, DSTS
+/// still reads that frame; after it, SOF is pending beside it and DSTS
+/// reads the next. `missed` is the frame it ended either way.
+#[test]
+fn the_incomplete_flag_names_the_frame_it_ended() {
+    use chimera_midi::uac::missed;
+    assert_eq!(missed(100, false), 100, "at EOPF, before SOF");
+    assert_eq!(missed(101, true), 100, "past SOF, the frame before");
+    assert_eq!(missed(0, true), 0x7FF, "wrapping at 11 bits");
+}
+
+/// In duplex the playback's feedback endpoint (polled every 4th frame)
+/// raises the flag ~750 times a second. Only a capture packet whose own
+/// frame has ended is late: a real miss, prompt or late, is re-aimed; one
+/// aimed at a later frame stays put, or a late interrupt moves a good
+/// packet a frame on and the host reads a zero-length packet.
 #[test]
 fn only_a_packet_past_its_frame_is_late() {
-    use chimera_midi::uac::{Counts, Pacer, TARGET};
-    let mut p = Pacer::new();
+    use chimera_midi::uac::{Counts, Pacer, TARGET, missed};
     let mut c = Counts::default();
-    let n = 100u16;
-    let _ = p.next(TARGET, n + 1, &mut c);
-    assert!(!p.late(n), "armed in frame n for n + 1");
-    assert!(!p.late(n + 1), "its frame is now: the feedback's miss");
-    assert!(p.late(n + 2), "its frame ended unsent");
-    // Wrapping at 11 bits.
+    let l = 100u16;
+    // Aimed at l, unsent at l's EOPF: late, prompt or past SOF.
+    let mut p = Pacer::new();
+    let _ = p.next(TARGET, l, &mut c);
+    assert!(p.late(missed(l, false)), "a real miss, prompt");
+    assert!(p.late(missed(l + 1, true)), "a real miss, past SOF");
+    // Sent at l, the next aimed at l + 1: the feedback's miss at l's EOPF
+    // is not the capture's, prompt or past SOF.
+    let mut p = Pacer::new();
+    let _ = p.next(TARGET, l + 1, &mut c);
+    assert!(!p.late(missed(l, false)));
+    assert!(!p.late(missed(l + 1, true)));
+    // Wrapping.
     let _ = p.next(TARGET, 0, &mut c);
-    assert!(!p.late(0x7FF) && !p.late(0) && p.late(1));
+    assert!(p.late(missed(0, false)) && !p.late(missed(0, true)));
+}
+
+/// A re-aim moves the packet's frame on (`reaim`): a feedback miss just
+/// after the next SOF never moves it again, and the frames it skipped are
+/// owed once, as a gap in `next` would owe them.
+#[test]
+fn a_reaimed_packet_is_owed_once_and_not_moved_again() {
+    use chimera_midi::uac::{Counts, NOMINAL, Pacer, TARGET, missed};
+    let fill = 2 * TARGET;
+    let (mut p, mut c) = (Pacer::new(), Counts::default());
+    let _ = p.next(fill, 100, &mut c);
+    let _ = p.next(fill, 101, &mut c);
+    // Unsent at 101: re-aimed at 102 when handled past 102's SOF.
+    assert!(p.late(missed(102, true)));
+    p.reaim(103, &mut c);
+    assert_eq!(c.missed, 2, "101 and 102 went without");
+    // A feedback miss at 102's EOPF, handled past 103's SOF: not late.
+    assert!(!p.late(missed(103, true)));
+    // Sent at 103: the next packet pays the owed frames, once.
+    let a = p.next(fill, 104, &mut c);
+    assert_eq!(c.missed, 2, "owed once");
+    assert!(a.send > NOMINAL, "{a:?}");
 }

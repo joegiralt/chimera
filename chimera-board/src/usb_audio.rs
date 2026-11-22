@@ -318,8 +318,9 @@ pub(crate) mod door {
             unsafe {
                 let v = p.read_volatile();
                 let at = now();
-                if uac::armed(v) && s.pacer.late(at) {
+                if uac::armed(v) && s.pacer.late(uac::missed(at, flags & SOF != 0)) {
                     p.write_volatile(uac::aim(v, at));
+                    s.pacer.reaim(at.wrapping_add(1), &mut s.counts);
                     s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
                 }
             }
