@@ -812,8 +812,8 @@ fn am_level_matches_mix() {
 /// C5 over the lattice. Up to the knee, wherever MIX at the same BLEND
 /// passes −45 dB, AM does (the product of two band-limited waves adds lines
 /// at |f1 ± f2|). Past it AM runs into RING's product and is held to RING's
-/// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0176: the product's
-/// slope kinks, #660).
+/// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0176). The
+/// product's steps and slope kinks are corrected (#660, ADR 0313).
 #[test]
 fn am_alias_gate() {
     let mut fails = Vec::new();
@@ -853,16 +853,10 @@ fn am_alias_gate() {
                         (r + 0.5).max(-45.0)
                     } else {
                         println!("{at}: AM {a:.1} / MIX {m:.1} dB");
-                        // saw × saw at the fifth, full AM: the product's
-                        // slope kinks escape the 2-point kernel (RING reads
-                        // −37.4 dB there); an exception, held at −43 (AM
-                        // reads −43.5; filed as
-                        // private issue #660)
-                        if crse == 7 && w1 == SAW && w2 == SAW && blend == AM_KNEE {
-                            -43.0
-                        } else {
-                            -45.0
-                        }
+                        // saw × saw at the fifth read −43.5 dB before the
+                        // product's steps and slope kinks were corrected
+                        // (#660, ADR 0313): no exception
+                        -45.0
                     };
                     if m <= -45.0 {
                         if a > worst.0 {
@@ -899,8 +893,9 @@ const AM_TODAY: [(i8, f32, f32, f64, [f32; 16]); 12] = [
 ];
 
 /// At BLEND ≤ 85 AM is today's AM rescaled: BLEND `x'·AM_KNEE` renders
-/// today's BLEND `x'`, within float rounding of the mapping (the per-sample
-/// loop is the same code).
+/// today's BLEND `x'`, one sample late (the product's corrector, #660),
+/// the same away from the waves' steps and within the steps' corrections
+/// over the whole.
 #[test]
 fn am_below_the_knee_is_todays() {
     let mut worst = (0.0f64, 0.0f64);
@@ -919,13 +914,13 @@ fn am_below_the_knee_is_todays() {
         let y = held(36, p, 128);
         let got: f64 = y.iter().map(|&v| f64::from(v).powi(2)).sum();
         let rel = (got / ss - 1.0).abs();
-        let d = y[4096..4112]
+        let d = y[4097..4113]
             .iter()
             .zip(ys)
             .map(|(&a, b)| f64::from((a - b).abs()))
             .fold(0.0, f64::max);
         println!("CRSE2 {crse} x' {xp}: Σy² rel {rel:.2e}, max |Δy| {d:.2e}");
-        assert!(rel <= 1e-5, "CRSE2 {crse} x' {xp}: {rel}");
+        assert!(rel <= 5e-3, "CRSE2 {crse} x' {xp}: {rel}");
         assert!(d <= 1e-5, "CRSE2 {crse} x' {xp}: {d}");
         worst = (worst.0.max(rel), worst.1.max(d));
     }
@@ -975,7 +970,9 @@ fn am_crossover_is_continuous() {
 }
 
 /// At BLEND 1 AM is RING's product at BLEND 1: the same wave within level
-/// (correlation, saws, the fifth).
+/// (correlation, saws, the fifth), AM one sample late and its product's
+/// steps corrected (#660), where RING's are not: RING's coincident edges
+/// dip (its −37 dB of alias), AM's don't, so the two agree to 1 %.
 #[test]
 fn am_top_is_ring() {
     let p = VaParams {
@@ -993,7 +990,7 @@ fn am_top_is_ring() {
         },
         200,
     );
-    let (a, r) = (&a[100 * B..], &r[100 * B..]);
+    let (a, r) = (&a[100 * B + 1..], &r[100 * B..r.len() - 1]);
     let xy: f64 = a
         .iter()
         .zip(r)
@@ -1004,7 +1001,7 @@ fn am_top_is_ring() {
         "AM 1 vs RING 1: r {c:.6}, level {:+.2} dB",
         20.0 * (rms(a) / rms(r)).log10()
     );
-    assert!(c >= 0.9999, "{c}");
+    assert!(c >= 0.99, "{c}");
 }
 
 /// Unison's ring term carries DC (constant at FINE2 0, FINE2's beat at +6).
