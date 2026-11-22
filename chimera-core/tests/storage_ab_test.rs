@@ -226,6 +226,8 @@ fn pick_and_write_target_table() {
     for (a, b, want_pick, want_save) in cases {
         assert_eq!(pick(a, b), want_pick, "pick({a:?}, {b:?})");
         let want_save = want_save.map(|(side, g)| (side, Generation::new(g)));
+        // A fresh pair from 1 each case (`Generation::fresh`, #455).
+        Generation::seed_fresh(1);
         assert_eq!(write_target(a, b), want_save, "write_target({a:?}, {b:?})");
         // A delete removes the side a load wouldn't keep first; with a side
         // that needs newer firmware, that side last.
@@ -476,6 +478,8 @@ fn newer_firmware_newest_refuses_load_and_save() {
 
         delete(&mut s).unwrap();
         assert_eq!(load(&mut s).err(), Some(LoadError::Missing), "{shape:?}");
+        // Deleted, the pair starts afresh: from the seed (#455).
+        Generation::seed_fresh(1);
         assert_eq!(save(&mut s, &sound(2)), Ok(Generation::FIRST), "{shape:?}");
         assert_loads(&mut s, &sound(2));
     }

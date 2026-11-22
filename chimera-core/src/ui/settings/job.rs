@@ -294,7 +294,19 @@ impl UiState {
         if here && let Some(f) = fresh {
             save.fresh = f;
         }
-        let mut taken = self.listing.named(&save.name).filter(|_| here);
+        // A CLEAR inside this save saves NEW over its own file next: that
+        // file is no name this save may take, or OVERWRITE THAT ONE would
+        // void the clear (#291).
+        let own = save
+            .then
+            .as_ref()
+            .and_then(|t| t.clear.as_ref())
+            .map(|c| c.target().file());
+        let not_own = |e: &ProjectEntry| Some(e.file()) != own;
+        let mut taken = (0..self.listing.len())
+            .filter_map(|i| self.listing.entry(i))
+            .find(|e| e.is_named(&save.name) && not_own(e))
+            .filter(|_| here);
         if here && taken.is_none() && self.listing.more() {
             let after = self
                 .listing
@@ -303,7 +315,7 @@ impl UiState {
             let CardOut { out, event } = project::find_named(cx.card, cx.store, &save.name, after);
             self.saw(event);
             match out {
-                Ok(e) => taken = e,
+                Ok(e) => taken = e.filter(not_own),
                 Err(n) => {
                     self.show_note(n);
                     return None;

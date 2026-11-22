@@ -500,3 +500,53 @@ fn manage_never_sits_empty() {
         Location::settings_at(&m[..m.len() - 1], m[m.len() - 1])
     );
 }
+
+/// CLEAR of your own Modified project, SAVE THEN LOAD, the edits named as
+/// the file being cleared: that file is not one the save may overwrite
+/// (it is NEW's next), so NAME EXISTS doesn't offer it and the save goes
+/// to a fresh file; the clear then happens (#291).
+#[test]
+fn clear_own_save_then_load_never_overwrites_the_cleared_file() {
+    let mut s = MemStore::new(1);
+    let a = put(&mut s, "DRIFT-010");
+    let _b = put(&mut s, "BETA");
+    let mut r = Rig::new(s);
+    r.open_manage();
+    r.command(a, Command::LoadFrom);
+    r.tap(ButtonId::Edit);
+    assert_eq!(r.ui.project().meta().file(), Some(a));
+    r.ui.update(UiTick::for_test());
+    let fresh = project_crc(&Project::boxed().0);
+    let p1 = chimera_core::project::PartId::ALL[0];
+    let level = |p: &Project| p.part(p1).mix.get(PartParams::LEVEL);
+    r.ui.project_mut()
+        .edit_part(p1)
+        .mix
+        .set(PartParams::LEVEL, 0.25);
+    r.ui.update(UiTick::for_test());
+    let edited = level(r.ui.project());
+    r.tap(ButtonId::Menu);
+    r.command(a, Command::Clear);
+    r.tap(ButtonId::Edit);
+    r.feed(Input::turn(EncoderId::A, -9));
+    r.tap(ButtonId::Edit);
+    assert_eq!(r.question(), "START A NEW PROJECT?");
+    r.tap(ButtonId::Edit);
+    assert_eq!(
+        r.ui.naming().unwrap().text(),
+        "DRIFT-010",
+        "the own file's name"
+    );
+    r.tap(ButtonId::Edit);
+    assert!(
+        r.ui.naming().is_none() && !r.ui.prompt_open(),
+        "no NAME EXISTS over the file being cleared"
+    );
+    let all = listed(&mut r.s);
+    assert_eq!(all.len(), 3);
+    assert_eq!(all[2].name, Some(name("DRIFT-010")));
+    assert_eq!(level(&read_back(&mut r.s, all[2].file())), edited);
+    assert_eq!(project_crc(&read_back(&mut r.s, a)), fresh, "cleared");
+    assert_eq!(project_crc(r.ui.project()), fresh);
+    assert_eq!(r.ui.project().meta().file(), Some(a));
+}
