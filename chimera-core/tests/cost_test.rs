@@ -1781,7 +1781,7 @@ fn va_bills_each_mode() {
         (Bits, 540, [7, 5, 7, 7]),
         (Fm, 580, [7, 5, 7, 6]),
         // AM with its product corrected (#660, ADR 0321).
-        (Am, 590, [7, 5, 7, 6]),
+        (Am, 630, [6, 5, 6, 6]),
         (Max, 550, [7, 5, 7, 7]),
         // The unit reads LOOPFM 712 a voice against 584 (2026-10-22).
         (LoopFm, 480, [8, 6, 8, 8]),

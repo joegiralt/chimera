@@ -342,10 +342,29 @@ impl MaxKink {
     }
 }
 
-/// The steps a listing render left naive in one oscillator's block, in
-/// time order (`VarOsc::listed_steps`): each `(slot, t, step)`, a slot past
-/// the block ending the list.
-pub type Steps = [(usize, f32, f32); STEPS];
+/// A step a listing render left naive (`VarOsc::listed_steps`): first in
+/// `out[slot]`, `t` samples (0..=1) before it, of size `d`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Step {
+    pub slot: usize,
+    pub t: f32,
+    pub d: f32,
+}
+
+impl Step {
+    /// A list's end: a slot past the block.
+    pub const fn end(len: usize) -> Self {
+        Self {
+            slot: len,
+            t: 0.0,
+            d: 0.0,
+        }
+    }
+}
+
+/// One oscillator's listed steps for a block, in time order, ended by
+/// `Step::end`.
+pub type Steps = [Step; STEPS];
 
 /// A listed block's steps at most: `PM_JUMPS` and the last block's carry.
 pub const STEPS: usize = super::osc::PM_JUMPS as usize + 2;
@@ -395,23 +414,23 @@ impl AmKinks {
     /// One oscillator's list for the block: the carry at slot 0, then
     /// `listed`'s steps in slots 1.., the end marked past the block; the
     /// last sample's (slot 0 in `listed`) the next block's carry.
-    pub fn list(
-        carry: &mut (f32, f32),
-        listed: impl Iterator<Item = (usize, f32, f32)>,
-        len: usize,
-    ) -> Steps {
-        let mut l = [(len, 0.0, 0.0); STEPS];
+    pub fn list(carry: &mut (f32, f32), listed: impl Iterator<Item = Step>, len: usize) -> Steps {
+        let mut l = [Step::end(len); STEPS];
         let mut n = 0;
         if carry.1 != 0.0 {
-            l[0] = (0, carry.0, carry.1);
+            l[0] = Step {
+                slot: 0,
+                t: carry.0,
+                d: carry.1,
+            };
             n = 1;
         }
         *carry = (0.0, 0.0);
-        for (k, t, d) in listed {
-            if k == 0 {
-                *carry = (t, d);
+        for s in listed {
+            if s.slot == 0 {
+                *carry = (s.t, s.d);
             } else if n < STEPS - 1 {
-                l[n] = (k, t, d);
+                l[n] = s;
                 n += 1;
             }
         }

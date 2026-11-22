@@ -1134,9 +1134,6 @@ pub struct VarOsc {
     pm_jumps: u8,
     /// The marks' slots it reported, in order (`pm_marks`).
     pm_at: [u8; PM_JUMPS as usize],
-    /// Each listed step's mark, `[JUMP − 1 − t, Σ s]` (`listed_steps`):
-    /// AM's product corrects them (#660).
-    pm_val: [[f32; 2]; PM_JUMPS as usize],
     inv_sr: f32,
     #[cfg(any(test, feature = "test-support"))]
     correction: Correction,
@@ -1163,6 +1160,10 @@ pub struct VarOsc {
     sh: [Shaped; 2],
     sh_ok: bool,
     next_ok: bool,
+    /// Each listed step's mark, `[JUMP − 1 − t, Σ s]` (`listed_steps`):
+    /// AM's product corrects them (#660). Last, so the fields before keep
+    /// their places (bank 1's offsets).
+    pm_val: [[f32; 2]; PM_JUMPS as usize],
     #[cfg(any(test, feature = "test-support"))]
     log: [(f32, f32, f32); EDGE_LOG],
     #[cfg(any(test, feature = "test-support"))]
@@ -1182,7 +1183,6 @@ impl VarOsc {
         pm_scale: (0.0, 0.0),
         pm_jumps: 0,
         pm_at: [0; PM_JUMPS as usize],
-        pm_val: [[0.0; 2]; PM_JUMPS as usize],
         inv_sr: 1.0 / 48_000.0,
         #[cfg(any(test, feature = "test-support"))]
         correction: Correction::On,
@@ -1198,6 +1198,7 @@ impl VarOsc {
         sh: [Shaped::ZERO; 2],
         sh_ok: false,
         next_ok: false,
+        pm_val: [[0.0; 2]; PM_JUMPS as usize],
         #[cfg(any(test, feature = "test-support"))]
         log: [(0.0, 0.0, 0.0); EDGE_LOG],
         #[cfg(any(test, feature = "test-support"))]
@@ -1278,16 +1279,19 @@ impl VarOsc {
         &self.pm_at[..usize::from(PM_JUMPS - self.pm_jumps)]
     }
 
-    /// The steps a listing render (`door::osc1_steps`, `osc2_steps`)
-    /// left naive this block, in time order: each `(slot, t, step)`, the
-    /// step first in `out[slot]`, `t` samples before it (slot 0: the next
-    /// block's first sample).
-    pub fn listed_steps(&self) -> impl Iterator<Item = (usize, f32, f32)> + '_ {
+    /// The steps a listing render (`am::osc1_steps`, `door::osc2_steps`)
+    /// left naive this block, in time order (slot 0: the next block's
+    /// first sample).
+    pub fn listed_steps(&self) -> impl Iterator<Item = super::combine::Step> + '_ {
         let n = usize::from(PM_JUMPS - self.pm_jumps);
         self.pm_at[..n]
             .iter()
             .zip(&self.pm_val[..n])
-            .map(|(&k, v)| (usize::from(k), JUMP - 1.0 - v[0], v[1]))
+            .map(|(&k, v)| super::combine::Step {
+                slot: usize::from(k),
+                t: JUMP - 1.0 - v[0],
+                d: v[1],
+            })
     }
 
     /// A jump's scale this block (PHASE's OSC 1, `door::osc1_phase`): `x`

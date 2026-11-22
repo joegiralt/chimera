@@ -425,12 +425,14 @@ pub const COST_LOOPFM: Cost = Cost(480);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 72.6 (with `am_reach` at the
 /// BLEND ramp's two ends a block, ADR 0176) + 29.9 + 95 = 534.3; the unit
 /// read 550. Its product's corrector (#660, ADR 0321) adds, by
-/// `tools/loop_count.py` on `render_am_kinks` in the release ELF: the
-/// operator's round 55 instructions a sample against 41 (+14), a listed
-/// step's slow round 80 more at six a block at the worst voice (+7.5), and
-/// both oscillators' listing instances, 8.5 each as PHASE's OSC 2 (+17):
-/// 550 + 38.5, rounded up.
-pub const COST_AM: Cost = Cost(590);
+/// `tools/loop_count.py` on `render_am_kinks` in the release ELF, in
+/// cycles (instructions × 1.606, MAX's convention): the operator's round,
+/// 55.25 instructions a sample against today's 25.5, +29.75 = +47.8; a
+/// sample where both waves step, 80 instructions more (128.5 cycles), six
+/// a block at the worst voice = +12.0; both oscillators' listing
+/// instances, 8.5 each as PHASE's OSC 2, +17. 550 + 76.8 = 626.8, rounded
+/// up.
+pub const COST_AM: Cost = Cost(630);
 /// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
 /// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
 /// the BLAMP) + 75.3 + 29.9 + 95 = 584.4.
@@ -1654,7 +1656,7 @@ impl VaEngine {
                 AmKinks::list(cb, self.osc[1].listed_steps(), BLOCK_SIZE),
             )
         } else {
-            let none = [(BLOCK_SIZE, 0.0, 0.0); combine::STEPS];
+            let none = [combine::Step::end(BLOCK_SIZE); combine::STEPS];
             (none, none)
         };
         let (mut ia, mut ib) = (0usize, 0usize);
@@ -1692,10 +1694,10 @@ impl VaEngine {
                     kink.step(out[i], b[i], x)
                 } else if KINKS {
                     let at = |l: &combine::Steps, n: &mut usize| {
-                        let (slot, t, d) = l[*n];
-                        (slot == i).then(|| {
+                        let s = l[*n];
+                        (s.slot == i).then(|| {
                             *n += 1;
-                            (t, d)
+                            (s.t, s.d)
                         })
                     };
                     let (ea, eb) = (at(&sa, &mut ia), at(&sb, &mut ib));
