@@ -55,6 +55,7 @@ use crate::voice_alloc::{Allocator, Steal, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 mod admission;
+mod sym_admit;
 pub use admission::AdmitDoor;
 use chimera_theory::{Note, snap};
 
@@ -404,7 +405,7 @@ const NO_SOURCES: GateView<'static> = GateView::empty();
 /// A note waiting for its voice's fade to end (#33 M7), and the source it
 /// latched at its note-on (TAPE).
 #[derive(Clone, Copy, Debug)]
-struct Waiting {
+pub(crate) struct Waiting {
     vel: Velocity,
     source: Option<SourceId>,
     plays: Plays,
@@ -417,6 +418,11 @@ struct Waiting {
 enum Plays {
     Note,
     Hit,
+    /// A Sympathetic note on its sounding voice (a re-strike, a glide
+    /// steal, a CUT): struck at the block's render, after every note-on of
+    /// the block has booked, so its clear is judged against the bookings
+    /// as they stand (#306, ADR 0311). One that can't is faded and waits.
+    Strike,
 }
 
 /// What admission paid for a streamed note (slice 1 § 5.5): its bill,
@@ -946,6 +952,16 @@ pub enum NoteOrigin {
 /// note-on past it waits a block, as a stolen note does: a chord of
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
+
+/// The unit's string clear, cycles a byte: SYM NOTE-ON LOW's 225,533
+/// cycles for 31,392 B (DWT, rev V, 2026-10-02; 7.2), rounded up. Unit
+/// re-read owed (#1026, ADR 0311).
+pub const SYM_CLEAR_CYCLES_PER_BYTE: u32 = 8;
+
+/// ADR 0262's unbilled overhead, cycles a sample: a block's, and a Part's
+/// with a voice booked.
+pub const BLOCK_OVERHEAD: Cost = Cost(160);
+pub const PART_OVERHEAD: Cost = Cost(230);
 
 crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });
 
@@ -1580,10 +1596,18 @@ impl Instrument {
                     // Sympathetic starts now only if the block's clear
                     // budget takes it and no note waits on it before; else
                     // it waits, as a steal does (spec § 4.8).
-                    let deferred = !waits
-                        && SlotKind::of(&part.params) == SYMPATHETIC
-                        && !(self.voices[v].starts_now(&part.params, &self.sym)
-                            && self.admit(v, &part.params, note));
+                    // It is judged at the block's render, after every
+                    // note-on of the block has booked (ADR 0311): on its
+                    // sounding voice as a pending strike, on an idle one as
+                    // a waiting note; a stale engine fades out first.
+                    let sym = !waits && SlotKind::of(&part.params) == SYMPATHETIC;
+                    let starts = sym && self.voices[v].starts_now(&part.params, &self.sym);
+                    let deferred = sym && !starts;
+                    let pending = starts.then_some(if self.voices[v].is_active() {
+                        Plays::Strike
+                    } else {
+                        Plays::Note
+                    });
                     #[cfg(feature = "probe")]
                     let t2 = crate::probe::now();
                     #[cfg(feature = "probe")]
@@ -1600,6 +1624,13 @@ impl Instrument {
                             plays: Plays::Note,
                         });
                         voice.kill()
+                    } else if let Some(plays) = pending {
+                        self.waiting[v] = Some(Waiting {
+                            vel,
+                            source: part.source,
+                            plays,
+                        });
+                        false
                     } else {
                         self.sounding[v] = Some(q);
                         let base = CtxBase {
@@ -2000,7 +2031,7 @@ impl Instrument {
             }
             if self.voices[v].kind() == SYMPATHETIC {
                 let bytes = self.voices[v].retune_clear(&self.sym, to);
-                if self.clear_backlog || bytes > self.clear_left {
+                if self.clear_backlog || bytes > self.clear_avail() {
                     continue;
                 }
                 self.clear_left -= bytes;
@@ -2040,7 +2071,8 @@ impl Instrument {
         let mut n = 0;
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            if !self.voices[v].is_active() && self.waiting[v].is_some() {
+            let strike = self.waiting[v].is_some_and(|w| w.plays == Plays::Strike);
+            if strike || (!self.voices[v].is_active() && self.waiting[v].is_some()) {
                 queue[n] = (self.alloc.slot(vi).age(), vi);
                 n += 1;
             }
@@ -2083,7 +2115,18 @@ impl Instrument {
         if SlotKind::of(params) == SYMPATHETIC {
             self.sym.alloc_mut().place(vi);
         }
-        if !self.admit(v, params, note) {
+        // A pending strike on its sounding voice (ADR 0311) is judged in
+        // bank 2 (`AdmitDoor::strike_ready`): one that can't start fades
+        // out and waits as a note. Closed, it takes `admit`'s one worst
+        // note-on a block, and waits on it as the note it then is.
+        let strike = w.plays == Plays::Strike;
+        let ready = if strike {
+            Self::admission(|d| d.strike_ready(self, vi, params, note, w))
+                .unwrap_or_else(|| self.admit(vi, params, note))
+        } else {
+            self.admit(vi, params, note)
+        };
+        if !ready {
             return false;
         }
         self.alloc.fade_from(vi, Cost::ZERO);
@@ -2092,9 +2135,13 @@ impl Instrument {
             self.streaming[v].fading = None;
         }
         let port = self.port_of(v);
-        let to = self
-            .tuned
-            .strike(v, crate::tuning::offset(q.index(), note.get()));
+        // A strike in place keeps the tuning its note-on set.
+        let to = if strike {
+            self.tuned.now(v)
+        } else {
+            self.tuned
+                .strike(v, crate::tuning::offset(q.index(), note.get()))
+        };
         self.sounding[v] = Some(q);
         if hit {
             if !self.start_hit(vi, w.vel, params, src) {
@@ -2261,21 +2308,24 @@ impl Instrument {
     /// but Sympathetic may; Sympathetic if no note waits on the clear
     /// budget before it and its clear fits what the block has left, which
     /// it then takes. One that doesn't fit starts the queue.
-    fn admit(&mut self, v: usize, params: &ParamSnapshot, note: MidiNote) -> bool {
+    fn admit(&mut self, vi: VoiceIdx, params: &ParamSnapshot, note: MidiNote) -> bool {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
-        if self.clear_backlog {
-            return false;
+        // Bank 2's (`AdmitDoor::admit_sym`); closed, one worst note-on a
+        // block (`clear_left`), as before #306.
+        match Self::admission(|d| d.admit_sym(self, vi, params, note)) {
+            Some(ok) => ok,
+            None => {
+                let bytes = self.voices[vi.index()].sym_note_on_clear(&self.sym, note, params);
+                if self.clear_backlog || bytes > self.clear_left {
+                    self.clear_backlog = true;
+                    return false;
+                }
+                self.clear_left -= bytes;
+                true
+            }
         }
-        let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
-        debug_assert!(bytes <= SYM_CLEAR_BUDGET);
-        if bytes > self.clear_left {
-            self.clear_backlog = true;
-            return false;
-        }
-        self.clear_left -= bytes;
-        true
     }
 
     /// A patch edit changes its voices' cost; fade voices out if that went
@@ -2297,8 +2347,12 @@ impl Instrument {
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
         // Each kit's bill read once: the Part's bill, its glide and its
-        // hits' all from the same kit.
-        let kits: [KitBill; MAX_PARTS] = PartId::ALL.map(|p| KIT_VIEW.bill(p));
+        // hits' all from the same kit, with each ringing hit's struck
+        // sound, whose filter it runs whatever the kit says now (#977).
+        let kits = self.ringing_kits();
+        // Each hit's live follow (`AdmitDoor::follows`, bank 2's); none
+        // with the door closed.
+        let follows = Self::admission(|d| d.follows(self)).unwrap_or([Cost::ZERO; MAX_VOICES]);
         // Only a Part with a gliding knob pays the glide scans (ADR 0117).
         let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
             let g = self.knobs[p].0.gliding();
@@ -2362,7 +2416,10 @@ impl Instrument {
                     Some(b) => HitKernel::Sounding(b),
                     None => HitKernel::Ended,
                 });
-                self.alloc.recost_with_glide(vi, own + held + k, glides[p]);
+                // A hit's live follow (#962), as a knob's glide: admission's.
+                let follow = follows[v];
+                self.alloc
+                    .recost_with_glide(vi, own + held + k, glides[p] + follow);
             }
         }
         // Only the bus, the reverb's extra, the knobs' reads and the LFO
@@ -2375,6 +2432,20 @@ impl Instrument {
         {
             self.shed(v);
         }
+    }
+
+    /// What this block may still clear (`AdmitDoor::clear_avail`, bank
+    /// 2's, ADR 0311); what `clear_left` keeps with the door closed.
+    fn clear_avail(&self) -> usize {
+        Self::admission(|d| d.clear_avail(self)).unwrap_or(self.clear_left)
+    }
+
+    /// Each Part's kit bill with each ringing hit's runs folded in
+    /// (`AdmitDoor::ringing_kits`, bank 2's, #977); the kits as published
+    /// with the door closed.
+    fn ringing_kits(&self) -> [KitBill; MAX_PARTS] {
+        Self::admission(|d| d.ringing_kits(self))
+            .unwrap_or_else(|| PartId::ALL.map(|p| KIT_VIEW.bill(p)))
     }
 
     /// A new formant note's reach on Part `p` (`HighNote::bill`, the
@@ -2498,7 +2569,8 @@ impl Instrument {
                 .note()
                 .map(|n| KIT_VIEW.hit(id, n).bill(self.sample_rate)),
             Some(Waiting {
-                plays: Plays::Note, ..
+                plays: Plays::Note | Plays::Strike,
+                ..
             }) => None,
             None => self.voices[w]
                 .drum_bill()

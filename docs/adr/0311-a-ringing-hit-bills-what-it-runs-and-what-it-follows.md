@@ -1,0 +1,81 @@
+# 0311. A ringing DRUM hit bills the filter it runs and the follow it does; a low SYMP note's clear is paced by the block's room
+
+- **Status:** Accepted (2026-11-22)
+- **Deciders:** firmware (bug batch E: #962, #977, #836); owner (#306, #704: pace the clear, and its worst-case delays accepted for 0.4, 2026-11-22)
+
+## Context
+The DRUM bill (ADR 0269, 0274, 0287) is worked out from the kit as last published. A ringing hit does not play the kit as it is now: it follows its pad's continuous values (ADR 0269), but it keeps the choices it was struck on: filter KIND, MODE and VOICE, and each route's SOURCE and DEST (`PadSound::live_target`). Two gaps followed from that.
+
+- **#977: a hit billed for a filter it no longer has.** Strike a LADDER pad, then publish the kit with that pad on CLEAN. The hit still runs LADDER, but recost billed it at the kit's CLEAN: 965 → 789 a sample for the rest of its ring. With STACK, eight such tails are about 1,400 a sample short.
+- **#962: the follow itself was not billed.** A pad edit on a ringing hit costs three things, none of them booked:
+  - the publish's block decodes the pad (`KitView::sound_if_newer`);
+  - the glide then steps the filter's coefficients (`FilterKind::glide_cost`);
+  - each gliding block eases 20 places and rebuilds both envelopes' coefficients (`AmpEnv::coefs`).
+- **#962, an over-bill.** `drum_glide_extra` folded the Sound's own filter glide into the DRUM bill, although the pads mask it once a kit is read. `drum_cost` already took the pads alone.
+
+- **#306, #704: a SYMP note-on could overrun a full block.** SYMP clears up to 31,392 B of string lines at its note-on, one worst note-on a block (`SYM_CLEAR_BUDGET`, spec § 4.8). The unit read that clear at 225,533 cycles (SYM NOTE-ON LOW, DWT, rev V, 2026-10-02), 35 % of the 640,000 deadline. On a full pool (480,000) with ADR 0262's unbilled overhead, that block passes the deadline. The load net (ADR 0273) acts only after the block. #704 reproduced it from plain MIDI.
+
+## Decision
+- **The kit's bill takes in what each ringing hit runs, from the hit's engine state** (`DrumEngine::runs`, a `Runs`), not from its followed `PadSound`:
+  - the filter shape it was struck on (KIND and VOICE are latched);
+  - **moving** while a filter route moves at the amounts the engine runs (`moves_filter`, on `PadMods::amounts`), or at the amounts its glide heads to (the follow's target). The followed sound's route amounts never change mid-glide, so they cannot say this;
+  - **mods** from what the engine struck: its mod envelope and routes (`Routed`), else its AMP envelope (`Amp`), else none. Both run for the whole ring whatever the pad's amounts or AMP become;
+  - its gate where it is, or where it glides to.
+  - `KitBill::with(Runs)` folds one in. `kit_bill` folds each pad (`Runs::of`). `Instrument::recost` (`ringing_kits`) folds each sounding hit into its Part's bill before the Part's bills are worked out. Nothing is taken off when the kit moves on.
+- **A hit's follow is billed as a knob's glide** (ADR 0117): admission counts it and shedding does not. `DrumEngine::follow_state(KitSeq)` is pure. It is given the kit's publish count (`KitView::seq`, a `KitSeq`) of the Part the voice *sounds* for (`Instrument::sounding`), never the allocator's: a voice stolen across Parts still follows its old Part's kit until its fade ends. It returns a `FollowState`:
+  - `Decoding(kind)`, a publish the hit hasn't seen: `FOLLOW_DECODE_COST` + `FOLLOW_GLIDE_COST` + the kind's `glide_cost` (the glide starts this block);
+  - `Gliding(kind)`: `FOLLOW_GLIDE_COST` + the kind's `glide_cost`;
+  - `Still`: 0. Once a glide lands, its hit books nothing more.
+- **`follow` eases its glide in place.** It used to copy the `(Places, Places)` pair out and back each block. It now keeps only the three lanes the rebuilds compare, sound-identically. `follow` shrank by 112 B.
+- **The constants are static upper bounds, counted honestly.** They are counted on the `filter-probes` ELF of this branch with `tools/loop_count.py`, the disassembly and a call-tree count. Each instruction is counted once with no branch skipped, loops at their trip counts, and copies at `__aeabi_memcpy4`'s 13 instructions a 16 B pass plus 10 a call (40 for the byte-wise `__aeabi_memcpy`), at `ceil5((instr × 1.606 + 12 × divides) / 64)` (ADR 0056):
+  - `FOLLOW_GLIDE_COST` **75**: `follow`'s whole body with the decode's branch (651) and its outlined pieces (90); the ease loop, 20 × 27 less the 19 in the body (521); both `AmpEnv::coefs` with `ACoefs::new` (2 × 387); `denormalize` 4 × 72; three lane compares (3 × 27); the copies, 80, 64 and 2 × 36 B, each with `__aeabi_memcpy4`'s ~20-instruction tail into `compiler_builtins::memcpy`. That is about 2,800 instructions and 21 divides, 74 a sample at most (the #1080 review's recount reads 72.9 to 73.5);
+  - `FOLLOW_DECODE_COST` **130**. The first count (115) missed several items: `PadSound::places`' 20-trip zero fill, the loops' overhead, the outlined normalize pieces (4 + 3, with 7 more divides), two more 80 B copies, seven `Reader::f32_or`, and the ~20 instructions of each `__aeabi_memcpy4`'s tail into `compiler_builtins::memcpy`. It also counted `Reader::env` three times where it runs twice. The #1080 review's recount reads about 127 a sample: 130.
+  - The first count (55 and 80) took each copy as one call, counted three `denormalize`s where four run, and counted the ease's loop once. It was not a bound.
+  - **Unit read owed** (#1026): a ringing pad edited from the KIT page, read with `stats` for the publish's block and for the glide's blocks. Lower these to a reading only if it reads under them.
+- **A DRUM glide bills its pads' filters only** (`drum_glide_extra`): `.max().unwrap_or(own)`, as `drum_cost` does. The Sound's own kind counts only before the first publish.
+- **The admission tables in `cost_test` take their room from admission's own constants** (#836). Before, the room was a literal, 2,064 (1,204 bus + 24 + an 836 burst), that no longer matched the code.
+  - The room is now `FxBus::COST_NO_TAPE` + `CONTROL_RESERVE` + `Instrument::BURST`, 2,073. With the master tape's bus it is 2,377.
+  - The ORBIT column adds `OrbitRunner::COST` on top. That is exactly what admission books while ORBIT plays (`Instrument::reserved`). The old literal put it 9 a sample over, so the ORBIT column claimed a voice that admission refuses: VA PHASE 7 → 6.
+  - The columns without ORBIT keep one burst's margin on purpose. Admission books no burst there, and a DIN chord arrives a note a millisecond, but the tables are a planning room, not a ceiling.
+  - The rows that move: VA PHASE beside ORBIT 7 → 6. With the master tape, VA LOOPFM 8 → 7, TAPE LOOP and TRON at TAPE/AGE ½ 8 → 7, and STRETCH GRAIN 5 → 4.
+
+- **A low SYMP note's clear is paced by the block's room** (owner, 2026-11-22, #306, #704). A low SYMP note may start up to about 5 ms late at full load.
+  - **Judged after the block's note-ons.** A Sympathetic note-on clears nothing at its note-on. On an idle voice it waits as a note. On its sounding voice (a re-strike, a STEAL GLIDE, a CUT) it waits as a pending strike (`Plays::Strike`) and keeps sounding.
+    - Both start at the block's render (`start_waiting`, `start`, with `AdmitDoor::strike_ready` judging a pending strike), before any voice renders, after every note-on of the block has booked. Voices start at block boundaries, so this ordering is inaudible: the strike lands in the same block, at the tuning its note-on set (`VoiceTunes::now`).
+    - A pending strike that can't start (a stale engine, or a clear that doesn't fit, a CUT's or a glide's growth) fades out and waits as a note, as any stolen note does.
+    - A first cut judged the clear at the note-on itself. There a SYMP note-on followed by seven ALGO notes in the same block cleared 25,272 B, taking the block to 757,184 of its 640,000 cycles (#1080 review C1′).
+  - **The room.** `Instrument::clear_avail` gives what the block may still clear: the block's room less what it has already cleared, within `clear_left`'s one worst note-on.
+    - The room is bank 2's, behind `AdmitDoor` (ADR 0320). With the door closed it is one worst note-on, as before.
+    - The room is the deadline (the audio share over `AUDIO_BUDGET_PERCENT`) less the bookings and the reserve as they stand, which are the block's own, less ADR 0262's overhead (`BLOCK_OVERHEAD` 160, plus `PART_OVERHEAD` 230 for each Part with a voice booked). The rest is divided by `SYM_CLEAR_CYCLES_PER_BYTE`, 8. No margin for notes still to come is needed, because none come after the clears.
+    - At a full pool with six Parts the room is 7,680 B a block on rev V and 4,344 B on rev Y. A light pool clears a worst note-on at once, and a STEAL GLIDE down keeps ringing (ADR 0065).
+    - Bookings past the budget can take the room to 0 for a while: knob glides that admission counts but shedding does not (ADR 0117). The note at the head of the queue then waits until those glides end.
+  - **The pacing.** A SYMP note whose clear doesn't fit waits, as it did. The block's room now clears its lines ahead first (`Voice::sym_pre_clear` → `SymPool::pre_clear` → `KsString::clear_some`, inlined into `AdmitDoor::pre_clear`, bank 2's, ADR 0320). The clear works down from the top of each line's `dirty`, and each pass leaves the line at rest as `clear` does. The note strikes once the rest fits. Only a strike that adds to the sounding engine skips the queue: a same-note re-strike, or STEAL GLIDE's growth (`ModalEngine::strike_clear` returning `Some`, `Voice::sym_strike_adds`). Even then it must fit the block's room, or it takes the deferred path (a fade, then a paced start). A STEAL CUT, a mono retrigger among them, is a fresh note and is paced as one. A first cut that excused every sounding voice let a mono CUT clear 28,796 B in one block (735,776 of 640,000; #1080 review C1).
+  - **What gets cleared.** The main string only while the voice is idle. The set it will ring at any time, its own or the one promised to it: no voice renders a promised set. A stolen voice's lines wait for its fade; its promised set clears meanwhile.
+  - **Latency.** A worst note-on (MIDI 0 after MIDI 0 on its slot, 31,392 B) at a full pool starts five blocks late on rev V (6.7 ms) and eight on rev Y (10.7 ms). The owner accepted these worst-case delays for 0.4 (2026-11-22): up to about 6.7 ms on rev V with six Parts, about 10.7 ms on rev Y, and the first-in, first-out chord wait. Notes queue first in, first out, and what a note leaves clears the next note's lines ahead, so a chord of N worst notes waits about 4.1 N blocks on rev V (four notes: 17 blocks, about 22 ms) and 7.2 N on rev Y (about 39 ms). A typical note-on (short lines) still fits one block, and a light pool clears a worst one at once.
+  - **A glide's growth.** A STEAL GLIDE down sizes its rings for the glide's longest period at the strike (`fit`). That growth is billed (`fit_bytes`) and must fit the block's room. A long glide down on a full pool takes the deferred path, a fade and then a paced start, and so drops out there, as any stolen note waits out a fade. A pool with room glides as before. `KsString::fit` counts its growth in the host test counter, so the model sees it. Red test: `a_long_glide_down_on_a_full_pool_keeps_every_block_under_its_deadline`, 753,952 of 640,000 before the fix.
+  - **Sound.** Zeros are zeros: the note sounds bit for bit as alone, from its first sample (`a_paced_note_sounds_as_alone`, `a_note_retriggered_mid_clear_sounds_once_as_alone`). Only its start moves, and only under load.
+  - **Real-time.** No allocation: a slice fill and a few compares a block. The 8 cycles a byte keep 0.8 a byte over the unit's 7.2, about 25,000 cycles a worst note-on (4 % of the deadline). That margin is for whatever preempts the audio interrupt while it clears (a higher-priority interrupt) and for cache state the 2026-10-02 reading didn't see. The unit read sets it.
+  - **Unit reads owed** (#1026): SYM NOTE-ON LOW on today's build, which sets `SYM_CLEAR_CYCLES_PER_BYTE`, and #704's two repros reading `overruns` and `load_sheds`.
+
+## Alternatives considered
+- **Recost a hit from its struck shape alone** (a per-hit rest beside the Part's). This is exact for that hit, but it needs a second filter bill per DRUM voice per block in bank 1. The union over-bills a Part's other voices only while a hit with an older shape rings.
+- **Treat a DRUM Part as gliding for 300 ms after its view moves** (the issue's cheapest idea). It bills every voice of the Part, ringing or not, and a fixed time is not when the glide ends. `follow_state` reads the hit's own glide.
+- **Bill the follow in the voice's shed cost.** A pad edit could then fade out ringing hits on a full pool. A knob's glide never sheds (ADR 0117), and a pad edit is the same kind of UI move.
+- **Wait for the unit before billing.** The rule for this batch is that a bill is set from the best static count, with margin, when only a unit read can settle it. The counts here are upper bounds.
+- **Read the struck `PadSound` for the fold** (the first cut). A followed sound keeps its struck route amounts mid-glide and lands on the pad's, so it said "not moving" while the engine's amounts moved, and "no mods" once a routed pad was edited to 0, while the engine still ran them (review of #1080).
+- **For #306, bill the clear** (225,533 / 64 = 3,524 a sample a SYMP Part): no voice would be left. **Make the clear cheap in hardware** (D2 write-back no-write-allocate, or MDMA zeroing): this changes every D2 resident and needs the unit. Both were offered; the owner chose the pacing.
+
+## Consequences
+- **Sound:** none changes. Bills move admission only, and every golden is bit-identical.
+- **Voices:** a pad edit under ringing hits books up to 210 a sample a hit in the publish's block (CLEAN), and 80 while the glide runs. A full pool refuses new hits for that window rather than overrunning. A kit republished on a cheaper filter keeps its ringing hits' bills until they end.
+- **Behind doors** (ADR 0320). Batch E's code is bank 2's, through five new `AdmitDoor` entries: `clear_avail`, `admit_sym`, `strike_ready`, `ringing_kits` and `follows`. It covers the clear room, the Sympathetic admission with its clear done ahead (`SymPool::pre_clear`, `KsString::clear_some`), the pending strike, the ringing-hit fold (`DrumEngine::runs`) and the follow bills. Their module, `instrument::sym_admit`, is linked into an S4 group. The door table grew to 0x180 to take them. A first attempt found ORBIT's table full at 256 B (240 B without ORBIT).
+- **Flash:** with ADR 0320's door, batch E's code is bank 2's. This covers the clear room, the clear done ahead, the Sympathetic admission and pending strike, the ringing-hit fold and the follow bills. Bank 1 keeps door stubs and the bill fields.
+  - Measured by the build on a clean tree against the merge base 521712eb: ORBIT's bank 1 is 908,528 → 908,040 (−488 B). Every bank-1 line is set to its measure.
+  - ORBIT's bank 2 is 634,016 → 638,240 (+4,224 B), the line raised under ADR 0320. ORBIT's S0-S3 has 2,208 B free, under ADR 0251's 8 KB per-region warning. The total holds at about 408 KB free.
+  - ORBIT's bank 1 by symbol against 521712eb: `admit` −632, `recost` +272, `DrumEngine::follow` −124, `serve_resnaps` +56, `KitWriter::publish` +24, the rest under ±64 or moved literals.
+- **Latency:** see the pacing's Latency above: 6.7 ms (rev V) and 10.7 ms (rev Y) for one worst note-on at a full pool, about 22 ms and 39 ms for the last of a four-note worst chord. A light pool, or a typical note-on, starts at once, as before.
+
+## Sources
+- private issue #306, private issue #704, private issue #962, private issue #977, private issue #836, private issue #1026.
+- ADR 0056 (static counts), 0117 (glide billing), 0269 (live follow), 0274, 0287 (DRUM bills).
+- `chimera-engine/src/dsp/drum/engine.rs` (`follow_bill`, `FOLLOW_*_COST`), `sound.rs` (`KitBill::with_sound`), `instrument.rs` (`recost`), `voice.rs` (`drum_glide_extra`, `drum_follow_extra`); `chimera-core/tests/drum_bill_test.rs`, `cost_test.rs`.

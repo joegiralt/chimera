@@ -342,12 +342,14 @@ impl Voice {
     }
 
     /// `glide_extra` of a DRUM hit: the filter's glide at the costliest of
-    /// the Sound's kind and its kit's pads'.
+    /// its kit's pads' kinds, the Sound's own (masked once a kit is read)
+    /// only before the first publish, as `drum_cost` (#962).
     pub fn drum_glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding, kit: KitBill) -> Cost {
         let glide = kit
             .shapes()
             .map(|(f, _)| f.kind().glide_cost())
-            .fold(p.filter.kind().glide_cost(), Cost::max);
+            .max()
+            .unwrap_or(p.filter.kind().glide_cost());
         Self::glide_with(p, mods, g, glide)
     }
 
@@ -731,6 +733,38 @@ impl Voice {
             .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
     }
 
+    /// What a Sympathetic note-on of `note` here writes when its strike
+    /// adds to the sounding engine (`ModalEngine::strike_clear`): a
+    /// re-strike's none, STEAL GLIDE's growth; `None` when it starts
+    /// fresh, a CUT among them.
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
+    pub fn sym_strike_adds(
+        &self,
+        pool: &SymPool,
+        note: MidiNote,
+        params: &ParamSnapshot,
+    ) -> Option<usize> {
+        let glide = self.starts_now(params, pool) && params.pitch.steal == Steal::Glide;
+        match &self.slot {
+            EngineSlot::Modal(m) => m.strike_clear(note.get(), glide, self.sample_rate, pool),
+            _ => None,
+        }
+    }
+
+    /// Up to `max` bytes of a waiting Sympathetic note's clear done ahead
+    /// (`SymPool::pre_clear`): its lines only while the voice is idle, the
+    /// set it will ring at any time. What it cleared.
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
+    pub fn sym_pre_clear(&mut self, pool: &mut SymPool, max: usize) -> usize {
+        let engine = match &mut self.slot {
+            EngineSlot::Modal(m) if !self.active => Some(&mut **m),
+            _ => None,
+        };
+        pool.pre_clear(engine, self.id, max)
+    }
+
     /// On a fading voice, or one sounding another engine or model, the note
     /// waits for the fade-out and then starts clean. Returns whether it replaced
     /// a note still waiting, unheard. A TAPE note plays `source`. Out of
@@ -792,6 +826,29 @@ impl Voice {
         match &self.slot {
             EngineSlot::Drum(d) if self.active => d.hit(),
             _ => None,
+        }
+    }
+
+    /// What the hit its DRUM slot sounds runs, for its Part's kit bill
+    /// (`DrumEngine::runs`, #977).
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
+    pub fn drum_runs(&self) -> Option<crate::dsp::drum::sound::Runs> {
+        match &self.slot {
+            EngineSlot::Drum(d) if self.active => d.runs(),
+            _ => None,
+        }
+    }
+
+    /// What its DRUM hit's live follow adds its next block, its Part's
+    /// kit at `seq` (`DrumEngine::follow_state`, #962); 0 for any other
+    /// slot.
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
+    pub fn drum_follow_extra(&self, seq: crate::dsp::drum::view::KitSeq) -> Cost {
+        match &self.slot {
+            EngineSlot::Drum(d) if self.active => d.follow_state(seq).cost(),
+            _ => Cost::ZERO,
         }
     }
 
