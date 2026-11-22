@@ -405,7 +405,7 @@ const NO_SOURCES: GateView<'static> = GateView::empty();
 /// A note waiting for its voice's fade to end (#33 M7), and the source it
 /// latched at its note-on (TAPE).
 #[derive(Clone, Copy, Debug)]
-struct Waiting {
+pub(crate) struct Waiting {
     vel: Velocity,
     source: Option<SourceId>,
     plays: Plays,
