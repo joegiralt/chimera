@@ -454,6 +454,9 @@ impl ModState {
     /// Sum of `source_value * amount / 127` over all sources for dest `d`.
     /// Same order and arithmetic as the old `compute_offset`. Returns 0.0
     /// when `d` is out of range instead of panicking (see `dest`).
+    // Inlined: bank 2's `ui::notes` calls it too (#149), so no
+    // out-of-line copy stays in bank 1 for it (ADR 0289).
+    #[inline(always)]
     pub fn sum_for(&self, d: usize, source_values: &[f32; MAX_MOD_SOURCES]) -> f32 {
         if d >= MAX_MOD_DESTS {
             return 0.0;
@@ -517,7 +520,11 @@ impl ModState {
     ) {
         *self = Self::new();
         self.num_sources = sources.min(MAX_MOD_SOURCES);
-        (self.fixed, self.fixed_present) = fixed;
+        // The live sources' bits only: a dead one would be routed and
+        // billed (#194).
+        let live = ((1u32 << self.num_sources) - 1) as SourceBits;
+        self.fixed = fixed.0;
+        self.fixed_present = fixed.1.map(|b| b & live);
         for (addr, amounts, present) in columns {
             if self.push_dest(addr) {
                 let d = self.num_dests - 1;
@@ -525,7 +532,7 @@ impl ModState {
                     .iter_mut()
                     .zip(amounts)
                     .for_each(|(row, a)| row[d] = a);
-                self.present[d] = present;
+                self.present[d] = present & live;
             }
         }
     }
@@ -724,5 +731,23 @@ mod tests {
         assert!(a.bits_eq(&b));
         b.set_route(1, 0, 0);
         assert!(!a.bits_eq(&b));
+    }
+
+    /// A matrix's present bits past `num_sources` never land (#194): what
+    /// `routes_into` answers and `vca_cost` bills is the live sources'.
+    #[test]
+    fn a_synced_state_holds_no_dead_present_bit() {
+        let level = ParamAddr::new(BlockRef::Filter, FilterParams::LEVEL);
+        let mut m = ModState::new();
+        let fixed = ([[0; 4]; MAX_MOD_SOURCES], [SourceBits::MAX; 4]);
+        m.sync_from_matrix(
+            2,
+            fixed,
+            [(Some(level), [0; MAX_MOD_SOURCES], SourceBits::MAX)],
+        );
+        assert_eq!(m.routes_into(level), 0b11);
+        for c in FixedCol::ALL {
+            assert_eq!(m.fixed_present(c), 0b11, "{c:?}");
+        }
     }
 }

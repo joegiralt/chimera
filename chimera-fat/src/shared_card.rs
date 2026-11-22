@@ -7,7 +7,7 @@ use core::cell::Cell;
 use core::fmt;
 
 use chimera_hal::Ms;
-use chimera_hal::card_bus::{CardBus, CardFault, QUIET_SPIN_MS, Quiet, Taker, Wake};
+use chimera_hal::card_bus::{CardBus, CardFault, QUIET_SPIN_MS, Quiet, Taker, UI_TURN_MS, Wake};
 use chimera_hal::store::StoreError;
 use chimera_hal::units::Millis;
 use embedded_sdmmc::{Block, BlockCount, BlockDevice, BlockIdx};
@@ -114,6 +114,7 @@ impl<D: Medium> SharedCard<D> {
     fn hold(&self) -> Result<UiHold<'_, D>, Busy> {
         let start = (self.hooks.now)();
         let mut asked = false;
+        let mut turn = false;
         loop {
             let now = (self.hooks.now)();
             if self.bus.try_take(Taker::Ui, now) {
@@ -123,12 +124,24 @@ impl<D: Medium> SharedCard<D> {
                     pend: self.hooks.pend,
                 });
             }
-            if !asked && self.bus.stuck(now) {
-                self.bus.ask_abort();
+            // An ask on a hold renewed since the judge isn't made: judged again.
+            if let Some(h) = self.bus.stuck(now).filter(|_| !asked)
+                && self.bus.ask_abort(h)
+            {
                 (self.hooks.pend)();
                 asked = true;
             }
+            // Waited a turn's length: the streams' next give is the UI's
+            // (#569).
+            if !turn && now.elapsed_since(start) >= UI_TURN_MS {
+                self.bus.ask_turn();
+                turn = true;
+            }
             if now.elapsed_since(start) > self.take {
+                if turn {
+                    self.bus.cancel_turn();
+                    (self.hooks.pend)();
+                }
                 break Err(Busy);
             }
         }

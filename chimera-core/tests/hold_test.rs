@@ -345,3 +345,101 @@ fn mix_plus_and_minus_are_no_orbit_key() {
     let keys = ui.orbit_frame_for_test(&Input::press(ButtonId::Plus));
     assert_eq!(keys[0], Some(OrbitKey::Plus));
 }
+
+/// #289: a frame stalled past HOLD_MS across a release and a re-press
+/// keeps the old press's tap; the new press's hold fires the frame after.
+#[test]
+fn a_stalled_release_and_repress_keeps_the_tap() {
+    let mut g = HoldGate::new();
+    g.step(press(0), Ms(0), false);
+    let e = Edges {
+        down: true,
+        pressed_at: Some(Ms(150)),
+        released_at: Some(Ms(100)),
+    };
+    assert_eq!(g.step(e, Ms(700), false), Some(Press::Tap));
+    assert_eq!(g.step(held(), Ms(733), false), Some(Press::Hold));
+    assert_eq!(g.step(release(800), Ms(800), false), None);
+}
+
+/// #289: a MIX + MENU chord pressed and let go inside one frame is still
+/// MIX's: MENU's tap is muted, not SETTINGS.
+#[test]
+fn a_sub_frame_mix_menu_chord_is_muted() {
+    let tap = |p: u32, r: u32| Edges {
+        down: false,
+        pressed_at: Some(Ms(p)),
+        released_at: Some(Ms(r)),
+    };
+    let mut g = HoldGates::new();
+    assert_eq!(
+        plain(
+            &mut g,
+            &stub(1033, tap(1000, 1030), tap(1005, 1020), Edges::default())
+        ),
+        NONE
+    );
+    // MIX let go before MENU went down: a plain MENU tap.
+    let mut g = HoldGates::new();
+    let p = plain(
+        &mut g,
+        &stub(1033, tap(1000, 1004), tap(1010, 1020), Edges::default()),
+    );
+    assert_eq!(p.menu, Some(Press::Tap));
+}
+
+/// #289 (review): MIX held from an earlier frame and let go after MENU's
+/// press in the next is a chord: MENU's release opens nothing. A MENU
+/// pressed after MIX let go is a plain tap.
+#[test]
+fn mix_let_go_after_menus_press_in_its_frame_mutes_menu() {
+    let mut g = HoldGates::new();
+    assert_eq!(
+        plain(
+            &mut g,
+            &stub(1000, press(1000), Edges::default(), Edges::default())
+        ),
+        NONE
+    );
+    // Frame n + 1: MENU down at 1040, MIX up at 1050.
+    let menu_down = Edges {
+        down: true,
+        pressed_at: Some(Ms(1040)),
+        released_at: None,
+    };
+    assert_eq!(
+        plain(
+            &mut g,
+            &stub(1066, release(1050), menu_down, Edges::default())
+        ),
+        NONE
+    );
+    assert_eq!(
+        plain(
+            &mut g,
+            &stub(1200, Edges::default(), release(1200), Edges::default())
+        ),
+        NONE,
+        "MENU's release after the chord opens no SETTINGS"
+    );
+    // MIX up at 1300, MENU down at 1320 in the same frame: a plain tap.
+    let mut g = HoldGates::new();
+    plain(
+        &mut g,
+        &stub(1280, press(1280), Edges::default(), Edges::default()),
+    );
+    let menu_down = Edges {
+        down: true,
+        pressed_at: Some(Ms(1320)),
+        released_at: None,
+    };
+    plain(
+        &mut g,
+        &stub(1333, release(1300), menu_down, Edges::default()),
+    );
+    let p = plain(
+        &mut g,
+        &stub(1400, Edges::default(), release(1400), Edges::default()),
+    );
+    assert_eq!(p.menu, Some(Press::Tap));
+}

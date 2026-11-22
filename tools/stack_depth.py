@@ -100,6 +100,17 @@ DOOR_ONLY = {
     "chimera_stm32::bench::enter": ("chimera_board::synth", "chimera_stm32::bench"),
 }
 
+# Functions only ever called directly, never through a pointer, whose
+# address a plain data word has matched by chance: a `BlockDef`'s packed
+# bytes read 0x08050401 when the link put bank 2's install at 0x08050400
+# (bug batch F's merge). Out of the address-taken set by name prefix (the
+# generic instance's full name follows). Grep the code before adding one:
+# its address must never be taken.
+# ponytail: a name list is the ceiling: each link may collide anew. The
+# real fix counts only words in relocated function-pointer tables or
+# sections, not any data word that happens to match.
+DIRECT_ONLY = ("chimera_board::bank2::boot_install::<",)
+
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")
 # The mnemonic follows the address (and raw bytes, if shown) after a tab.
 INSN = re.compile(r"^\s*[0-9a-f]+:[^\t]*\t(\S+)\s*(.*)$")
@@ -317,7 +328,10 @@ def pointer_charge(img, out, comp=None):
     taken = sorted(
         f
         for f, a in img.starts.items()
-        if (a | 1) in img.words and f not in ROOTS and f not in DOOR_ONLY
+        if (a | 1) in img.words
+        and f not in ROOTS
+        and f not in DOOR_ONLY
+        and not f.startswith(DIRECT_ONLY)
     )
     comp = comp if comp is not None else components(img.funcs)
     charge, deepest = 0, "-"

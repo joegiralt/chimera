@@ -1069,8 +1069,9 @@ fn close_tape(ui: &mut chimera_core::ui::UiState) {
             }
         };
         wait();
-        if BUS.owner() == Owner::Stream {
-            BUS.ask_abort();
+        // The hold as it is when asked: a burst's renew between the read
+        // and the ask reads again, a few times at most (#766).
+        if (0..4).any(|_| BUS.held().is_some_and(|h| BUS.ask_abort(h))) {
             crate::card_dma::pend();
             wait();
         }
@@ -1244,15 +1245,16 @@ pub fn run_install(
     cpu_hz: u32,
 ) -> chimera_core::console::Bank2Answer {
     use chimera_core::console::{
-        Bank2Answer, Bank2Audio, Bank2Refusal, CardImage, check_staged, installed,
+        Bank2Answer, Bank2Audio, Bank2Refusal, CardImage, check_staged, install_guard, installed,
     };
 
     let refuse = Bank2Answer::Refused;
     let Some(seal) = crate::bank2_seal() else {
         return refuse(Bank2Refusal::Unsealed);
     };
-    if ui.card_pending() {
-        return refuse(Bank2Refusal::Busy);
+    let unsaved = ui.project_status() == chimera_core::project::ProjectStatus::Modified;
+    if let Some(r) = install_guard(ui.card_pending(), unsaved) {
+        return refuse(r);
     }
     let vol = match store.mount() {
         Ok(v) => v,

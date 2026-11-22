@@ -120,6 +120,10 @@ use screen::*;
 // fractional FDBK, 0.1K more); large_settings_personal (ALGO PAGES' row,
 // #985). New: algo_alg_loops (the chart's loops, #989), algo_fine_ratio (#986),
 // row_osc_ops, settings_personal_algo.
+// env_a, row_mod: HOLD's bottom reads 0.001 ms (#159). Every browser and
+// library list: a row's cost stops clear of MODAL (#640). mixer_master,
+// mixer_master_key: OUT clear of KEY's hint (#1066).
+// mixer_fx_reverb_gate_sync: the TAIL at its synced LENGTH (#366).
 const GOLDENS: &[(&str, u64)] = &[
     ("engine_algo", 0xf68690304bba80fb),
     ("algo_alg", 0x6a6639f41cb3937f),
@@ -218,7 +222,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: the row's pages in full words (`ROW_WORDS`).
     ("row_flt", 0x51ab20fe12e65d68),
     ("row_res", 0x52e7d782b213fed2),
-    ("row_mod", 0x61ae81a248025efe),
+    ("row_mod", 0x7c2b4f04fda6fd7a),
     ("row_osc_mid", 0xcb54bff6693a9f55),
     ("row_osc_last", 0x25dd4ab306c968e1),
     ("row_osc_ops", 0x28902bd73b5f0e34),
@@ -229,7 +233,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then the row gains NOISE (ADR 0197): OSC1 · OSC2 · NOISE · PITCH.
     ("row_va_osc1", 0x53cc71e7fbea6ed1),
     ("row_va_osc2", 0xe5d5be5a79612575),
-    ("env_a", 0x5e214e1a2c59ff77),
+    ("env_a", 0x4e9f3138703615bb),
     ("env_b_env_ad", 0xcfb572705ac049f9),
     ("env_b_env_ahr", 0x8027de37baeab87c),
     ("env_b_env_cycle", 0xfa9c03d64def296e),
@@ -324,7 +328,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_gate_more", 0x343e170f63c10d89),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_fx_reverb_gate_sync", 0x04e062f483df79c0),
+    ("mixer_fx_reverb_gate_sync", 0xdab9b34a43a58751),
     // BLOOM, each page (T11).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_reverb_bloom", 0x1958625eb97cdd65),
@@ -345,13 +349,13 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay_sync", 0xf9941b61166b8fde),
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master", 0x2c1caa95b850f464),
+    ("mixer_master", 0x8fdc1da08a61e440),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_master_level", 0x5c5b82ab2dbb8965),
     // KEY in MST's cell E, MAKEUP on LVL's C, the key under the curve
     // (ADR 0303).
     #[cfg(not(feature = "master-tape"))]
-    ("mixer_master_key", 0x05c86ee37859fd39),
+    ("mixer_master_key", 0x587fede5712909fd),
     // Re-recorded: the map names the master tape MTP, not REEL (#646).
     // Re-recorded: PRT's map node has VOICES under it (ADR 0281).
     #[cfg(feature = "master-tape")]
@@ -381,7 +385,7 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_gate_more", 0xee4c4f5fda5a5e62),
     #[cfg(feature = "master-tape")]
-    ("mixer_fx_reverb_gate_sync", 0x9ea3dc4e31c642ab),
+    ("mixer_fx_reverb_gate_sync", 0xca91b1498a570a3e),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_reverb_bloom", 0x5ee28976325a22aa),
     #[cfg(feature = "master-tape")]
@@ -399,11 +403,11 @@ const GOLDENS: &[(&str, u64)] = &[
     #[cfg(feature = "master-tape")]
     ("mixer_tape", 0xd56bc8774f6193e4),
     #[cfg(feature = "master-tape")]
-    ("mixer_master", 0x12b206f30ca45442),
+    ("mixer_master", 0xd0efbdb60b78b26e),
     #[cfg(feature = "master-tape")]
     ("mixer_master_level", 0xa5a46e80ff7ebc77),
     #[cfg(feature = "master-tape")]
-    ("mixer_master_key", 0xb048ca6dae9fc183),
+    ("mixer_master_key", 0x80217e6639d75847),
     #[cfg(not(feature = "master-tape"))]
     ("mixer_out_p2", 0xbbf4869671d1e56d),
     #[cfg(feature = "master-tape")]
@@ -425,7 +429,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then, with the library_* screens: FACTORY joins the title and B ◂▸
     // moves to hint line 1 (showcase Task 4).
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser", 0x1250b92da341f724),
+    ("sound_browser", 0x7c4d06ea19550ebc),
     // pool_full, library_sounds/this_build/newer re-recorded: MAX_SOUND_COST 2288 → 2352 (VA).
     // Then pool_full: 2352 → 2544 (the formant fields).
     // Re-recorded at the merge: MAX_SOUND_COST 2688 (VOICEFX and PLAY's MODE).
@@ -435,7 +439,7 @@ const GOLDENS: &[(&str, u64)] = &[
     // Then the VCA's gate (ADR 0195): 15 B more. STRETCH GRAIN's four params
     // (ADR 0204): MAX_SOUND_COST 2720.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_pool_full", 0x9e43dff2664010d4),
+    ("sound_browser_pool_full", 0xf940c832fc84e8ac),
     // The browser's title is its tabs and the Part (library plan Task 7); then
     // the LIBRARY tab: each Sound's build, its pages, what won't fit.
     // Merged: FACTORY in the title (showcase) beside the formant cost.
@@ -444,31 +448,31 @@ const GOLDENS: &[(&str, u64)] = &[
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("library_no_card", 0x0ef3cabc0a005fac),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_sounds", 0x2a15f5440b1a97da),
+    ("library_sounds", 0xbec7d83f397940e2),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_this_build", 0x48f6b2180d7c4c4d),
+    ("library_this_build", 0x829879cdf7cd6545),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_cut_short", 0xc82d8ec053050608),
+    ("library_cut_short", 0x1aa8b6c461a0b298),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_older", 0xeff7f1c0da22a8d2),
+    ("library_older", 0xc0c3d138fdb2a202),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_newer", 0x441abc78094abb3b),
+    ("library_newer", 0x6cca8007b8187c03),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_wont_fit", 0xba02297fe9fba3db),
+    ("library_wont_fit", 0x7d2db8a6cc7c6f03),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("library_pool_full", 0xcfe515a8e7a48a23),
+    ("library_pool_full", 0x6e75ee761f1f8c3b),
     ("library_naming", 0xa234ea336d54efbf),
     // The FACTORY tab: a row's description on line 2, the set's build on
     // line 3; empty, no card, and a TAPE file listed.
     // Re-recorded on the merge: the pool meter at the formant cost.
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("factory_described", 0x97780dcee79887d1),
+    ("factory_described", 0x3006cac3b9437a91),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("factory_empty", 0x4e7a62f82ecfe083),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
     ("factory_no_card", 0xf2356a3f4d7b1db6),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("factory_tape_row", 0xea28ef2cf70ff60e),
+    ("factory_tape_row", 0x4bd45a2cf12b8006),
     // Re-recorded: a fresh project's footer drops NEW (#286).
     // Re-recorded: INVERT in cell F (ADR 0126).
     ("settings_personal_theme", 0x69eb789acb0d98db),
@@ -476,7 +480,7 @@ const GOLDENS: &[(&str, u64)] = &[
     ("settings_personal_chain_map", 0x7aa40f30346b46bd),
     // Long user names, LARGE's pair (ADR 0154).
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("sound_browser_long", 0x4f6aa127bd7ed558),
+    ("sound_browser_long", 0xbd6328afdea88420),
     // PERSONALIZE › TEXT SIZE at NORMAL (ADR 0154).
     ("settings_personal_text_size", 0x771bfc59119e85d2),
     // PERSONALIZE › PAD FOLLOW at IDLE (ADR 0268).
@@ -556,11 +560,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // Re-recorded: PAD FOLLOW, a fifth row (ADR 0268).
     ("large_settings_personal", 0xd6fddecc666bdc5f),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("large_sound_browser", 0xdb7b0caeb8cae2a1),
+    ("large_sound_browser", 0xde16e904ab9edf11),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("large_sound_browser_long", 0x510eeba5cf4f99d7),
+    ("large_sound_browser_long", 0xfeebada31b8df297),
     // Maps as `Bindings` 0x001F: NEW's Sounds 34 B more (MIDI phase 1).
-    ("large_library_sounds", 0xcb3cc73b5c3132c6),
+    ("large_library_sounds", 0xf91bc5ae364fc05e),
     ("large_settings_text_size", 0xe57ffb4a4502d385),
     // SCN: a saved slot, SAVE's, a queued one filling (plan Task 16).
     ("orbit_scn", 0x7c2558bf895b7432),

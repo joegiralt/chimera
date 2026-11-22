@@ -3,6 +3,10 @@
 //! plays at ROOT; the jog's speed reads steady, and no input path steps
 //! the head's speed.
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use core::mem::MaybeUninit;

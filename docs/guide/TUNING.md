@@ -1,6 +1,6 @@
 # Tuning
 
-Each Part plays in a tuning of its own. Pick it on **SETTINGS › AUDIO ROUTING › TUNING**, cell B, **TUNING**: it sets the active Part's, as LIVE SNAP's cells do (pick another Part to set its own). Cell A, **TUNE**, still shifts the whole unit. A new note plays the tuning; a note already sounding keeps its pitch.
+Each Part plays in a tuning of its own. Pick it on **SETTINGS › AUDIO ROUTING › TUNING**, cell B, **TUNING**: it sets the active Part's (pick another Part to set its own). Cell A, **TUNE**, still shifts the whole unit. A new note plays the tuning; a note already sounding keeps its pitch.
 
 ![SETTINGS › AUDIO ROUTING › TUNING with bohlen-pierce.scl picked, annotated](img/tuning.png)
 

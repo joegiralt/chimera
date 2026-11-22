@@ -59,6 +59,12 @@ fn render(v: &mut Rig, p: &ParamSnapshot) -> Block {
     b
 }
 
+/// Under `bank2` MODAL's block plays from bank 2: the host's door opens
+/// as the unit's would (#830).
+fn door() {
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+}
+
 fn bits(b: &Block) -> [u32; BLOCK_SIZE] {
     b.map(f32::to_bits)
 }
@@ -88,6 +94,7 @@ fn assert_fresh(v: &mut Rig, n: u8, p: &ParamSnapshot, blocks: usize, what: &str
 /// MODE edit rebuilt the ringing model there, unfaded).
 #[test]
 fn switch_never_clicks() {
+    door();
     let cases = [
         (
             "Algo -> Modal",
@@ -130,6 +137,7 @@ fn switch_never_clicks() {
 /// the Sympathetic one.
 #[test]
 fn a_mode_change_at_note_on_plays_like_a_fresh_voice() {
+    door();
     let mut v = playing(57, &string());
     for _ in 0..40 {
         render(&mut v, &string());
@@ -162,6 +170,7 @@ fn bank() -> ParamSnapshot {
 /// note after another model plays like a fresh voice's first Bank note.
 #[test]
 fn a_bank_note_after_another_model_plays_like_the_first() {
+    door();
     // A note on `p` over the ringing one, and its fade.
     let retrigger = |v: &mut Rig, n, vel, p: &ParamSnapshot| {
         v.note_on(note(n), Velocity::new(vel).unwrap(), p);
@@ -190,6 +199,7 @@ fn a_bank_note_after_another_model_plays_like_the_first() {
 /// silent note after it goes idle like any other.
 #[test]
 fn a_mode_change_mid_burst_still_goes_idle() {
+    door();
     let mut v = playing(57, &bank());
     render(&mut v, &bank());
     let mut silent = string();
@@ -204,6 +214,7 @@ fn a_mode_change_mid_burst_still_goes_idle() {
 
 #[test]
 fn idle_voice_switches_in_the_same_block() {
+    door();
     let mut v = playing(60, &tri());
     v.note_off();
     for _ in 0..10_000 {
@@ -241,6 +252,7 @@ fn event(channel: u8, n: u8, kind: NoteKind) -> NoteEvent {
 
 #[test]
 fn other_parts_are_untouched_by_a_switch() {
+    door();
     // Part 1 is silent on the DAC and sends nothing; Part 2 only sends. So
     // the DAC carries the FX return alone, fed by Part 2 alone: a switch
     // that touched the FX would change it.
@@ -297,6 +309,7 @@ fn other_parts_are_untouched_by_a_switch() {
 
 #[test]
 fn model_switch_rebuilds_once() {
+    door();
     let mut v = playing(60, &string());
     for _ in 0..8 {
         render(&mut v, &string());
@@ -311,6 +324,7 @@ fn model_switch_rebuilds_once() {
 
 #[test]
 fn knob_moves_never_rebuild() {
+    door();
     let run = |moved: bool| {
         let mut p = sym();
         let mut v = playing(60, &p);
@@ -341,6 +355,7 @@ fn knob_moves_never_rebuild() {
 
 #[test]
 fn a_switch_back_mid_fade_restarts_on_the_sounds_kind() {
+    door();
     let mut v = playing(60, &string());
     for _ in 0..8 {
         render(&mut v, &string());
@@ -371,6 +386,7 @@ fn first_sounding(n: u8, p: &ParamSnapshot) -> Vec<Block> {
 
 #[test]
 fn a_steal_across_kinds_plays_the_new_kind_clean() {
+    door();
     // Instrument: Part 2's note steals one of Part 1's voices.
     let mut shared = AudioShared::default();
     *shared.parts[0].params = tri();
@@ -430,6 +446,7 @@ fn a_steal_across_kinds_plays_the_new_kind_clean() {
 /// waiting note, across kinds again (3).
 #[test]
 fn a_voice_rebuilds_at_most_three_times_a_block() {
+    door();
     let mut silent = tri();
     for o in &mut silent.algo.ops {
         o.level = 0; // quiet from its first block: the fade ends there
@@ -477,6 +494,7 @@ fn a_voice_rebuilds_at_most_three_times_a_block() {
 /// change kind at random, every voice's rebuilds counted per block.
 #[test]
 fn a_switch_storm_never_rebuilds_a_voice_more_than_three_times_a_block() {
+    door();
     let mut silent = tri();
     for o in &mut silent.algo.ops {
         o.level = 0;

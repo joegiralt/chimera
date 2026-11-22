@@ -65,7 +65,7 @@ fn boot_drains_from_the_first_block() {
     let mut r = rev_v();
     r.note_on(0, 60);
     let mut g = LoadGate::new();
-    assert!(g.before_block(&link, &mut r.inst, &shared), "drains");
+    assert!(g.before_block(&link, &mut r.inst, &shared, None), "drains");
     assert!(!r.inst.quiet(), "kills nothing");
 }
 
@@ -338,7 +338,7 @@ impl Load {
     /// Returns whether it drained, and the block out.
     fn callback(&mut self) -> (bool, DacOut) {
         let Self { link, gate, r, .. } = self;
-        let drain = gate.before_block(link, &mut r.inst, &r.shared);
+        let drain = gate.before_block(link, &mut r.inst, &r.shared, None);
         if drain {
             let (inst, shared) = (&mut r.inst, &r.shared);
             self.drain.drain(|_, ev| {
@@ -568,7 +568,7 @@ mod e2e {
                 ..
             } = self;
             let shared = reader.read();
-            let open = gate.before_block(link, &mut r.inst, shared);
+            let open = gate.before_block(link, &mut r.inst, shared, None);
             if open {
                 drain.drain(|_, ev| {
                     if let InEvent::Note(n) = ev {
@@ -884,7 +884,7 @@ fn a_delay_tail_rings_through_the_swap() {
     let mut g = LoadGate::new();
     let _swap = link.bump_for_test();
     for _ in 0..4 {
-        g.before_block(&link, &mut r.inst, &r.shared);
+        g.before_block(&link, &mut r.inst, &r.shared, None);
         r.render(1);
     }
     assert!(link.acked(link.epoch()) && r.inst.quiet());
@@ -893,7 +893,10 @@ fn a_delay_tail_rings_through_the_swap() {
     (next.fx.delay.time_ms, next.fx.delay.mix) = (250.0, 0.5);
     next.epoch = link.epoch();
     *r.shared = next;
-    assert!(g.before_block(&link, &mut r.inst, &r.shared), "published");
+    assert!(
+        g.before_block(&link, &mut r.inst, &r.shared, None),
+        "published"
+    );
     r.render(1);
     let after = common::rms(&r.out()[0]);
     assert!(before > 0.01 && after > 0.25 * before, "{before} → {after}");

@@ -308,6 +308,9 @@ pub enum Bank2Refusal {
     Unsealed,
     /// Card work is pending in the UI.
     Busy,
+    /// The project has unsaved changes the install's restart would lose
+    /// (#1064): nothing written.
+    Unsaved,
     /// No staged file.
     Nothing,
     Card(StoreError),
@@ -369,6 +372,67 @@ pub enum Bank2Answer {
     /// `bank2 pull`: the next install holds there.
     #[cfg(feature = "bank2-gate")]
     Armed(PullAt),
+}
+
+impl Bank2Answer {
+    /// The unit restarts once this answer is out: USB took its layout at
+    /// boot with the door closed (console alone), and only a boot lays out
+    /// what the open door brings (USB MIDI and audio, #1064).
+    pub const fn restarts(&self) -> bool {
+        match self {
+            Bank2Answer::Open { .. } => true,
+            Bank2Answer::Already | Bank2Answer::Refused(_) | Bank2Answer::Failed { .. } => false,
+            #[cfg(feature = "bank2-gate")]
+            Bank2Answer::Erased(_)
+            | Bank2Answer::SlotPoked(_)
+            | Bank2Answer::EccTorn(_)
+            | Bank2Answer::SlotsErased(_)
+            | Bank2Answer::Ecc { .. }
+            | Bank2Answer::Armed(_) => false,
+        }
+    }
+}
+
+/// The restart a console answer ends in (the shell holds the typed tokens).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestartKind {
+    Dfu,
+    Sweep,
+    Bank2,
+}
+
+/// Which restart, if any, after an answer: `dfu` first, then `sweep`'s
+/// request, each only once its answer is `sent` (a stalled one keeps the
+/// unit up for the host to ask again); an install that opened the door
+/// whether or not its answer stalled, as its USB needs the boot either
+/// way (#1064).
+pub fn restart_after(
+    dfu: bool,
+    sweep: Option<super::SweepAsk>,
+    bank2: Option<&Bank2Answer>,
+    sent: bool,
+) -> Option<RestartKind> {
+    use super::SweepAsk;
+    let opened = bank2.is_some_and(Bank2Answer::restarts);
+    match (dfu, sweep, opened) {
+        (true, _, _) => sent.then_some(RestartKind::Dfu),
+        (false, Some(SweepAsk::Requested), _) => sent.then_some(RestartKind::Sweep),
+        (false, _, true) => Some(RestartKind::Bank2),
+        (false, None | Some(SweepAsk::Unsaved | SweepAsk::Unused | SweepAsk::Failed(_)), false) => {
+            None
+        }
+    }
+}
+
+/// `bank2 install`'s first refusal, before anything is read or written:
+/// card work pending, then unsaved changes, which the restart an opening
+/// install ends in (`Bank2Answer::restarts`) would lose, as `sweep`'s.
+pub const fn install_guard(pending: bool, unsaved: bool) -> Option<Bank2Refusal> {
+    match (pending, unsaved) {
+        (true, _) => Some(Bank2Refusal::Busy),
+        (false, true) => Some(Bank2Refusal::Unsaved),
+        (false, false) => None,
+    }
 }
 
 /// The staged file's verdict, and the card error behind an unreadable one,
@@ -446,6 +510,8 @@ fn lines(a: &Bank2Answer, t: &mut impl Write) -> fmt::Result {
             match r {
                 Bank2Refusal::Unsealed => t.write_str(": firmware unsealed"),
                 Bank2Refusal::Busy => t.write_str(": busy"),
+                // `sweep`'s words: its restart loses them too.
+                Bank2Refusal::Unsaved => t.write_str(": unsaved changes, save first"),
                 Bank2Refusal::Nothing => t.write_str(": nothing staged"),
                 Bank2Refusal::Card(e) => write!(t, ": {}", e.message()),
                 Bank2Refusal::Stale(v) => write!(t, ": staged: needs firmware {}", v.as_str()),

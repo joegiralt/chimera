@@ -125,15 +125,15 @@ fn jitter_at_a_fold_boundary_never_flips_it() {
     }
 }
 
-/// The tempo is a beat's samples on a 0.25 BPM grid.
+/// The tempo is a beat's samples as they are, on no grid (#1046): 141.7
+/// BPM is 141.7, not 141.75; the clock's jitter is held upstream.
 #[test]
-fn a_beat_maps_to_the_grid() {
+fn a_beat_maps_to_its_tempo() {
     let at = |samples| Tempo::from_beat(samples, SR);
     assert_eq!(at(24_000), tempo(120.0));
     assert_eq!(at(22_500), tempo(128.0));
-    // ±1 block of drain at 128 BPM: 127.75 or 128.25 at most.
-    assert_eq!(at(22_564), tempo(127.75));
-    assert_eq!(at(22_436), tempo(128.25));
+    let b = (60.0 * SR as f64 / 141.7).round() as u32;
+    assert!((at(b).0 - 141.7).abs() < 0.005, "{:?}", at(b));
     assert_eq!(at(0), tempo(1_200.0));
 }
 
@@ -414,6 +414,15 @@ fn retargets(tempos: &[Tempo]) -> Vec<(usize, f32, f32)> {
         .collect()
 }
 
+/// `retargets` past `bpm` BPM: tempo changes, not the run's refinements
+/// (#1046).
+fn moves_past(tempos: &[Tempo], bpm: f32) -> Vec<(usize, f32, f32)> {
+    retargets(tempos)
+        .into_iter()
+        .filter(|&(_, a, b)| (a - b).abs() > bpm)
+        .collect()
+}
+
 /// A steady clock, drained a block at a time, never retargets once its
 /// average is full: one move from the internal 120 BPM, at a beat, and
 /// none after, at 110, 128, 140 and 174 BPM and at 120 BPM with ±0.5 ms of
@@ -436,21 +445,25 @@ fn steady_clocks_never_retarget() {
                 c.tempo()
             })
             .collect();
-        let moves = retargets(&tempos);
-        println!("{bpm} BPM ±{jit} ms: {} retargets {moves:?}", moves.len());
-        // The settled average taken once (at 120 ± jitter it may land a
-        // grid step off), then nothing.
+        let all = retargets(&tempos);
+        println!("{bpm} BPM ±{jit} ms: {} retargets {all:?}", all.len());
+        // The settled average taken once, then only the run's refinements
+        // (at 2, 4, 8 … beats, #1046), each under the first beat's drain,
+        // a block in a beat: 0.4 % at 174 BPM.
+        let moves = moves_past(&tempos, bpm * 0.005);
         assert!(moves.len() <= 1, "{bpm}: {moves:?}");
         assert!(bpm == 120.0 || moves.len() == 1, "{bpm}: {moves:?}");
+        assert!(all.len() <= 5, "{bpm}: {all:?}");
         // Held until the average spans a beat.
         let beat = (SR as f32 * 60.0 / bpm) as usize / BLOCK_SIZE;
         assert!(
             moves.iter().all(|m| m.0 + 2 >= blocks(1.0) + beat),
             "{bpm}: {moves:?}"
         );
-        // Within a block's drain over the beat, and the grid's half step.
+        // The run's mean: within a twentieth after 8 s, half a block's
+        // drain over the run.
         let last = tempos.last().unwrap().0;
-        let within = bpm * bpm * BLOCK_SIZE as f32 / (60.0 * SR as f32) + 0.125;
+        let within = 0.05;
         assert!(
             (last - bpm).abs() <= within,
             "{bpm}: {last} off by > {within}"
@@ -480,13 +493,13 @@ fn a_stopped_or_silent_daw_keeps_its_tempo() {
         c.block(bpm, 0.0, false);
         tempos.push(c.tempo());
     }
-    let moves = retargets(&tempos);
+    let moves = moves_past(&tempos, 0.25);
     assert_eq!(moves.len(), 2, "{moves:?}");
     assert!(
         moves[1].0 > blocks(3.0) && moves[1].0 < blocks(6.0),
         "{moves:?}"
     );
-    assert_eq!(c.tempo(), tempo(125.0));
+    assert!((c.tempo().0 - 125.0).abs() < 0.01, "{:?}", c.tempo());
     c.r.shared.orbit.bpm = chimera_core::orbit::clock::Bpm::new(90).unwrap();
     c.block(None, 0.0, false);
     assert_eq!(c.tempo(), tempo(90.0));
@@ -576,7 +589,9 @@ fn clock_dropout_moves_synced_length_once() {
     for b in 0..blocks(5.0) {
         c.block((b < drop).then_some(100.0), 0.0, true);
         let rv = c.r.fx.reverb();
-        assert_eq!(rev_clock(), (c.tempo(), rv.fold()), "the cells' clock");
+        // The cells read the tempo on its quarter-BPM word.
+        let shown = Tempo((c.tempo().0 * 4.0).round() / 4.0);
+        assert_eq!(rev_clock(), (shown, rv.fold()), "the cells' clock");
         targets.push(knobs(&g, c.tempo(), &mut rv.fold()).length_ms);
         folds.push(rv.fold());
         // QUAD switches to GATE over the first blocks.
@@ -589,14 +604,15 @@ fn clock_dropout_moves_synced_length_once() {
     let changes: Vec<_> = targets
         .windows(2)
         .enumerate()
-        .filter(|(_, w)| w[0] != w[1])
+        // Past a ms: the run's refinements move it by tenths (#1046).
+        .filter(|(_, w)| (w[0] - w[1]).abs() > 1.0)
         .map(|(b, w)| (b + 1, w[0], w[1]))
         .collect();
     println!("LENGTH target changes: {changes:?}");
     // 120 → 100 once settled, then back to 120 once ORBIT's own clock plays.
     assert_eq!(changes.len(), 2, "{changes:?}");
     let (b, from, to) = changes[1];
-    assert!((from - 600.0).abs() < 0.01 && to == 500.0, "{from} → {to}");
+    assert!((from - 600.0).abs() < 0.5 && to == 500.0, "{from} → {to}");
     let fell = drop + blocks(0.5);
     assert!(b.abs_diff(fell) <= 20, "at block {b}, not about {fell}");
     assert!(folds.iter().all(|&f| f == FoldState(0)), "the fold flipped");

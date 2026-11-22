@@ -1011,7 +1011,9 @@ impl ProjectCheck {
         let r = self.close_sound(target, stage);
         // A kind read as W1: a save would write other bytes.
         self.over |= self.sound.over_budget();
-        self.lossy |= self.over;
+        // So would a Sound read leniently, an entry skipped or defaulted:
+        // one rule for every lossy decode (#318, ADR 0312).
+        self.lossy |= self.over || self.sound.skips() > 0;
         r
     }
 
