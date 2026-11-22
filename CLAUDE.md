@@ -4,17 +4,28 @@
 
 Chimera is a custom Rust firmware for the PreenFM3 hardware (STM32H753). It replaces the stock FM synthesizer with a multi-engine, multitimbral digital synth with chain-based LSDJ-style navigation.
 
-Full design spec: `docs/chimera-synth-design.md`
+Decisions: `docs/adr/README.md` (the index; every later decision lives in an ADR). Current specs: `docs/chimera-product-architecture.md`, `docs/chimera-sitemap.md`, `docs/chimera-modulation-spec.md`, and the feature specs in `docs/superpowers/specs/`. `docs/chimera-synth-design.md` is the 2026-04 first draft, superseded in most parts.
 
 ## Workspace layout
 
 ```
-chimera-engine/   — no_std model and DSP, everything the audio runs (opt 2)
-chimera-core/     — no_std UI, console and params; re-exports the engine (opt z)
-chimera-hal/      — trait definitions (Controls, Display, MidiIn)
-chimera-board/    — the unit off the audio path: boot, UI loop, drivers (opt z)
-chimera-stm32/    — hardware target: main, audio ISR, MIDI DIN, bench (opt 2)
-chimera-desktop/  — simulator (minifb window, cpal audio)
+chimera-engine/      — no_std model and DSP, everything the audio runs (opt 2)
+chimera-core/        — no_std UI, console and params; re-exports the engine (opt z)
+chimera-hal/         — trait definitions (Controls, Display, MidiIn, store)
+chimera-board/       — the unit off the audio path: boot, UI loop, drivers (opt z)
+chimera-stm32/       — hardware target: main, audio ISR, MIDI DIN, bench (opt 2)
+chimera-image/       — bank 2's image: header, seal, the door (ADR 0137)
+chimera-midi/        — MIDI vocabulary and pure decisions
+chimera-fat/         — FAT16/FAT32 over chimera-hal's store
+chimera-theory/      — music theory as const data
+chimera-waves/       — ALGO's wave-table recipes (ADR 0023)
+chimera-circuits/    — circuit models kept for reference (ADR 0196)
+chimera-screen/      — the browser editor's glyphs (headless UiState, WASM)
+chimera-desktop/     — simulator (minifb window, cpal audio) and importers
+chimera-utils/       — host tools: A/B renders, clips, budget measures
+chimera-bootloader/  — Chimera's own jump stub (bootloader.bin), never shipped
+editor/              — the Elm browser editor
+tools/               — Python checks and the USB tool (chimera-usb.py)
 ```
 
 ## Task runner

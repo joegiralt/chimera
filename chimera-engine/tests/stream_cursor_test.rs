@@ -530,9 +530,10 @@ fn quiet_fades_over_quiet_fade_and_cancels_wants() {
         let want = (1.0 - (k + 1) as f32 / QUIET as f32).max(0.0);
         assert!((g - want).abs() < 1e-4, "{k}: {g} vs {want}");
     }
-    // Silent: nothing held, nothing asked.
+    // Silent: nothing held, nothing asked; long enough that tape time
+    // passes the head.
     let before = pends();
-    for _ in 0..20 {
+    for _ in 0..80 {
         let (plan, gains) = p.block(1.0);
         assert!(plan.runs().is_empty());
         assert!(gains.iter().all(|&(_, g)| g == 0.0));
@@ -541,7 +542,7 @@ fn quiet_fades_over_quiet_fade_and_cancels_wants() {
     assert_eq!(pends(), before);
     assert_eq!(colds(&rig), 0);
 
-    // Released: re-asked from where the head now is, as a cold start.
+    // Released past the head: re-asked from where tape time is, cold.
     p.quiet_off();
     p.block(1.0);
     assert_eq!(p.cur.flow(), Flow::Cold);
@@ -549,6 +550,45 @@ fn quiet_fades_over_quiet_fade_and_cancels_wants() {
     assert_eq!(pends() - before, 3);
     p.serve();
     assert_eq!(p.block(1.0).0.fade, FadeCmd::In);
+    assert_eq!(underruns(&rig), 0);
+}
+
+/// #608: a quiet shorter than the head plays on from it once released,
+/// warm: no cold start, no card read, the gain rising over `DROP_FADE`.
+#[test]
+fn a_short_quiet_returns_warm_from_its_head() {
+    let rig = Rig::new();
+    let mut p = rig.play();
+    p.start(0, Some(HEAD));
+    p.serve_if(|c| c < 3);
+    for _ in 0..4 {
+        p.block(1.0);
+    }
+    rig.bus.ask_quiet(Ms(0));
+    for _ in 0..(QUIET / 64 + 4) {
+        p.block(1.0);
+    }
+    assert!(
+        p.pos < f64::from(HEAD.end.get()) - 1_000.0,
+        "still on the head"
+    );
+    let before = pends();
+    p.quiet_off();
+    let (plan, gains) = p.block(1.0);
+    assert_eq!(p.cur.flow(), Flow::Head(H0));
+    assert_eq!(colds(&rig), 0, "never cold");
+    assert!(!plan.runs().is_empty(), "the head reads at once");
+    assert!(
+        (gains[0].1 - 1.0 / DROP as f32).abs() < 1e-6,
+        "{}",
+        gains[0].1
+    );
+    assert_eq!(audible_outside(&plan, &gains), 0);
+    for _ in 0..(DROP / 64 + 1) {
+        p.block(1.0);
+    }
+    assert_eq!(p.block(1.0).1[0].1, 1.0, "full again, no card read");
+    assert!(pends() >= before, "its slots asked again for what follows");
     assert_eq!(underruns(&rig), 0);
 }
 
@@ -567,11 +607,12 @@ fn a_start_under_quiet_stays_silent() {
         assert!(gains.iter().all(|&(_, g)| g == 0.0));
         assert!(!rig.loud.get(), "never loud");
     }
+    // Still on its head: warm from it, rising over `DROP_FADE` (#608).
     p.quiet_off();
-    p.block(1.0);
-    assert_eq!(p.cur.flow(), Flow::Cold);
-    p.serve();
-    assert_eq!(p.block(1.0).0.fade, FadeCmd::In);
+    let (plan, gains) = p.block(1.0);
+    assert_eq!(p.cur.flow(), Flow::Head(H0));
+    assert!(!plan.runs().is_empty());
+    assert!((gains[0].1 - 1.0 / DROP as f32).abs() < 1e-6);
 }
 
 /// A warm jump at full gain just as a quiet is asked keeps its level: the
