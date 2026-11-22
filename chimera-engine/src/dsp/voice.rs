@@ -1229,10 +1229,14 @@ impl Voice {
             }
         }
         let key = self.held;
+        // Each VCA amount ramps from the last block's (#180); a fresh
+        // note's starts on its own.
+        let was = self.vca;
         if self.fade == 0 {
             self.vca = VcaRoutes::of(mod_state);
         }
         let vca = self.vca;
+        let was = if base_from.is_some() { was } else { vca };
         // The VCA's gain (spec § 4): 64 samples on the audio stack, only
         // with a route into VCA, from AMP's BASE (ADR 0292; 0, a stored
         // Sound's, is today's zeroed start).
@@ -1277,7 +1281,7 @@ impl Voice {
             let feed = gain
                 .as_mut()
                 .filter(|_| vca.has(i))
-                .map(|g| (g, vca.scale(i)));
+                .map(|g| (g, (was.scale(i), vca.scale(i))));
             mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
                 &self.env_mods[s.index()],
@@ -1312,11 +1316,13 @@ impl Voice {
             if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
                 && ModSource::ALL[s].env_slot().is_none()
             {
-                let a = vca.scale(s);
-                let (from, step) = (
-                    a * self.mod_values[s],
-                    a * (cur - self.mod_values[s]) / BLOCK_SIZE as f32,
-                );
+                let (a, last) = (vca.scale(s), self.mod_values[s]);
+                let (from, step) = if was.amount[s] == vca.amount[s] {
+                    (a * last, a * (cur - last) / BLOCK_SIZE as f32)
+                } else {
+                    let from = was.scale(s) * last;
+                    (from, (a * cur - from) / BLOCK_SIZE as f32)
+                };
                 for (n, g) in gain.iter_mut().enumerate() {
                     *g += from + step * n as f32;
                 }

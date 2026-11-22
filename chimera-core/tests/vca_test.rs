@@ -81,7 +81,7 @@ fn env2_on_the_vca_follows_its_contour() {
                 &EnvMods::NONE,
                 blk < 50,
                 SR,
-                Some((&mut g, 1.0)),
+                Some((&mut g, (1.0, 1.0))),
             );
             for (n, gn) in g.iter().enumerate() {
                 let i = blk * BLOCK_SIZE + n;
@@ -245,7 +245,7 @@ fn env2_on_the_vca_ends_the_voice_when_it_idles() {
                 &EnvMods::NONE,
                 b < 20,
                 SR,
-                Some((&mut g, 1.0)),
+                Some((&mut g, (1.0, 1.0))),
             );
             env.is_idle()
         })
@@ -393,7 +393,7 @@ fn an_inactive_engine_always_ends_the_voice() {
             &EnvMods::NONE,
             b < 20,
             SR,
-            Some((&mut g, 1.0)),
+            Some((&mut g, (1.0, 1.0))),
         );
     }
     assert!(env.holds(false), "ENV 1 still held it at block {gone}");
@@ -487,4 +487,49 @@ fn a_release_the_vca_holds_is_not_idle() {
         both[..last].iter().all(|&(_, kept)| kept),
         "not cut off by note 64"
     );
+}
+
+/// #180: turning a VCA route's amount ramps the gain across the block
+/// from the last block's amount, ENV and LFO alike: the block's first
+/// samples still sit near the old gain, its last at the new one.
+#[test]
+fn a_vca_amount_turn_ramps_across_the_block() {
+    let mut p = init(EngineType::Algo);
+    (p.lfos[0].rate, p.lfos[0].shape) = (0.01, 3); // a held square
+    for src in [ModSource::Env2, ModSource::Lfo1] {
+        let at = |amt: i8| mods(&[(src, VCA, amt), (ModSource::Env2, CUTOFF, 0)]);
+        let (from, to) = (at(127), at(63));
+        let plain = render(&p, &ModState::new(), 90, 90, 127);
+        let mut v = Rig::new(SR);
+        v.note_on(MidiNote::new(60).unwrap(), Velocity::new(127).unwrap(), &p);
+        let mut out = Vec::new();
+        let mut b = [0.0f32; BLOCK_SIZE];
+        let turn = 70;
+        for i in 0..72 {
+            v.render(&mut b, &p, if i < turn { &from } else { &to });
+            out.extend_from_slice(&b);
+        }
+        let ratio = |i: usize| out[i] / plain[i];
+        let loud = |i: usize| plain[i].abs() > 1e-3;
+        let s = turn * BLOCK_SIZE;
+        let before = (s - BLOCK_SIZE..s)
+            .filter(|&i| loud(i))
+            .map(ratio)
+            .last()
+            .unwrap();
+        let first = (s..s + 8).filter(|&i| loud(i)).map(ratio).next().unwrap();
+        let after = (s + BLOCK_SIZE..s + 2 * BLOCK_SIZE)
+            .filter(|&i| loud(i))
+            .map(ratio)
+            .last()
+            .unwrap();
+        assert!(
+            after < 0.6 * before,
+            "{src:?}: {before} → {after}: the turn lands"
+        );
+        assert!(
+            (first - before).abs() < 0.2 * (before - after).abs(),
+            "{src:?}: the block opens at {first}, from {before} toward {after}"
+        );
+    }
 }
