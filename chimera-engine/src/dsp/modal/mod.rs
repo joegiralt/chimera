@@ -88,11 +88,6 @@ const INIT_PERIOD: f32 = 100.0;
 /// main string last played at or below G1 (`SymPool::note_on_clear`).
 pub const SYM_NOTE_ON_CLEAR_MAX: usize = (1 + NUM_SYMPATHETIC) * RING_BYTES;
 
-/// What a note's routed re-pluck writes on its first block, at most (#233):
-/// the main string's second clear and its noise fill, each at most a ring.
-/// Billed on a note-on a PITCH route may move (`Voice::sym_note_on_clear`).
-pub const REPLUCK_BYTES: usize = 2 * RING_BYTES;
-
 /// The resonator bank (`ResonatorMode::Modal`) and the noise burst that
 /// strikes it.
 struct ModalBank {
@@ -2436,16 +2431,6 @@ mod tests {
             assert!(want <= SYM_NOTE_ON_CLEAR_MAX);
             play(&mut e, &mut pool, &p, SECOND / 8, (1, pitch));
         }
-        // A route that moves the pitch by the first block re-plucks the
-        // main string: more than the note-on's clear, within its bill.
-        e.set_pitch(1.0);
-        let plain = pool.note_on_clear(Some(&e), v0);
-        let _ = take_cleared_bytes();
-        e.note_on(60, 100, &p, SR, &mut pool);
-        play(&mut e, &mut pool, &p, 1, (0, 2.0));
-        let routed = take_cleared_bytes();
-        assert!(routed > plain, "{routed} vs {plain}");
-        assert!(routed <= plain + REPLUCK_BYTES, "{routed} vs {plain}");
         // Voice 1, unplaced, plays bare: a fresh main string. Placed, it
         // is promised a slot never played: eight fresh lines.
         let v1 = VoiceIdx::ALL[1];

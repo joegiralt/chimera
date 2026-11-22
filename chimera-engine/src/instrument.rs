@@ -1516,7 +1516,7 @@ impl Instrument {
                     let deferred = !waits
                         && SlotKind::of(&part.params) == SYMPATHETIC
                         && !(self.voices[v].starts_now(&part.params, &self.sym)
-                            && self.admit(v, (&*part.params, &*part.mod_state), note));
+                            && self.admit(v, &part.params, note));
                     #[cfg(feature = "probe")]
                     let t2 = crate::probe::now();
                     #[cfg(feature = "probe")]
@@ -2017,8 +2017,7 @@ impl Instrument {
         if SlotKind::of(params) == SYMPATHETIC {
             self.sym.alloc_mut().place(vi);
         }
-        let mods = &shared.parts[q.index()].mod_state;
-        if !self.admit(v, (&**params, &**mods), note) {
+        if !self.admit(v, params, note) {
             return false;
         }
         self.alloc.fade_from(vi, Cost::ZERO);
@@ -2196,27 +2195,20 @@ impl Instrument {
     /// but Sympathetic may; Sympathetic if no note waits on the clear
     /// budget before it and its clear fits what the block has left, which
     /// it then takes. One that doesn't fit starts the queue.
-    /// A routed note's re-pluck (`REPLUCK_BYTES`) may take it past the
-    /// budget: it then starts only in a block no other clear touched.
-    fn admit(
-        &mut self,
-        v: usize,
-        (params, mods): (&ParamSnapshot, &ModState),
-        note: MidiNote,
-    ) -> bool {
+    fn admit(&mut self, v: usize, params: &ParamSnapshot, note: MidiNote) -> bool {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
         if self.clear_backlog {
             return false;
         }
-        let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, (params, mods));
-        debug_assert!(bytes <= SYM_CLEAR_BUDGET + crate::dsp::modal::REPLUCK_BYTES);
-        if bytes > self.clear_left && self.clear_left < SYM_CLEAR_BUDGET {
+        let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
+        debug_assert!(bytes <= SYM_CLEAR_BUDGET);
+        if bytes > self.clear_left {
             self.clear_backlog = true;
             return false;
         }
-        self.clear_left = self.clear_left.saturating_sub(bytes);
+        self.clear_left -= bytes;
         true
     }
 
