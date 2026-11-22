@@ -20,10 +20,14 @@ The owner decided on 2026-11-22: "Do it. Editor is GPLv3."
    repository's history. Each carries the GPLv3 text as its `LICENSE`
    (GPLv3 or later, as ADR 0271 chose for 1.0). `editor/` leaves this
    repository; `site/` never merged here.
-2. **The firmware stays binary-only until 1.0** (ADR 0271 unchanged for
-   everything else). `chimera-screen`, the crate that draws the unit's
-   screens for the editor, stays here; only its compiled `screen.wasm` goes
-   public, as firmware output, not under the GPL.
+2. **The firmware follows with 0.4.** The owner decided on 2026-11-22 that
+   the firmware itself goes open source under GPLv3 or later with the 0.4
+   release, with `chimera-releases` as its one public home; the oss-prep
+   ADR (`oss-prep-04`, `just oss-export`) records that and supersedes ADR
+   0271 for the firmware. Until then `chimera-screen`, the crate that draws
+   the unit's screens for the editor, stays here, and its compiled
+   `screen.wasm` goes public in the kit, under GPLv3 or later like the rest
+   of the kit.
 3. **The firmware ships an editor kit per release**: `just editor-kit
    <version>` writes `target/editor-kit/<version>/` with `screen.wasm`, the
    unit's protocol text the editor's tests read (`ed describe` of every
@@ -43,8 +47,8 @@ This supersedes ADR 0271 for the editor and the site only.
   closing, users are already in `chimera-releases`, and an editor per
   machine fits beside the releases better than inside one firmware tree.
 - **Publish `chimera-screen`'s source with the editor.** Rejected: it is the
-  firmware's own renderer and UI over a headless Part, firmware code under
-  ADR 0271.
+  firmware's own renderer and UI over a headless Part, and goes public with
+  the rest of the firmware (the oss-prep ADR).
 - **Keep the editor's history.** Rejected: the commit messages are private.
 
 ## Consequences
@@ -57,7 +61,8 @@ This supersedes ADR 0271 for the editor and the site only.
   in a closed product.
 
 ## Sources
-- ADR 0271 (binary-only until 1.0; superseded in part by this one), ADR 0289
+- ADR 0271 (binary-only until 1.0; superseded in part by this one and, for
+  the firmware, by the oss-prep ADR), ADR 0289
   (the editor's protocol), ADR 0317 on the `site` branch (the site shows the
   editor from 0.4)
 - https://www.gnu.org/licenses/gpl-3.0.html
