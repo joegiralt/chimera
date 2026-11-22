@@ -1133,6 +1133,9 @@ pub struct VarOsc {
     pm_jumps: u8,
     /// The marks' slots it reported, in order (`pm_marks`).
     pm_at: [u8; PM_JUMPS as usize],
+    /// Each listed step's mark, `[JUMP − 1 − t, Σ s]` (`listed_steps`):
+    /// AM's product corrects them (#660).
+    pm_val: [[f32; 2]; PM_JUMPS as usize],
     inv_sr: f32,
     #[cfg(any(test, feature = "test-support"))]
     correction: Correction,
@@ -1178,6 +1181,7 @@ impl VarOsc {
         pm_scale: (0.0, 0.0),
         pm_jumps: 0,
         pm_at: [0; PM_JUMPS as usize],
+        pm_val: [[0.0; 2]; PM_JUMPS as usize],
         inv_sr: 1.0 / 48_000.0,
         #[cfg(any(test, feature = "test-support"))]
         correction: Correction::On,
@@ -1271,6 +1275,18 @@ impl VarOsc {
     /// (`door::osc2_steps`), in order.
     pub fn pm_marks(&self) -> &[u8] {
         &self.pm_at[..usize::from(PM_JUMPS - self.pm_jumps)]
+    }
+
+    /// The steps a listing render (`door::osc1_steps`, `osc2_steps`)
+    /// left naive this block, in time order: each `(slot, t, step)`, the
+    /// step first in `out[slot]`, `t` samples before it (slot 0: the next
+    /// block's first sample).
+    pub fn listed_steps(&self) -> impl Iterator<Item = (usize, f32, f32)> + '_ {
+        let n = usize::from(PM_JUMPS - self.pm_jumps);
+        self.pm_at[..n]
+            .iter()
+            .zip(&self.pm_val[..n])
+            .map(|(&k, v)| (usize::from(k), JUMP - 1.0 - v[0], v[1]))
     }
 
     /// A jump's scale this block (PHASE's OSC 1, `door::osc1_phase`): `x`
@@ -2153,8 +2169,14 @@ impl VarOsc {
                 // listed, up to `PM_JUMPS` a block (past them `correct`
                 // corrects them as ever)
                 let k = (i + 1) % N;
-                mk[k] = [JUMP - 1.0 - clampf(rep[0] / rep[1], 0.0, 1.0), rep[1]];
-                self.pm_at[usize::from(PM_JUMPS - self.pm_jumps)] = k as u8;
+                let mark = [JUMP - 1.0 - clampf(rep[0] / rep[1], 0.0, 1.0), rep[1]];
+                // a FLIP instance's marks are its sub's: AM's OSC 1 lists
+                // its steps only (#660)
+                if !FLIP {
+                    mk[k] = mark;
+                }
+                let at = usize::from(PM_JUMPS - self.pm_jumps);
+                (self.pm_at[at], self.pm_val[at]) = (k as u8, mark);
                 self.pm_jumps -= 1;
             }
             out[i] = held;
