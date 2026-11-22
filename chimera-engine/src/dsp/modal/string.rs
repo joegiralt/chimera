@@ -275,6 +275,25 @@ impl KsString {
         self.frac.reset();
     }
 
+    /// Zeros up to `max` bytes of an idle line's top, the next note's
+    /// `clear` done ahead of it a block at a time (#306, ADR 0311): what
+    /// it wrote. The line comes to rest as `clear` leaves one (the
+    /// shortest ring from the start), so it is silent above `dirty`
+    /// whatever plays it next, and its note's `clear` writes the rest.
+    pub(super) fn clear_some(&mut self, max: usize) -> usize {
+        let n = (max / size_of::<f32>()).min(self.dirty);
+        let to = self.dirty - n;
+        #[cfg(any(test, feature = "test-support"))]
+        cleared::add(n * size_of::<f32>());
+        self.buffer[to..self.dirty].fill(0.0);
+        self.write_pos = 0;
+        self.delay = MIN_LINE;
+        self.ring_len = MIN_LINE + 2;
+        self.dirty = to.max(self.ring_len);
+        self.frac.reset();
+        n * size_of::<f32>()
+    }
+
     /// What the next `clear` writes.
     pub(super) fn clear_bytes(&self) -> usize {
         self.dirty * size_of::<f32>()

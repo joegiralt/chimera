@@ -668,8 +668,10 @@ fn a_worst_case_chord_starts_a_note_a_block() {
     for (b, &c) in cleared.iter().enumerate() {
         assert!(c <= SYM_CLEAR_BUDGET, "block {b}: {c} > {SYM_CLEAR_BUDGET}");
     }
+    // Each block's room is spent: what a note leaves clears the next
+    // one's lines ahead (ADR 0311), so the four blocks clear all four.
     assert!(
-        cleared[..4].iter().all(|&c| c > SYM_CLEAR_BUDGET * 3 / 4),
+        cleared[..4].iter().sum::<usize>() > SYM_CLEAR_BUDGET * 3,
         "{cleared:?}"
     );
     for r in &rebuilds {
@@ -960,4 +962,133 @@ fn a_shed_voice_that_never_sounded_frees_its_slot_and_promise() {
         SYM_SLOTS,
         "four Sympathetic notes ring"
     );
+}
+
+// ── A low note's clear paced by the block's room (#306, #704, ADR 0311) ──
+
+/// The host model of a block's cycles a sample: every booked voice, the
+/// bus and the control reserve, ADR 0262's unbilled overhead (160 a block
+/// and 230 a Part with a voice booked), and the strings cleared at the
+/// unit's rate, 225,533 cycles for 31,392 B (SYM NOTE-ON LOW, rev V,
+/// 2026-10-02), rounded up to 8 a byte.
+fn model(s: &Stage, cleared: usize) -> u32 {
+    let slots = s.inst.allocator().slots();
+    let booked: u32 = slots.iter().map(|x| x.cost().0).sum::<u32>()
+        + FxBus::COST.0
+        + chimera_core::budget::CONTROL_RESERVE.0;
+    let parts = PartId::ALL
+        .iter()
+        .filter(|&&p| slots.iter().any(|x| x.part() == Some(p)))
+        .count() as u32;
+    (booked + 160 + 230 * parts) * BLOCK_SIZE as u32 + cleared as u32 * 8
+}
+
+/// Rev V's deadline a block: its audio share over 75 %.
+fn deadline() -> u32 {
+    SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 * 100 / 75 * BLOCK_SIZE as u32
+}
+
+/// Part 5 (index 4) on the short Sympathetic Sound.
+fn short_part(s: &mut Stage, part: usize) {
+    let mut ms = ModState::with_sources(MAX_MOD_SOURCES);
+    assert!(ms.set_route_addr(ModSource::Env1.index(), VCA, 127));
+    s.shared.parts[part].params.envelopes[0].release = 0.0;
+    *s.shared.parts[part].mod_state = ms;
+}
+
+/// Rev V's budget: Part 5's Sympathetic note at MIDI 0 played and gone
+/// idle, so its slot's set and lines are dirty end to end; then Parts 1
+/// to 4 hold ALGO notes on every voice.
+fn loaded() -> Stage {
+    let mut parts = vec![(ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly); 4];
+    parts.push((sym(), PartMode::Poly));
+    let mut s = Stage::with_budget(&parts, SampleBudget::for_cpu(CPU_HZ_REV_V));
+    short_part(&mut s, 4);
+    s.on(4, 0);
+    for _ in 0..4 {
+        s.block();
+    }
+    s.off(4, 0);
+    s.until_idle(50);
+    for n in 0..16u8 {
+        s.on(usize::from(n % 4), 60 + n);
+        s.block();
+    }
+    assert!(
+        s.inst.allocator().slots().iter().all(|x| !x.is_free()),
+        "every voice booked"
+    );
+    let _ = take_cleared_bytes();
+    s
+}
+
+/// A full pool plus a low Sympathetic note: no block's model passes its
+/// deadline, the clear spread over the blocks with room, and the note
+/// sounds within about 5 ms.
+#[test]
+fn a_low_note_on_a_full_pool_keeps_every_block_under_its_deadline() {
+    let mut s = loaded();
+    s.on(4, 0);
+    let (mut first, mut clearing) = (None, 0);
+    for b in 0..16 {
+        s.block();
+        let c = take_cleared_bytes();
+        clearing += usize::from(c > 0);
+        let m = model(&s, c);
+        assert!(
+            m <= deadline(),
+            "block {b}: {m} > {} ({c} B cleared)",
+            deadline()
+        );
+        if first.is_none() && s.inst.part_bus(4).iter().any(|&x| x != 0.0) {
+            first = Some(b);
+        }
+    }
+    let first = first.expect("the note sounds");
+    assert!(clearing >= 2, "the clear spread: {clearing} blocks");
+    assert!(first <= 5, "it starts within ~5 ms: block {first}");
+}
+
+/// The note sounds as alone once its strings are clear: nothing of the
+/// MIDI 0 note's lines left in it.
+#[test]
+fn a_paced_note_sounds_as_alone() {
+    let mut s = loaded();
+    s.on(4, 0);
+    s.block();
+    let got = from_first_sound(&mut s, 4, 24);
+    let mut a = Stage::new(&vec![(sym(), PartMode::Poly); 5]);
+    short_part(&mut a, 4);
+    a.on(4, 0);
+    a.block();
+    assert_eq!(got, from_first_sound(&mut a, 4, 24));
+}
+
+/// The note let go and struck again while its strings clear: it sounds
+/// once, as alone, and the pool's books stay whole (`Stage::block`).
+#[test]
+fn a_note_retriggered_mid_clear_sounds_once_as_alone() {
+    let mut s = loaded();
+    s.on(4, 0);
+    // Until its clear has begun (its voice's fade first), still silent.
+    for _ in 0..8 {
+        s.block();
+        if take_cleared_bytes() > 0 {
+            break;
+        }
+    }
+    assert!(
+        s.inst.part_bus(4).iter().all(|&x| x == 0.0),
+        "still clearing"
+    );
+    s.off(4, 0);
+    s.on(4, 0);
+    s.block();
+    let got = from_first_sound(&mut s, 4, 24);
+    let mut a = Stage::new(&vec![(sym(), PartMode::Poly); 5]);
+    short_part(&mut a, 4);
+    a.on(4, 0);
+    a.block();
+    assert_eq!(got, from_first_sound(&mut a, 4, 24));
+    assert_eq!(s.voices_of(4), 1, "one voice");
 }

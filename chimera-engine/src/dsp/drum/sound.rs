@@ -1065,22 +1065,44 @@ pub fn kit_bill(kit: &Kit) -> KitBill {
                 Some(was) if was.cost() >= mc.cost() => Some(was),
                 _ => Some(mc),
             },
-            ..b.with_sound(kit.pad(p).sound())
+            ..b.with(Runs::of(kit.pad(p).sound()))
         }
     })
 }
 
+/// What a pad plays, or a ringing hit runs, as a kit's bill folds it:
+/// its filter's shape, whether a route moves it, its mods and whether its
+/// gate runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Runs {
+    pub shape: FilterShape,
+    pub moving: bool,
+    pub mods: PadMods,
+    pub gated: bool,
+}
+
+impl Runs {
+    /// A pad's, from its sound.
+    pub fn of(s: &PadSound) -> Runs {
+        Runs {
+            shape: FilterShape::of(s.filter.kind, s.filter.voice),
+            moving: s.routes.moves_filter(),
+            mods: s.mods(),
+            gated: s.amp.gate != lpg::Knobs::default(),
+        }
+    }
+}
+
 impl KitBill {
-    /// `self` with `s`'s filter shape, its move, mods and gate: a pad's,
-    /// or a ringing hit's struck sound, whose KIND, VOICE and routes'
-    /// DESTs it keeps through any later publish (`live_target`, #977).
-    pub fn with_sound(self, s: &PadSound) -> KitBill {
-        let f = FilterShape::of(s.filter.kind, s.filter.voice).bit();
+    /// `self` with what `r` runs: a pad's, or a ringing hit's
+    /// (`DrumEngine::runs`, #977).
+    pub fn with(self, r: Runs) -> KitBill {
+        let f = r.shape.bit();
         KitBill {
             shapes: self.shapes | f,
-            moving: self.moving | if s.routes.moves_filter() { f } else { 0 },
-            mods: self.mods.max(s.mods()),
-            gated: self.gated || s.amp.gate != lpg::Knobs::default(),
+            moving: self.moving | if r.moving { f } else { 0 },
+            mods: self.mods.max(r.mods),
+            gated: self.gated || r.gated,
             ..self
         }
     }

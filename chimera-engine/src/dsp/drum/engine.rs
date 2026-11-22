@@ -8,6 +8,7 @@ use chimera_midi::value::U7;
 
 use crate::Velocity;
 use crate::block::{GlideMs, apply_offset};
+use crate::dsp::filter::FilterKind;
 use crate::dsp::knobs::coeff;
 use crate::dsp::lfo::{Lfo, LfoParams};
 use crate::dsp::modal::ModalEngine;
@@ -18,10 +19,11 @@ use crate::project::PartId;
 
 use super::kernel::KernelState;
 use super::sound::{
-    AmpMode, EnvDecay, PadAmp, PadRoutes, PadSound, Places, RouteDest, RouteOffsets, RouteValues,
+    AmpMode, EnvDecay, FilterShape, PadAmp, PadRoutes, PadSound, Places, RouteDest, RouteOffsets,
+    RouteValues, Runs,
 };
 use super::types::{DrumHit, HitSeed, KernelBill, Pan, SampleRate};
-use super::view::KIT_VIEW;
+use super::view::{KIT_VIEW, KitSeq};
 
 /// A pad's PAN off centre, as the gains of the voice's mid (its Part's
 /// mono bus) and side: constant power, unity at centre, as the Part's own
@@ -161,7 +163,7 @@ impl PadMods {
 #[derive(Clone, Copy, Debug)]
 struct Follow {
     /// `KitView::sound_if_newer`'s.
-    seen: u32,
+    seen: KitSeq,
     sr: SampleRate,
     /// The KNOB coefficient at `sr`, worked out at the first glide.
     k: Option<f32>,
@@ -194,20 +196,52 @@ crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp, m
 // A hit plays in a voice slot, which MODAL's engine sizes.
 const _: () = assert!(size_of::<DrumEngine>() <= size_of::<ModalEngine>());
 
-/// A gliding block of `follow`, a hit: its body, `Places::ease` over 20
-/// places, `set_places` and both envelopes' `AmpEnv::coefs`, each
-/// instruction once (`ACoefs::new`'s 341 twice), on the filter-probes ELF
-/// at eb8ae2a9: ~1,923 instructions and 18 divides, ceil5(1,923 × 1.606 +
-/// 12 × 18) / 64 = 51.6: 55. A static upper bound; unit read owed (ADR
-/// 0311, #1026).
-pub const FOLLOW_GLIDE_COST: Cost = Cost(55);
+/// What `follow` does a hit's next block (`DrumEngine::follow_state`),
+/// each with the hit's filter KIND, whose glide step it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FollowState {
+    /// Nothing published, nothing gliding.
+    Still,
+    /// Its places ease toward the pad's.
+    Gliding(FilterKind),
+    /// A publish it hasn't seen: decoded, and the glide starts.
+    Decoding(FilterKind),
+}
 
-/// A publish's block on top: `KitView::sound_if_newer`'s 70-byte read,
-/// `PadSound::from_bytes`, the default pad and both `PadSound::places`,
-/// each instruction once, the loops at 70 bytes: ~2,716 instructions and
-/// 48 divides, ceil5(2,716 × 1.606 + 12 × 48) / 64 = 77.2: 80. Static;
-/// unit read owed (ADR 0311, #1026).
-pub const FOLLOW_DECODE_COST: Cost = Cost(80);
+impl FollowState {
+    /// Its bill, admission's as a knob's glide (ADR 0117, 0311).
+    pub const fn cost(self) -> Cost {
+        match self {
+            FollowState::Still => Cost::ZERO,
+            FollowState::Gliding(k) => Cost(FOLLOW_GLIDE_COST.0 + k.glide_cost().0),
+            FollowState::Decoding(k) => {
+                Cost(FOLLOW_DECODE_COST.0 + FOLLOW_GLIDE_COST.0 + k.glide_cost().0)
+            }
+        }
+    }
+}
+
+/// A gliding block of `follow`, a hit, as an upper bound: each instruction
+/// on the filter-probes ELF once (ADR 0311's count), its loops at their
+/// trip counts. `follow`'s whole body, the decode's branch in it, 651, and
+/// its outlined pieces, 90; `Places::ease`'s loop, 20 × 27 less the 19 in
+/// the body, 521; both `AmpEnv::coefs` with `ACoefs::new`, 2 × 387;
+/// `denormalize` 4 × 72; three lane compares, 3 × 27; the copies at 13
+/// instructions a 16 B pass plus 10 a call (40 for the byte-wise
+/// `__aeabi_memcpy`), 80 B, 64 B and 2 × 36 B, 305: 2,710 instructions
+/// and 21 divides, ceil5((2,710 × 1.606 + 12 × 21) / 64) = 75. Unit read
+/// owed (#1026).
+pub const FOLLOW_GLIDE_COST: Cost = Cost(75);
+
+/// A publish's block on top of the glide's, as an upper bound:
+/// `KitView::sound_if_newer` (168) with its 70-byte read at its three
+/// tries (3 × 5 × 76), the clear (79); the default pad (113) and its
+/// copy; `PadSound::from_bytes` (316) with its loops over 57 bytes (861)
+/// and three `Reader::env` (192); the decode branch's copies, 64 B, 3 ×
+/// 80 B and 160 B (457); both `PadSound::places` (2 × 338, 24 divides
+/// each): 4,094 instructions and 48 divides, ceil5((4,094 × 1.606 + 12 ×
+/// 48) / 64) = 115. Unit read owed (#1026).
+pub const FOLLOW_DECODE_COST: Cost = Cost(115);
 
 impl DrumEngine {
     /// Idle: no hit.
@@ -224,7 +258,7 @@ impl DrumEngine {
             addr_of_mut!((*p).mods).write(None);
             addr_of_mut!((*p).lfo).write(Lfo::new());
             addr_of_mut!((*p).follow).write(Follow {
-                seen: 0,
+                seen: KitSeq::default(),
                 sr: SampleRate::HW,
                 k: None,
                 target: PadSound::DEFAULT,
@@ -264,7 +298,7 @@ impl DrumEngine {
 
     /// The hit has seen `part`'s view up to `seq` (`KitView::seq`): it
     /// follows the publishes after it.
-    pub fn watch(&mut self, seq: u32) {
+    pub fn watch(&mut self, seq: KitSeq) {
         self.follow.seen = seq;
     }
 
@@ -290,35 +324,38 @@ impl DrumEngine {
                 f.glide = Some((at, target.places()));
             }
         }
-        let Some((was, to)) = f.glide else {
+        // Eased in place: only the three lanes the rebuilds compare kept.
+        let Some((at, to)) = &mut f.glide else {
             return;
         };
         let sr = f.sr;
         let k = *f.k.get_or_insert_with(|| coeff(GlideMs::KNOB, sr.get()));
-        let mut at = was;
+        let was = (at.amp_env(), at.env(), at.lfo());
+        let landed = at.ease(to, k);
         let s = hit.sound_mut();
-        if at.ease(&to, k) {
+        if landed {
             // Landed: the pad's values, bit for bit.
             *s = f.target;
-            f.glide = None;
         } else {
-            s.set_places(&at);
-            f.glide = Some((at, to));
+            s.set_places(at);
         }
         if let Some(a) = &mut self.amp
-            && at.amp_env() != was.amp_env()
+            && at.amp_env() != was.0
         {
-            a.coefs = AmpEnv::coefs(s.amp_env_at(&at), a.gated, sr);
+            a.coefs = AmpEnv::coefs(s.amp_env_at(at), a.gated, sr);
         }
         if let Some(m) = &mut self.mods {
-            if at.env() != was.env() {
-                m.coefs = AmpEnv::coefs(s.env_at(&at), false, sr);
+            if at.env() != was.1 {
+                m.coefs = AmpEnv::coefs(s.env_at(at), false, sr);
             }
-            if at.lfo() != was.lfo() {
-                m.lfo = s.lfo_at(&at);
+            if at.lfo() != was.2 {
+                m.lfo = s.lfo_at(at);
             }
             m.amounts = at.amounts();
             m.vol_routed = m.routes.moves_at(&m.amounts, |d| d == RouteDest::Volume);
+        }
+        if landed {
+            f.glide = None;
         }
     }
 
@@ -404,30 +441,44 @@ impl DrumEngine {
         self.hit
     }
 
-    /// The hit's struck sound, its continuous values as followed.
-    pub fn sound(&self) -> Option<&PadSound> {
-        self.hit.as_ref().map(DrumHit::sound)
+    /// What `follow` does the hit's next block, its Part's kit at `seq`
+    /// (#962): a publish it hasn't seen decodes its pad and starts a
+    /// glide, a glide under way steps; else nothing.
+    pub fn follow_state(&self, seq: KitSeq) -> FollowState {
+        let Some(hit) = &self.hit else {
+            return FollowState::Still;
+        };
+        let kind = hit.sound().filter().kind();
+        if seq != self.follow.seen {
+            FollowState::Decoding(kind)
+        } else if self.follow.glide.is_some() {
+            FollowState::Gliding(kind)
+        } else {
+            FollowState::Still
+        }
     }
 
-    /// What `follow` adds the hit's next block on `part` (#962): a publish
-    /// it hasn't seen decodes its pad and starts a glide, and a glide
-    /// steps its filter (`FilterKind::glide_cost`) and rebuilds its
-    /// envelopes' coefficients. Nothing else follows: 0. Out of line:
-    /// bank 1's.
+    /// What the hit runs, for its Part's kit bill (#977): the shape it
+    /// was struck on, a filter route moving where its amounts are or
+    /// glide to, the mods and AMP envelope it struck with, its gate where
+    /// it is or glides to.
     #[inline(never)]
     #[optimize(size)]
-    pub fn follow_bill(&self, part: PartId) -> Cost {
-        let Some(hit) = &self.hit else {
-            return Cost::ZERO;
-        };
-        let glide = FOLLOW_GLIDE_COST + hit.sound().filter().kind().glide_cost();
-        if KIT_VIEW.seq(part) != self.follow.seen {
-            FOLLOW_DECODE_COST + glide
-        } else if self.follow.glide.is_some() {
-            glide
-        } else {
-            Cost::ZERO
-        }
+    pub fn runs(&self) -> Option<Runs> {
+        let s = self.hit.as_ref()?.sound();
+        let t = &self.follow.target;
+        let f = s.filter();
+        let off = crate::dsp::lpg::Knobs::default();
+        Some(Runs {
+            shape: FilterShape::of(f.kind(), f.voice()),
+            moving: self.moves_filter() || t.routes().moves_filter(),
+            mods: match (&self.mods, &self.amp) {
+                (Some(_), _) => super::sound::PadMods::Routed,
+                (None, Some(_)) => super::sound::PadMods::Amp,
+                (None, None) => super::sound::PadMods::None,
+            },
+            gated: s.amp().gate() != off || t.amp().gate() != off,
+        })
     }
 
     /// What the hit sounding bills its next block (ADR 0287): its

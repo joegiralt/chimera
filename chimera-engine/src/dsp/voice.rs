@@ -733,6 +733,17 @@ impl Voice {
             .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
     }
 
+    /// Up to `max` bytes of a waiting Sympathetic note's clear done ahead
+    /// (`SymPool::pre_clear`): its lines only while the voice is idle, the
+    /// set it will ring at any time. What it cleared.
+    pub fn sym_pre_clear(&mut self, pool: &mut SymPool, max: usize) -> usize {
+        let engine = match &mut self.slot {
+            EngineSlot::Modal(m) if !self.active => Some(&mut **m),
+            _ => None,
+        };
+        pool.pre_clear(engine, self.id, max)
+    }
+
     /// On a fading voice, or one sounding another engine or model, the note
     /// waits for the fade-out and then starts clean. Returns whether it replaced
     /// a note still waiting, unheard. A TAPE note plays `source`. Out of
@@ -797,19 +808,21 @@ impl Voice {
         }
     }
 
-    /// The struck sound of the hit its DRUM slot sounds, if it does.
-    pub fn drum_sound(&self) -> Option<&crate::dsp::drum::sound::PadSound> {
+    /// What the hit its DRUM slot sounds runs, for its Part's kit bill
+    /// (`DrumEngine::runs`, #977).
+    pub fn drum_runs(&self) -> Option<crate::dsp::drum::sound::Runs> {
         match &self.slot {
-            EngineSlot::Drum(d) if self.active => d.sound(),
+            EngineSlot::Drum(d) if self.active => d.runs(),
             _ => None,
         }
     }
 
-    /// What its DRUM hit's live follow adds its next block on `part`
-    /// (`DrumEngine::follow_bill`, #962); 0 for any other slot.
-    pub fn drum_follow_extra(&self, part: crate::project::PartId) -> Cost {
+    /// What its DRUM hit's live follow adds its next block, its Part's
+    /// kit at `seq` (`DrumEngine::follow_state`, #962); 0 for any other
+    /// slot.
+    pub fn drum_follow_extra(&self, seq: crate::dsp::drum::view::KitSeq) -> Cost {
         match &self.slot {
-            EngineSlot::Drum(d) if self.active => d.follow_bill(part),
+            EngineSlot::Drum(d) if self.active => d.follow_state(seq).cost(),
             _ => Cost::ZERO,
         }
     }

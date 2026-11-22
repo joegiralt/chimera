@@ -880,6 +880,32 @@ pub enum NoteOrigin {
 /// worst-case slots starts a note a block, a typical one all at once.
 pub const SYM_CLEAR_BUDGET: usize = SYM_NOTE_ON_CLEAR_MAX;
 
+/// The unit's string clear, cycles a byte: SYM NOTE-ON LOW's 225,533
+/// cycles for 31,392 B (DWT, rev V, 2026-10-02; 7.2), rounded up. Unit
+/// re-read owed (#1026, ADR 0311).
+pub const SYM_CLEAR_CYCLES_PER_BYTE: u32 = 8;
+
+/// ADR 0262's unbilled overhead, cycles a sample: a block's, and a Part's
+/// with a voice booked.
+pub const BLOCK_OVERHEAD: Cost = Cost(160);
+pub const PART_OVERHEAD: Cost = Cost(230);
+
+/// The bytes a block may clear (#306, ADR 0311): what is left of the
+/// deadline (the audio share over `AUDIO_BUDGET_PERCENT`) once `booked`
+/// and the overhead of `parts` Parts are spent, at the clear's rate; at
+/// most one worst note-on. Admission keeps `booked` under the share, so
+/// a full pool still clears about 8 KB a block on rev V with six Parts:
+/// a worst note-on in four blocks.
+pub fn sym_clear_room(budget: SampleBudget, booked: Cost, parts: usize) -> usize {
+    let deadline = u64::from(budget.as_cost().0) * 100 / u64::from(crate::hw::AUDIO_BUDGET_PERCENT);
+    let used = u64::from(booked.0)
+        + u64::from(BLOCK_OVERHEAD.0)
+        + u64::from(PART_OVERHEAD.0) * parts as u64;
+    let room =
+        deadline.saturating_sub(used) * BLOCK_SIZE as u64 / u64::from(SYM_CLEAR_CYCLES_PER_BYTE);
+    room.min(SYM_CLEAR_BUDGET as u64) as usize
+}
+
 crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
@@ -2205,6 +2231,10 @@ impl Instrument {
         let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
         debug_assert!(bytes <= SYM_CLEAR_BUDGET);
         if bytes > self.clear_left {
+            // The block's room clears its lines ahead; it waits for the
+            // rest (#306).
+            let done = self.voices[v].sym_pre_clear(&mut self.sym, self.clear_left);
+            self.clear_left -= done;
             self.clear_backlog = true;
             return false;
         }
@@ -2298,7 +2328,11 @@ impl Instrument {
                     None => HitKernel::Ended,
                 });
                 // A hit's live follow (#962), as a knob's glide: admission's.
-                let follow = self.voices[v].drum_follow_extra(q);
+                // The kit the hit follows: the Part it sounds for, which a
+                // steal across Parts has not yet handed on.
+                let follow = self.sounding[v].map_or(Cost::ZERO, |s| {
+                    self.voices[v].drum_follow_extra(KIT_VIEW.seq(s))
+                });
                 self.alloc
                     .recost_with_glide(vi, own + held + k, glides[p] + follow);
             }
@@ -2315,6 +2349,25 @@ impl Instrument {
         }
     }
 
+    /// The next block's clear room (`sym_clear_room`): its bookings, the
+    /// reserve and each Part with a voice booked. Out of line: bank 1's.
+    #[inline(never)]
+    #[optimize(size)]
+    fn clear_room(&self) -> usize {
+        let parts = self
+            .alloc
+            .slots()
+            .iter()
+            .filter_map(|s| s.part())
+            .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p));
+        sym_clear_room(
+            self.alloc.budget(),
+            self.alloc.sounding_cost() + self.reserved(),
+            // A Part may book its first voice this block.
+            parts.len() + 1,
+        )
+    }
+
     /// Each Part's kit bill as published, with each ringing hit's struck
     /// sound folded in (`KitBill::with_sound`, #977). Out of line: bank 1's.
     #[inline(never)]
@@ -2322,9 +2375,9 @@ impl Instrument {
     fn ringing_kits(&self) -> [KitBill; MAX_PARTS] {
         let mut kits = PartId::ALL.map(|p| KIT_VIEW.bill(p));
         for (v, p) in self.voices.iter().zip(&self.sounding) {
-            if let (Some(s), Some(p)) = (v.drum_sound(), p) {
+            if let (Some(r), Some(p)) = (v.drum_runs(), p) {
                 let k = &mut kits[p.index()];
-                *k = k.with_sound(s);
+                *k = k.with(r);
             }
         }
         kits
@@ -2761,7 +2814,7 @@ impl Instrument {
         self.publish_lfo_view();
         crate::meter::publish_sounding_parts(self.sounding_set());
         self.publish_pads();
-        self.clear_left = SYM_CLEAR_BUDGET;
+        self.clear_left = self.clear_room();
 
         // 1b. Each Part's EQ, before its level, pan and sends (ADR 0284).
         self.part_eq(shared, &written, &mut sides);
