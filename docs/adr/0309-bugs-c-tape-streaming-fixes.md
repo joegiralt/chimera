@@ -29,6 +29,7 @@ The 0.4 bug sweep's TAPE batch (C) found these live on origin/0.4:
 ## Consequences
 - A failed or slow re-init is retried at its backoff or at the next card op's mount, never cleared silently by that mount.
 - The whole-fit re-read runs after the streamed pass, so a whole source after a streamed one in id order may find the heads took its room and read POOL FULL; the plan's costing by Part params (#600) is the full fix.
+- Flash: bank 1 +424 B on ORBIT (908,528 B), +456 B default, up to +688 B on the benches; bank 2 +1,088 B. The budget lines are set to these measured values under this ADR (an ADR 0198 exception for in-place fixes whose state, the cell's volume and the load's re-read, lives in bank 1).
 - Cell and band text gain `NO ROOM` and `POOL FULL` for a didn't-fit source; no golden shows one.
 - For the owner: #599 (a head pair per Part, an arena cost), #764 (a dying voice keeps its bill: a steal-count change wanting the unit's B4 run), #790 (SCRUB/GRAIN's DC, a sound change), #705 (unreproduced on the unit), #600 (library loads and pass 1's plan stream: a bank-2 door for library loads).
 
