@@ -289,17 +289,22 @@ pub struct MidiClock {
     playing: bool,
     silent: u64,
     sample_rate: NonZeroU32,
-    /// The beat as the reverb and the delay take it, in samples (0: none
+    /// The beat as the reverb and the delay take it, in samples (`None`
     /// yet): the mean over the run since the tempo was last taken, not one
     /// beat's sum (#1046).
-    held: u32,
-    /// The run: the tick it starts on, and the intervals since.
+    held: Option<NonZeroU32>,
+    /// The run: the tick it starts on, the intervals since (a lost Clock's
+    /// counted as the two it spans), and the count it is next refined at.
     run_from: u64,
     run_ticks: u32,
+    refine_at: u32,
     /// The last `off` beat sums' distance from `held`, summed: a beat's
     /// worth of them past `HOLD` on average is a tempo change.
     dev: i32,
     off: u8,
+    /// Sums still holding a lost Clock's double interval: left out of
+    /// `dev`, so one lost Clock is no tempo change.
+    lost: u8,
 }
 
 /// How far a beat's sum moves, on average over a beat of them, before the
@@ -323,11 +328,13 @@ impl MidiClock {
             playing: true,
             silent: sample_rate.get() as u64 * SILENT_MS / 1000,
             sample_rate,
-            held: 0,
+            held: None,
             run_from: 0,
             run_ticks: 0,
+            refine_at: 0,
             dev: 0,
             off: 0,
+            lost: 0,
         }
     }
 
@@ -350,7 +357,7 @@ impl MidiClock {
             self.len = 0;
             self.sum = 0;
             self.playing = true;
-            (self.held, self.dev, self.off) = (0, 0, 0);
+            (self.held, self.dev, self.off, self.lost) = (None, 0, 0, 0);
         }
         self.heard = now;
         true
@@ -371,7 +378,7 @@ impl MidiClock {
             self.sum += d as u32;
             self.at = (self.at + 1) % AVERAGE as u8;
             self.len = (self.len + 1).min(AVERAGE as u8);
-            self.hold(now);
+            self.hold(now, d);
         }
         self.last_tick = Some(now);
         if self.playing {
@@ -387,41 +394,54 @@ impl MidiClock {
     /// `HOLD` off on average, takes the tempo again from the newest beat
     /// and starts a new run. A steady clock never hunts: each refinement
     /// moves it less.
-    fn hold(&mut self, now: u64) {
+    fn hold(&mut self, now: u64, d: u16) {
         if !self.settled() {
             return;
         }
-        if self.held == 0 {
+        let Some(held) = self.held else {
             self.restart(now, self.sum);
             return;
+        };
+        // A Clock lost on the wire: one interval of two ticks, no tempo
+        // change, counted as both it spans.
+        let tick = held.get() / AVERAGE as u32;
+        let lost = u32::from(d).abs_diff(2 * tick) < tick / 4;
+        if lost {
+            self.lost = AVERAGE as u8;
         }
-        self.run_ticks += 1;
-        self.dev += self.sum as i32 - self.held as i32;
-        self.off += 1;
-        if self.off as usize == AVERAGE {
-            let mean = self.dev / AVERAGE as i32;
-            (self.dev, self.off) = (0, 0);
-            // The newest beat: the window's mean straddles the change.
-            if mean.unsigned_abs() > HOLD {
-                self.restart(now, self.sum);
-                return;
+        self.run_ticks = self.run_ticks.saturating_add(1 + u32::from(lost));
+        if self.lost > 0 {
+            self.lost -= 1;
+        } else {
+            self.dev += self.sum as i32 - held.get() as i32;
+            self.off += 1;
+            if self.off as usize == AVERAGE {
+                let mean = self.dev / AVERAGE as i32;
+                (self.dev, self.off) = (0, 0);
+                // The newest beat: the window's mean straddles the change.
+                if mean.unsigned_abs() > HOLD {
+                    self.restart(now, self.sum);
+                    return;
+                }
             }
         }
-        let beats = self.run_ticks / AVERAGE as u32;
-        if self.run_ticks.is_multiple_of(AVERAGE as u32) && beats.is_power_of_two() {
+        if self.run_ticks >= self.refine_at {
+            self.refine_at = self.refine_at.saturating_mul(2);
             let span = now.saturating_sub(self.run_from);
             let n = u64::from(self.run_ticks);
-            self.held = ((span * AVERAGE as u64 + n / 2) / n).min(u32::MAX as u64) as u32;
+            let beat = ((span * AVERAGE as u64 + n / 2) / n).clamp(1, u32::MAX as u64) as u32;
+            self.held = NonZeroU32::new(beat);
         }
     }
 
     /// The tempo taken as `beat`, a new run from the last full beat's
-    /// first tick.
+    /// first tick, refined first at two beats.
     fn restart(&mut self, now: u64, beat: u32) {
-        self.held = beat.max(1);
+        self.held = NonZeroU32::new(beat.max(1));
         self.run_from = now.saturating_sub(u64::from(self.sum));
         self.run_ticks = AVERAGE as u32;
-        (self.dev, self.off) = (0, 0);
+        self.refine_at = 2 * AVERAGE as u32;
+        (self.dev, self.off, self.lost) = (0, 0, 0);
     }
 
     /// The average spans a whole beat of intervals.
@@ -437,7 +457,7 @@ impl MidiClock {
     /// The leader's beat in samples, held (`hold`); `None` until its
     /// average first fills.
     pub fn beat(&self) -> Option<u32> {
-        (self.held != 0).then_some(self.held)
+        self.held.map(NonZeroU32::get)
     }
 
     /// Start from `src`: back to bar 0, the phase held there until the

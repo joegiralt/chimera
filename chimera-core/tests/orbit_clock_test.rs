@@ -141,3 +141,31 @@ fn midi_clock_hour_without_clock_holds_before_the_next_tick() {
     }
     assert_eq!(m.position(now), Some(held), "held short of the next tick");
 }
+
+/// One Clock lost from a steady 120 BPM, drained a block at a time: the
+/// doubled interval is no tempo change, and the held beat stays within a
+/// tenth of a BPM through it (#1046's review), never 4 % slow for a beat.
+#[test]
+fn a_dropped_clock_never_moves_the_held_tempo() {
+    use chimera_core::orbit::clock::MidiClock;
+    let sr = 48_000u64;
+    let tick = sr * 60 / (120 * 24);
+    let mut worst = 0.0f64;
+    // The lost Clock at each place in a beat's window.
+    for lost in 24 * 20..24 * 21 {
+        let mut m = MidiClock::new(NonZeroU32::new(sr as u32).unwrap());
+        for n in 0..24 * 60u64 {
+            if n == lost {
+                continue;
+            }
+            let now = n * tick / 64 * 64;
+            assert!(m.tick(0, now));
+            if n > 24 * 8
+                && let Some(b) = m.beat()
+            {
+                worst = worst.max((60.0 * sr as f64 / f64::from(b) - 120.0).abs());
+            }
+        }
+    }
+    assert!(worst < 0.1, "held {worst} BPM off");
+}
