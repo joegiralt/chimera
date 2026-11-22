@@ -39,15 +39,20 @@ without a reason, and the batch's bank-2 code moved its budget lines.
 - **The reverb's TAIL takes SYNC and the reverb's clock (#366)**: the
   lengths the reverb plays, at its tempo and fold.
 - **Under LOOPFM, WAVE's glyph is `Gauge::VaLoop` (#667)**: the oscillator's
-  `lbfm` at `target_b0(BLEND, WAVE)`, as the engine plays it; SHAPE, which
-  LOOPFM ignores, leaves it.
+  `lbfm` at `target_b0(BLEND, WAVE)` (`LoopB0`, −0.95..=0), as the engine
+  plays it; SHAPE, which LOOPFM ignores, leaves it. WAVE's glyph and
+  BLEND's crossfader read MODE as stored, never eased: a choice never
+  rolls through the modes between.
 - **Tap and hold (#289).** In a frame stalled past `HOLD_MS` across a
   release and a re-press, the release's tap wins and the new press's hold
   fires the frame after. A key pressed while MIX was down, MIX let go
   after it inside the same frame (`chorded`, MIX pressed in that frame or
-  held from before), is muted, as a held MIX mutes it.
-- **WAVE on a source it can't play (#709, owner 2026-11-22):** the band
-  reads `NEEDS A WAVE TABLE` (178 px), the hint's place `TURN SOURCE TO A
+  held from before), is muted, as a held MIX mutes it. Accepted, not fixed:
+  a MIX double tap inside one stalled frame reads as its last press alone
+  (the latch keeps one edge of each kind), so a key pressed during the
+  first tap is not muted; a stall that long is itself the fault.
+- **WAVE on a source it can't play (#709, owner 2026-11-22):**
+  `SourceState::NotWaveTable`; the band reads `NEEDS A WAVE TABLE` (178 px), the hint's place `TURN SOURCE TO A
   WAVE TABLE`; the owner's `NEEDS A WAVE TABLE · TURN SOURCE` is 312 px.
   The SOURCE list by machine and a playable source on a MODEL change are
   0.5.0's enhancement.
@@ -55,9 +60,8 @@ without a reason, and the batch's bank-2 code moved its budget lines.
   harmony reaches `live_note`, so the row did nothing. What the page should
   draw is an enhancement, filed apart.
 - **Budgets.** Bank 2's lines rise by the code above, measured:
-  default and bank2-gate +1056 B, orbit +960 B. Bank 1's bench-orbit
-  line rises 120 B (#709's words and the door calls), measured; every other
-  bank-1 set stays inside its line.
+  default and bank2-gate +1056 B, orbit +960 B. #709's words ride
+  `band_note`'s door (SOURCE asks with no address), so they live in bank 2.
 
 ## Alternatives considered
 - #1068: forcing a full redraw on every program change; the key is cheaper
