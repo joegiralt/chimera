@@ -19,7 +19,7 @@ use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Absence, Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
     Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SoundStatus,
-    SourceSet, Swap, encode_project, project_crc, sound_status,
+    SourceSet, Streamed, Swap, encode_project, project_crc, sound_status,
 };
 
 #[optimize(size)]
@@ -454,11 +454,15 @@ fn load_into<S: Store>(
     read?;
     let (missed, unread) = read_sources(s, r, p, to_read);
     let streamed = stream_sources(s, r, p, to_stream);
+    // Left out for room, they fit whole once a read above missed (#765):
+    // each loads, didn't fit after all, or is missing.
+    let (missed_too, unread_too) = read_sources(s, r, p, streamed.whole);
+    let fit = streamed.n.saturating_add(streamed.whole.count());
     Ok(Loaded {
         lossy,
         sounds,
-        sources: sources.saturating_add(missed).saturating_sub(streamed),
-        missing: unlisted.saturating_add(unread),
+        sources: (sources.saturating_add(missed).saturating_add(missed_too)).saturating_sub(fit),
+        missing: unlisted.saturating_add(unread).saturating_add(unread_too),
         over,
     })
 }
@@ -468,15 +472,15 @@ fn load_into<S: Store>(
 /// With bank 2 shut none.
 #[cfg(feature = "tape")]
 #[optimize(size)]
-fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> u8 {
-    super::LoadDoor::with(|d| d.sources(s, r, p, ids)).unwrap_or(0)
+fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> Streamed {
+    super::LoadDoor::with(|d| d.sources(s, r, p, ids)).unwrap_or_default()
 }
 
 /// No TAPE: nothing streams.
 #[cfg(not(feature = "tape"))]
 #[optimize(size)]
-fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet) -> u8 {
-    0
+fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet) -> Streamed {
+    Streamed::default()
 }
 
 /// Reads sources `ids` into their absent entries, inside the load's epoch
@@ -514,14 +518,20 @@ fn read_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet)
         match got {
             Ok(true) => {}
             // Whole on the card, more than the gap: it didn't fit.
-            Ok(false) if room => missed = missed.saturating_add(1),
+            Ok(false) if room => {
+                p.pool.mark_absent(id, Absence::NoRoom);
+                missed = missed.saturating_add(1)
+            }
             Ok(false) => {
                 if fault {
                     p.pool.mark_absent(id, Absence::ReadFailed);
                 }
                 unread = unread.saturating_add(1)
             }
-            Err(_) => missed = missed.saturating_add(1),
+            Err(_) => {
+                p.pool.mark_absent(id, Absence::NoRoom);
+                missed = missed.saturating_add(1)
+            }
         }
     }
     (missed, unread)

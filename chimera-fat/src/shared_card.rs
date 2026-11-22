@@ -221,8 +221,13 @@ impl<D: Medium> Medium for SharedCard<D> {
         if let Some(m) = h.dev.addr_mode() {
             self.addr.set(m);
         }
-        self.bus.set_fault(CardFault::Clear);
         Ok(())
+    }
+
+    /// Not `mounted`'s: the UI clears it once another card's stream rows
+    /// are gone (#610). `set_fault`'s `Release` publishes that.
+    fn clear_read_fault(&self) {
+        self.bus.set_fault(CardFault::Clear);
     }
 
     fn cap(&self, ms: Option<u32>) {

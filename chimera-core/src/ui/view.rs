@@ -522,6 +522,7 @@ impl SourceState {
         use crate::ui::source_cell::{NOT_ON_CARD, READ_FAILED, SOURCE_MISSING};
         match self {
             SourceState::Absent(Absence::Missing) => SOURCE_MISSING,
+            SourceState::Absent(Absence::NoRoom) => crate::ui::settings::prompt::POOL_FULL,
             SourceState::Absent(Absence::NotOnCard) => NOT_ON_CARD,
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
             SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
@@ -543,6 +544,7 @@ impl SourceState {
         let _ = match self {
             SourceState::None => buf.write_str("NONE"),
             SourceState::Absent(Absence::Missing) => buf.write_str("MISSING"),
+            SourceState::Absent(Absence::NoRoom) => buf.write_str("NO ROOM"),
             SourceState::Absent(Absence::NotOnCard) => buf.write_str("NO FILE"),
             SourceState::Absent(Absence::ReadFailed) | SourceState::Failed(_) => {
                 buf.write_str("ERROR")

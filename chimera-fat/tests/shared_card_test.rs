@@ -336,7 +336,8 @@ fn a_stream_between_identify_and_mounted_makes_the_mount_busy() {
 }
 
 /// The card IRQ's read fault reaches the store; its recovery re-inits
-/// under the bus, then mounts, which clears it.
+/// under the bus, then mounts, and leaves the fault for the UI to clear
+/// once it has dropped another card's rows (#610).
 #[test]
 fn recover_reinits_under_the_bus_and_clears_the_fault() {
     let (c, bus, _) = card(false);
@@ -344,6 +345,8 @@ fn recover_reinits_under_the_bus_and_clears_the_fault() {
     bus.set_fault(CardFault::Read);
     assert_eq!(store.read_fault(), CardFault::Read);
     assert!(store.recover().is_ok());
+    assert_eq!(store.read_fault(), CardFault::Read);
+    store.clear_read_fault();
     assert_eq!(store.read_fault(), CardFault::Clear);
     let calls: Vec<_> = log().into_iter().take(3).collect();
     assert_eq!(
@@ -402,6 +405,9 @@ fn mounted_publishes_the_card_addr_and_reinit_clears_it() {
     bus.set_fault(CardFault::Read);
     assert_eq!(c.mounted(), Ok(()));
     assert_eq!(addr.get(), Some(AddrMode::Block));
+    // #610: the mount leaves the read fault for the UI to clear.
+    assert_eq!(bus.fault(), CardFault::Read);
+    c.clear_read_fault();
     assert_eq!(bus.fault(), CardFault::Clear);
     assert_eq!(c.reinit(), Ok(()));
     assert_eq!(addr.get(), None);

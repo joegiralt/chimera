@@ -160,13 +160,15 @@ impl Store for DirStore {
         self.bus.map_or(CardFault::Clear, CardBus::fault)
     }
 
-    /// A host directory has nothing to re-init: the mount clears it.
+    /// A host directory has nothing to re-init.
     fn recover(&mut self) -> Result<VolumeId, StoreError> {
-        let vol = self.mount()?;
+        self.mount()
+    }
+
+    fn clear_read_fault(&mut self) {
         if let Some(b) = self.bus {
             b.set_fault(CardFault::Clear);
         }
-        Ok(vol)
     }
 
     fn mount(&mut self) -> Result<VolumeId, StoreError> {

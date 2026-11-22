@@ -585,10 +585,13 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     ui.project_mut().set_gate_clock(gate_ms);
     // Streamed sources' files go in the registry for the card (slice 1
     // § 5.5), if its interrupt runs: else no row is lent, and a source too
-    // big for the arena reads STREAMS FULL, not a silent stream. A bench
-    // build's beds keep its rows to themselves.
+    // big for the arena reads STREAMS FULL, not a silent stream. Nor on
+    // rings in an SRAM4 that failed its self-test (#768). A bench build's
+    // beds keep its rows to themselves.
     #[cfg(not(feature = "bench"))]
-    if let Some(r) = shared::registry().filter(|_| _card_irq) {
+    if let Some(r) = shared::registry()
+        .filter(|_| _card_irq && chimera_core::console::SRAM4.load().lends_streams())
+    {
         ui.project_mut().set_streams(r);
     }
     ui.set_theme(settings.theme);
