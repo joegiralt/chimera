@@ -678,6 +678,9 @@ pub(super) struct StringVoice {
     adding: Pending,
     /// Its length, samples: a glide's target line; 0, the line in use.
     adding_len: usize,
+    /// The noise state the fresh pluck drew from: `repluck` draws the
+    /// same noise again, so the RNG moves once a note (#233).
+    seed: u32,
 }
 
 /// A pluck's level waiting for `shape`, in one float, so the voice keeps
@@ -710,7 +713,7 @@ impl Pending {
 
 crate::in_place::field_list!(StringVoice => StringVoice {
     string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
-    adding_len,
+    adding_len, seed,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -739,6 +742,7 @@ impl StringVoice {
             addr_of_mut!((*p).passes).write(1);
             addr_of_mut!((*p).adding).write(Pending::NONE);
             addr_of_mut!((*p).adding_len).write(0);
+            addr_of_mut!((*p).seed).write(NOISE_SEED);
             slot.assume_init_mut()
         }
     }
@@ -779,6 +783,7 @@ impl StringVoice {
         self.stiff = structure.is_some();
         self.structure = structure.unwrap_or(0.0);
         let l = self.dispersed(freq, sample_rate);
+        self.seed = self.string.noise_state;
         self.string.excite(l, amplitude);
         self.disp.reset();
         self.body.reset();
@@ -795,6 +800,7 @@ impl StringVoice {
     pub(super) fn repluck(&mut self, freq: f32, sample_rate: u32) {
         if let Some(level) = self.adding.fresh_level() {
             let l = self.dispersed(freq, sample_rate);
+            self.string.noise_state = self.seed;
             self.string.excite(l, level);
         }
     }

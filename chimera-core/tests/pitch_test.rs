@@ -193,11 +193,11 @@ fn a_routed_pitch_plucks_at_the_routed_length() {
         let mut stored = p.clone();
         stored.pitch.pitch = st;
         let stored = first(&render(&stored, &ModState::new(), 40));
-        // The two plucks are different noise (the routed one's second
-        // draw), so they agree only to within the noise's spread.
+        // The routed pluck draws the stored one's noise again: the same
+        // pluck, its fundamental to within float rounding.
         let r = routed / stored;
         assert!(
-            (0.55..1.8).contains(&r),
+            (r - 1.0).abs() < 1e-3,
             "{mode:?}: routed/stored fundamental {r}"
         );
     }
