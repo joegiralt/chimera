@@ -54,20 +54,54 @@ pub struct AdmitDoor {
     ) -> Option<(VoiceIdx, Option<Paid>)>,
     refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
     loop_extra: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Cost,
-    clear_room: fn(&Instrument) -> usize,
-    pre_clear: fn(&mut Instrument, usize, usize) -> usize,
+    clear_avail: fn(&Instrument) -> usize,
+    admit_sym: fn(&mut Instrument, usize, &crate::params::ParamSnapshot, MidiNote) -> bool,
+    strike_ready: StrikeReady,
     ringing_kits: fn(&Instrument) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS],
+    follows: fn(&Instrument) -> [Cost; MAX_VOICES],
 }
+
+/// `AdmitDoor::strike_ready`'s entry.
+type StrikeReady = fn(
+    &mut Instrument,
+    VoiceIdx,
+    &crate::params::ParamSnapshot,
+    MidiNote,
+    (crate::Velocity, Option<SourceId>),
+) -> bool;
 
 impl AdmitDoor {
     #[inline(always)]
-    pub(crate) fn clear_room(&self, i: &Instrument) -> usize {
-        (self.clear_room)(i)
+    pub(crate) fn clear_avail(&self, i: &Instrument) -> usize {
+        (self.clear_avail)(i)
     }
 
     #[inline(always)]
-    pub(crate) fn pre_clear(&self, i: &mut Instrument, v: usize, max: usize) -> usize {
-        (self.pre_clear)(i, v, max)
+    pub(crate) fn admit_sym(
+        &self,
+        i: &mut Instrument,
+        v: usize,
+        params: &crate::params::ParamSnapshot,
+        note: MidiNote,
+    ) -> bool {
+        (self.admit_sym)(i, v, params, note)
+    }
+
+    #[inline(always)]
+    pub(crate) fn strike_ready(
+        &self,
+        i: &mut Instrument,
+        v: VoiceIdx,
+        params: &crate::params::ParamSnapshot,
+        note: MidiNote,
+        played: (crate::Velocity, Option<SourceId>),
+    ) -> bool {
+        (self.strike_ready)(i, v, params, note, played)
+    }
+
+    #[inline(always)]
+    pub(crate) fn follows(&self, i: &Instrument) -> [Cost; MAX_VOICES] {
+        (self.follows)(i)
     }
 
     #[inline(always)]
@@ -134,9 +168,11 @@ impl Instrument {
         pick: Self::pick_streamed,
         refresh: Self::refresh_in,
         loop_extra: Self::loop_in,
-        clear_room: Self::clear_room_in,
-        pre_clear: Self::pre_clear_in,
+        clear_avail: Self::clear_avail_in,
+        admit_sym: Self::admit_sym_in,
+        strike_ready: Self::strike_ready_in,
         ringing_kits: Self::ringing_kits_in,
+        follows: Self::follows_in,
     };
 
     /// The bytes this block may clear in all (#306, ADR 0311), asked at
@@ -172,10 +208,89 @@ impl Instrument {
         (room as usize).min(SYM_CLEAR_BUDGET)
     }
 
-    /// Up to `max` bytes of voice `v`'s waiting Sympathetic note's clear
-    /// done ahead (`Voice::sym_pre_clear`, inlined here): what it cleared.
-    fn pre_clear_in(&mut self, v: usize, max: usize) -> usize {
-        self.voices[v].sym_pre_clear(&mut self.sym, max)
+    /// What this block may still clear (#306, ADR 0311): its room as the
+    /// bookings stand less what it has cleared, within the one worst
+    /// note-on a block `clear_left` keeps.
+    fn clear_avail_in(&self) -> usize {
+        use super::SYM_CLEAR_BUDGET;
+        self.clear_room_in()
+            .saturating_sub(SYM_CLEAR_BUDGET - self.clear_left)
+            .min(self.clear_left)
+    }
+
+    /// Whether voice `v` may start Sympathetic `note` on `params` this
+    /// block, the clear it takes paid (#306, ADR 0311): a strike that adds
+    /// to what rings fits the room or waits; else none waits before it and
+    /// its clear fits, or the room clears its lines ahead and it waits.
+    fn admit_sym_in(
+        &mut self,
+        v: usize,
+        params: &crate::params::ParamSnapshot,
+        note: MidiNote,
+    ) -> bool {
+        use super::SYM_CLEAR_BUDGET;
+        if let Some(bytes) = self.voices[v].sym_strike_adds(&self.sym, note, params) {
+            // A re-strike, or STEAL GLIDE's growth, adds to what rings: it
+            // fits the block's room, or the note takes the deferred path
+            // (a fade, then a paced start). A CUT is a fresh note.
+            if bytes > self.clear_avail_in() {
+                return false;
+            }
+            self.clear_left -= bytes;
+            return true;
+        }
+        if self.clear_backlog {
+            return false;
+        }
+        let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
+        debug_assert!(bytes <= SYM_CLEAR_BUDGET);
+        let avail = self.clear_avail_in();
+        if bytes > avail {
+            // The block's room clears its lines ahead; it waits for the
+            // rest (#306).
+            let done = self.voices[v].sym_pre_clear(&mut self.sym, avail);
+            self.clear_left -= done;
+            self.clear_backlog = true;
+            return false;
+        }
+        self.clear_left -= bytes;
+        true
+    }
+
+    /// A pending strike on voice `v`'s sounding engine (`Plays::Strike`):
+    /// whether it starts now. One whose engine went stale, or whose clear
+    /// doesn't fit, fades out and waits as a note.
+    fn strike_ready_in(
+        &mut self,
+        vi: VoiceIdx,
+        params: &crate::params::ParamSnapshot,
+        note: MidiNote,
+        (vel, source): (crate::Velocity, Option<SourceId>),
+    ) -> bool {
+        let v = vi.index();
+        let starts = super::SlotKind::of(params) == super::SYMPATHETIC
+            && self.voices[v].is_active()
+            && self.voices[v].starts_now(params, &self.sym);
+        if starts && self.admit_sym_in(v, params, note) {
+            return true;
+        }
+        self.waiting[v] = Some(super::Waiting {
+            vel,
+            source,
+            plays: super::Plays::Note,
+        });
+        let _ = self.voices[v].kill();
+        false
+    }
+
+    /// Each voice's DRUM hit's live follow next block (#962), from the kit
+    /// of the Part it sounds for (a steal across Parts hasn't handed it on).
+    fn follows_in(&self) -> [Cost; MAX_VOICES] {
+        core::array::from_fn(|v| {
+            self.sounding[v].map_or(Cost::ZERO, |s| {
+                self.voices[v].drum_follow_extra(crate::dsp::drum::view::KIT_VIEW.seq(s))
+            })
+        })
     }
 
     /// Each Part's kit bill as published, with each ringing hit's struck

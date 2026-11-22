@@ -449,6 +449,7 @@ impl DrumEngine {
     /// What `follow` does the hit's next block, its Part's kit at `seq`
     /// (#962): a publish it hasn't seen decodes its pad and starts a
     /// glide, a glide under way steps; else nothing.
+    #[inline(always)]
     pub fn follow_state(&self, seq: KitSeq) -> FollowState {
         let Some(hit) = &self.hit else {
             return FollowState::Still;

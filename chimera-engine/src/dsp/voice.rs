@@ -737,6 +737,8 @@ impl Voice {
     /// adds to the sounding engine (`ModalEngine::strike_clear`): a
     /// re-strike's none, STEAL GLIDE's growth; `None` when it starts
     /// fresh, a CUT among them.
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
     pub fn sym_strike_adds(
         &self,
         pool: &SymPool,
@@ -841,6 +843,8 @@ impl Voice {
     /// What its DRUM hit's live follow adds its next block, its Part's
     /// kit at `seq` (`DrumEngine::follow_state`, #962); 0 for any other
     /// slot.
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
     pub fn drum_follow_extra(&self, seq: crate::dsp::drum::view::KitSeq) -> Cost {
         match &self.slot {
             EngineSlot::Drum(d) if self.active => d.follow_state(seq).cost(),
