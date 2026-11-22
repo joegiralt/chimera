@@ -176,11 +176,14 @@ impl HoldGates {
     }
 }
 
-/// MIX pressed and let go around the press in `e`, all inside one frame:
-/// a chord the level at frame end misses (#289).
+/// MIX down at the press in `e` and let go after it inside this frame,
+/// pressed in it or held from before: a chord the level at frame end
+/// misses (#289).
 fn chorded(mix: Edges, e: Edges) -> bool {
     match (mix.pressed_at, mix.released_at, e.pressed_at) {
-        (Some(down), Some(up), Some(p)) => p.signed_since(down) >= 0 && up.signed_since(p) >= 0,
-        _ => false,
+        (down, Some(up), Some(p)) => {
+            down.is_none_or(|d| p.signed_since(d) >= 0) && up.signed_since(p) >= 0
+        }
+        (_, None, _) | (_, _, None) => false,
     }
 }
