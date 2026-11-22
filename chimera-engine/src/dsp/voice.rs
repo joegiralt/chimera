@@ -797,6 +797,14 @@ impl Voice {
         }
     }
 
+    /// The struck sound of the hit its DRUM slot sounds, if it does.
+    pub fn drum_sound(&self) -> Option<&crate::dsp::drum::sound::PadSound> {
+        match &self.slot {
+            EngineSlot::Drum(d) if self.active => d.sound(),
+            _ => None,
+        }
+    }
+
     /// What its DRUM hit's live follow adds its next block on `part`
     /// (`DrumEngine::follow_bill`, #962); 0 for any other slot.
     pub fn drum_follow_extra(&self, part: crate::project::PartId) -> Cost {

@@ -2233,13 +2233,7 @@ impl Instrument {
         // Each kit's bill read once: the Part's bill, its glide and its
         // hits' all from the same kit, with each ringing hit's struck
         // sound, whose filter it runs whatever the kit says now (#977).
-        let mut kits: [KitBill; MAX_PARTS] = PartId::ALL.map(|p| KIT_VIEW.bill(p));
-        for (v, p) in self.voices.iter().zip(&self.sounding) {
-            if let (Some(h), Some(p)) = (v.drum_hit(), p) {
-                let k = &mut kits[p.index()];
-                *k = k.with_sound(h.params().sound());
-            }
-        }
+        let kits = self.ringing_kits();
         // Only a Part with a gliding knob pays the glide scans (ADR 0117).
         let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
             let g = self.knobs[p].0.gliding();
@@ -2319,6 +2313,21 @@ impl Instrument {
         {
             self.shed(v);
         }
+    }
+
+    /// Each Part's kit bill as published, with each ringing hit's struck
+    /// sound folded in (`KitBill::with_sound`, #977). Out of line: bank 1's.
+    #[inline(never)]
+    #[optimize(size)]
+    fn ringing_kits(&self) -> [KitBill; MAX_PARTS] {
+        let mut kits = PartId::ALL.map(|p| KIT_VIEW.bill(p));
+        for (v, p) in self.voices.iter().zip(&self.sounding) {
+            if let (Some(s), Some(p)) = (v.drum_sound(), p) {
+                let k = &mut kits[p.index()];
+                *k = k.with_sound(s);
+            }
+        }
+        kits
     }
 
     /// A new formant note's reach on Part `p` (`HighNote::bill`, the

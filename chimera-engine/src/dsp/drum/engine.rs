@@ -404,15 +404,23 @@ impl DrumEngine {
         self.hit
     }
 
+    /// The hit's struck sound, its continuous values as followed.
+    pub fn sound(&self) -> Option<&PadSound> {
+        self.hit.as_ref().map(DrumHit::sound)
+    }
+
     /// What `follow` adds the hit's next block on `part` (#962): a publish
     /// it hasn't seen decodes its pad and starts a glide, and a glide
     /// steps its filter (`FilterKind::glide_cost`) and rebuilds its
-    /// envelopes' coefficients. Nothing else follows: 0.
+    /// envelopes' coefficients. Nothing else follows: 0. Out of line:
+    /// bank 1's.
+    #[inline(never)]
+    #[optimize(size)]
     pub fn follow_bill(&self, part: PartId) -> Cost {
         let Some(hit) = &self.hit else {
             return Cost::ZERO;
         };
-        let glide = FOLLOW_GLIDE_COST + hit.params().sound().filter().kind().glide_cost();
+        let glide = FOLLOW_GLIDE_COST + hit.sound().filter().kind().glide_cost();
         if KIT_VIEW.seq(part) != self.follow.seen {
             FOLLOW_DECODE_COST + glide
         } else if self.follow.glide.is_some() {
