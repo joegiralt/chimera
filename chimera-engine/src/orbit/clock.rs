@@ -370,6 +370,9 @@ impl MidiClock {
         }
         if let Some(prev) = self.last_tick {
             let d = now.saturating_sub(prev).min(u16::MAX as u64) as u16;
+            // The interval before this one, for `hold`'s lost Clock.
+            let before =
+                (self.len > 0).then(|| self.intervals[(self.at as usize + AVERAGE - 1) % AVERAGE]);
             let slot = &mut self.intervals[self.at as usize];
             if self.len as usize == AVERAGE {
                 self.sum -= *slot as u32;
@@ -378,7 +381,7 @@ impl MidiClock {
             self.sum += d as u32;
             self.at = (self.at + 1) % AVERAGE as u8;
             self.len = (self.len + 1).min(AVERAGE as u8);
-            self.hold(now, d);
+            self.hold(now, d, before);
         }
         self.last_tick = Some(now);
         if self.playing {
@@ -394,7 +397,7 @@ impl MidiClock {
     /// `HOLD` off on average, takes the tempo again from the newest beat
     /// and starts a new run. A steady clock never hunts: each refinement
     /// moves it less.
-    fn hold(&mut self, now: u64, d: u16) {
+    fn hold(&mut self, now: u64, d: u16, before: Option<u16>) {
         if !self.settled() {
             return;
         }
@@ -402,14 +405,22 @@ impl MidiClock {
             self.restart(now, self.sum);
             return;
         };
-        // A Clock lost on the wire: one interval of two ticks, no tempo
-        // change, counted as both it spans.
+        // One or two Clocks lost on the wire: an isolated interval of two
+        // or three ticks after a normal one, no tempo change, counted as
+        // all it spans. Long intervals in a row are a slower clock (a step
+        // to half the tempo): no Clock lost, and `dev` hears them.
         let tick = held.get() / AVERAGE as u32;
-        let lost = u32::from(d).abs_diff(2 * tick) < tick / 4;
-        if lost {
+        let near = |x: u16, k: u32| u32::from(x).abs_diff(k * tick) < tick / 4;
+        let spans = match before {
+            Some(b) if near(b, 1) => (2..=3).find(|&k| near(d, k)).unwrap_or(1),
+            _ => 1,
+        };
+        if spans > 1 {
             self.lost = AVERAGE as u8;
+        } else if !near(d, 1) {
+            self.lost = 0;
         }
-        self.run_ticks = self.run_ticks.saturating_add(1 + u32::from(lost));
+        self.run_ticks = self.run_ticks.saturating_add(spans);
         if self.lost > 0 {
             self.lost -= 1;
         } else {

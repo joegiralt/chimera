@@ -176,6 +176,13 @@ pub(super) fn word(w: W) -> &'static str {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::ui) struct Busy;
 
+impl From<Busy> for Line {
+    /// What the box says: CARD BUSY, as for a hand's save.
+    fn from(_: Busy) -> Line {
+        Line::new(StoreError::Busy.message())
+    }
+}
+
 impl Layers {
     /// Part `i`'s layer.
     pub fn layer(&self, i: usize) -> &MidiMap {

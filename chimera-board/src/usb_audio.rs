@@ -301,6 +301,14 @@ pub(crate) mod door {
     #[inline(always)]
     pub(crate) fn events(s: &mut Stream) {
         let g = otg();
+        // DSTS before GINTSTS (#973): a SOF landing between the reads then
+        // leaves `at` a frame behind the flags, so `missed` names a frame
+        // earlier than the one that ended. That errs toward leaving a
+        // packet armed: a real miss is re-aimed by the next frame's flag,
+        // one frame later. Read the other way round, it errs toward
+        // moving a good packet a frame on, which the host reads as a
+        // zero-length packet: the fault this guards.
+        let at = now();
         let flags = g.gintsts.read().bits() & (SOF | IISOIXFR);
         if flags == 0 {
             return;
@@ -315,9 +323,14 @@ pub(crate) mod door {
             // from this poll's context, never concurrently.
             // Only a capture packet past its own frame: in duplex the
             // feedback endpoint's misses raise the flag too (#973).
+            // Not told apart (ADR 0312): a poll held off past EOPF in the
+            // same frame, its SOF still pending, reads as one past the next
+            // SOF, so a real miss of that frame is taken for the one before
+            // and is not re-aimed; its packet keeps its parity and the next
+            // frame's flag re-aims it. DSTS, DIEPCTL and DIEPTSIZ say
+            // nothing finer than the frame and its parity.
             unsafe {
                 let v = p.read_volatile();
-                let at = now();
                 if uac::armed(v) && s.pacer.late(uac::missed(at, flags & SOF != 0)) {
                     p.write_volatile(uac::aim(v, at));
                     s.pacer.reaim(at.wrapping_add(1), &mut s.counts);

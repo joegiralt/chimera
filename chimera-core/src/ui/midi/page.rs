@@ -498,15 +498,10 @@ impl UiState {
         match layer_at {
             // A layer row: in the map on the card, by the next card work.
             // Refused while another job waits: said, as a save's is (#903).
-            Some(k) => {
-                if self.cc.ui().ctl.edit(p, k, e, n).is_ok() {
-                    self.cc.reset_part(p);
-                } else {
-                    self.error(crate::project::Line::new(
-                        chimera_hal::store::StoreError::Busy.message(),
-                    ));
-                }
-            }
+            Some(k) => match self.cc.ui().ctl.edit(p, k, e, n) {
+                Ok(()) => self.cc.reset_part(p),
+                Err(busy) => self.error(busy.into()),
+            },
             None => {
                 let mut m = map;
                 m.set(own_at, n);

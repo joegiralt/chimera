@@ -169,3 +169,73 @@ fn a_dropped_clock_never_moves_the_held_tempo() {
     }
     assert!(worst < 0.1, "held {worst} BPM off");
 }
+
+/// `ticks` (sample times) fed as a clock drained a block at a time: the
+/// held tempo in BPM after each, `None` before it settles.
+fn held_bpm(ticks: &[u64]) -> Vec<Option<f64>> {
+    use chimera_core::orbit::clock::MidiClock;
+    let sr = 48_000u64;
+    let mut m = MidiClock::new(NonZeroU32::new(sr as u32).unwrap());
+    ticks
+        .iter()
+        .map(|&t| {
+            assert!(m.tick(0, t / 64 * 64));
+            m.beat().map(|b| 60.0 * sr as f64 / f64::from(b))
+        })
+        .collect()
+}
+
+/// Clock times: `secs` at `from` BPM, then `secs` at `to`.
+fn stepped(from: f64, to: f64, secs: f64) -> (Vec<u64>, usize) {
+    let mut t = 0.0;
+    let mut v = vec![];
+    for bpm in [from, to] {
+        let dt = 48_000.0 * 60.0 / (bpm * 24.0);
+        for _ in 0..(secs * bpm * 24.0 / 60.0) as usize {
+            v.push(t as u64);
+            t += dt;
+        }
+    }
+    let at = (secs * from * 24.0 / 60.0) as usize;
+    (v, at)
+}
+
+/// A real step to half or twice the tempo is followed within two beats
+/// of the new one and held there, never taken for lost Clocks (every
+/// interval doubled is a slower clock, not a lost one).
+#[test]
+fn a_step_to_half_or_twice_the_tempo_is_followed() {
+    for (from, to) in [(120.0, 60.0), (125.0, 62.5), (60.0, 120.0)] {
+        let (ticks, at) = stepped(from, to, 20.0);
+        let held = held_bpm(&ticks);
+        let near = |b: Option<f64>| b.is_some_and(|b| (b - to).abs() < 0.01 * to);
+        let landed = (at..held.len())
+            .find(|&i| held[i..].iter().all(|&b| near(b)))
+            .unwrap_or_else(|| panic!("{from} → {to}: held at {:?}", held.last()));
+        assert!(
+            landed - at <= 2 * 24,
+            "{from} → {to}: {} ticks to follow",
+            landed - at
+        );
+        let end = held.last().unwrap().unwrap();
+        assert!((end - to).abs() < 0.05, "{from} → {to}: {end}");
+    }
+}
+
+/// Two Clocks lost in a row at a steady 120 BPM: one interval of three
+/// ticks, as isolated as one lost, and no tempo change either.
+#[test]
+fn two_dropped_clocks_in_a_row_never_move_the_held_tempo() {
+    let tick = 48_000u64 * 60 / (120 * 24);
+    let mut worst = 0.0f64;
+    for lost in 24 * 20..24 * 21 {
+        let ticks: Vec<u64> = (0..24 * 60u64)
+            .filter(|&n| n != lost && n != lost + 1)
+            .map(|n| n * tick)
+            .collect();
+        for b in held_bpm(&ticks)[24 * 8..].iter().flatten() {
+            worst = worst.max((b - 120.0).abs());
+        }
+    }
+    assert!(worst < 0.1, "held {worst} BPM off");
+}

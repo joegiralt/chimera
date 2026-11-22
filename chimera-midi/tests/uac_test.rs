@@ -397,3 +397,23 @@ fn a_reaimed_packet_is_owed_once_and_not_moved_again() {
     assert_eq!(c.missed, 2, "owed once");
     assert!(a.send > NOMINAL, "{a:?}");
 }
+
+/// `reaim` owes what `next` would for the same gap: moved from frame L to
+/// L + k, the k frames between went without, as `next` at L + k + 1 would
+/// count them; past `HIGH`'s worth (a stall) it owes nothing, as `next`
+/// owes nothing past it.
+#[test]
+fn reaim_owes_as_next_would() {
+    use chimera_midi::uac::{Counts, HIGH, NOMINAL, Pacer, TARGET};
+    let most = HIGH / NOMINAL - 1;
+    for k in [1, most, most + 1] {
+        let (mut by_reaim, mut by_next) = (Counts::default(), Counts::default());
+        let (mut a, mut b) = (Pacer::new(), Pacer::new());
+        let _ = a.next(2 * TARGET, 100, &mut by_reaim);
+        let _ = b.next(2 * TARGET, 100, &mut by_next);
+        a.reaim(100 + k as u16, &mut by_reaim);
+        let _ = a.next(2 * TARGET, 101 + k as u16, &mut by_reaim);
+        let _ = b.next(2 * TARGET, 101 + k as u16, &mut by_next);
+        assert_eq!(by_reaim.missed, by_next.missed, "moved {k}");
+    }
+}

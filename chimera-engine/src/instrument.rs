@@ -531,7 +531,7 @@ impl Route {
         if !sounding {
             *r = None;
         }
-        let r = r.get_or_insert(Route::on(to));
+        let r = r.get_or_insert_with(|| Route::on(to));
         if to != r.now {
             if r.left == 0 {
                 (r.was, r.now, r.left) = (r.now, to, GATE_BLOCKS);

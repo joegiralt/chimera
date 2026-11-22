@@ -103,12 +103,19 @@ impl Pacer {
     /// owed once, as `next` owes a gap, and `to` its frame now, so a later
     /// miss of another endpoint never moves it again.
     pub fn reaim(&mut self, to: u16, c: &mut Counts) {
-        let gap = usize::from(to.wrapping_sub(self.last) & FRAME_MASK);
-        if (1..=HIGH / NOMINAL).contains(&gap) {
-            c.missed = c.missed.wrapping_add(gap as u32);
-            self.owe += NOMINAL * gap;
-        }
+        // The gap `next` would see at the frame after `to`.
+        self.owed(usize::from(to.wrapping_sub(self.last) & FRAME_MASK) + 1, c);
         self.last = to;
+    }
+
+    /// A gap of `gap` frames since the last packet's: each frame skipped
+    /// owes a frame's worth; a frame again (re-aimed) or a stall past
+    /// `HIGH` owes nothing. `next`'s and `reaim`'s one rule.
+    fn owed(&mut self, gap: usize, c: &mut Counts) {
+        if (2..=HIGH / NOMINAL).contains(&gap) {
+            c.missed = c.missed.wrapping_add(gap as u32 - 1);
+            self.owe += NOMINAL * (gap - 1);
+        }
     }
 
     /// The stream stopped: the next starts by priming.
@@ -123,10 +130,7 @@ impl Pacer {
             // Each bus frame skipped owes a frame's worth; a frame again
             // (re-aimed) or a stall past `HIGH` owes nothing.
             let gap = usize::from(frame.wrapping_sub(self.last) & FRAME_MASK);
-            if (2..=HIGH / NOMINAL).contains(&gap) {
-                c.missed = c.missed.wrapping_add(gap as u32 - 1);
-                self.owe += NOMINAL * (gap - 1);
-            }
+            self.owed(gap, c);
         } else if fill < TARGET {
             return Next { skip: 0, send: 0 };
         } else {

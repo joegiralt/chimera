@@ -305,9 +305,7 @@ pub(crate) fn layer_edit(
     let took = ui.cc.ui().ctl.edit(p, i.index(), was, to);
     match took {
         Ok(()) => ui.cc.reset_part(p),
-        Err(super::midi::layer::Busy) => {
-            ui.error(Line::new(chimera_hal::store::StoreError::Busy.message()))
-        }
+        Err(busy) => ui.error(busy.into()),
     }
     took.is_ok()
 }
