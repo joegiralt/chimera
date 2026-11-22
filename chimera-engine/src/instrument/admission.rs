@@ -54,9 +54,30 @@ pub struct AdmitDoor {
     ) -> Option<(VoiceIdx, Option<Paid>)>,
     refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
     loop_extra: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Cost,
+    clear_room: fn(&Instrument) -> usize,
+    pre_clear: fn(&mut Instrument, usize, usize) -> usize,
+    ringing_kits: fn(&Instrument) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS],
 }
 
 impl AdmitDoor {
+    #[inline(always)]
+    pub(crate) fn clear_room(&self, i: &Instrument) -> usize {
+        (self.clear_room)(i)
+    }
+
+    #[inline(always)]
+    pub(crate) fn pre_clear(&self, i: &mut Instrument, v: usize, max: usize) -> usize {
+        (self.pre_clear)(i, v, max)
+    }
+
+    #[inline(always)]
+    pub(crate) fn ringing_kits(
+        &self,
+        i: &Instrument,
+    ) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS] {
+        (self.ringing_kits)(i)
+    }
+
     #[inline(always)]
     pub(crate) fn bill(
         &self,
@@ -113,7 +134,62 @@ impl Instrument {
         pick: Self::pick_streamed,
         refresh: Self::refresh_in,
         loop_extra: Self::loop_in,
+        clear_room: Self::clear_room_in,
+        pre_clear: Self::pre_clear_in,
+        ringing_kits: Self::ringing_kits_in,
     };
+
+    /// The bytes this block may clear in all (#306, ADR 0311), asked at
+    /// each clear: what is left of the deadline (the audio share over
+    /// `AUDIO_BUDGET_PERCENT`) once the bookings and the reserve as they
+    /// stand, a note more (`SYM_CLEAR_NOTE_MARGIN`, up to the budget), and
+    /// ADR 0262's overhead for each Part with a voice booked and one more
+    /// are spent, at the clear's rate; at most one worst note-on. At a
+    /// full pool rev V clears 7,680 B a block, rev Y 4,344 B.
+    fn clear_room_in(&self) -> usize {
+        use super::{
+            BLOCK_OVERHEAD, PART_OVERHEAD, SYM_CLEAR_BUDGET, SYM_CLEAR_CYCLES_PER_BYTE,
+            SYM_CLEAR_NOTE_MARGIN,
+        };
+        let budget = self.alloc.budget();
+        let now = self.alloc.sounding_cost() + self.reserved();
+        let booked = now.max((now + SYM_CLEAR_NOTE_MARGIN).min(budget.as_cost()));
+        let parts = self
+            .alloc
+            .slots()
+            .iter()
+            .filter_map(|s| s.part())
+            .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
+            .len();
+        let parts = (parts + 1).min(crate::hw::MAX_PARTS) as u32;
+        // A sample's cycles stay far under `u32::MAX / 100` at any clock.
+        let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
+        let used = booked
+            .0
+            .saturating_add(BLOCK_OVERHEAD.0 + PART_OVERHEAD.0 * parts);
+        let room = deadline.saturating_sub(used)
+            * (chimera_hal::BLOCK_SIZE as u32 / SYM_CLEAR_CYCLES_PER_BYTE);
+        (room as usize).min(SYM_CLEAR_BUDGET)
+    }
+
+    /// Up to `max` bytes of voice `v`'s waiting Sympathetic note's clear
+    /// done ahead (`Voice::sym_pre_clear`, inlined here): what it cleared.
+    fn pre_clear_in(&mut self, v: usize, max: usize) -> usize {
+        self.voices[v].sym_pre_clear(&mut self.sym, max)
+    }
+
+    /// Each Part's kit bill as published, with each ringing hit's struck
+    /// runs folded in (`KitBill::with`, #977).
+    fn ringing_kits_in(&self) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS] {
+        let mut kits = PartId::ALL.map(|p| crate::dsp::drum::view::KIT_VIEW.bill(p));
+        for (v, p) in self.voices.iter().zip(&self.sounding) {
+            if let (Some(r), Some(p)) = (v.drum_runs(), p) {
+                let k = &mut kits[p.index()];
+                *k = k.with(r);
+            }
+        }
+        kits
+    }
 
     /// What key `key`'s note `note` on Part `p`, reading `source`, asks of
     /// the card (slice 1 § 5.5): its bill at the fastest it can read, from

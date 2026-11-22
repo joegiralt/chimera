@@ -163,3 +163,37 @@ fn door_check_refuses_no_relocs() {
 fn door_check_refuses_garbage() {
     assert!(bank2::door_hits(b"not an elf").is_err());
 }
+
+/// ADR 0320's door layout against the old one: two bank-2 bodies that
+/// differ only where the board's table sits (0x100 after the door, then
+/// 0x180). Each half sealed for one layout refuses the other both ways:
+/// the old `.bk2` with the new bank 1 judges `Stale` (the UI's NEEDS
+/// UPDATE), and the new `.bk2` with the old bank 1 never opens.
+#[test]
+fn a_bank2_sealed_for_another_door_layout_is_stale_both_ways() {
+    let layout = |board: usize| {
+        let (mut bin, mut bk2) = fake();
+        // The board's table: its first word at its slot after the door.
+        let at = 256 + 256 + board;
+        bk2[at..at + 4].copy_from_slice(&0xB0A2_D000u32.to_le_bytes());
+        let seal = bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").unwrap();
+        (bin, bk2, seal)
+    };
+    let (old_bin, old_bk2, old_seal) = layout(0x100);
+    let (new_bin, new_bk2, new_seal) = layout(0x180);
+    assert_ne!(old_seal, new_seal);
+    assert!(matches!(
+        judge(&mut Img(old_bk2.clone()), &new_seal),
+        Verdict::Stale { .. }
+    ));
+    assert!(matches!(
+        judge(&mut Img(new_bk2.clone()), &old_seal),
+        Verdict::Stale { .. }
+    ));
+    assert!(bank2::check_pair(&new_bin, &old_bk2).is_err());
+    assert!(bank2::check_pair(&old_bin, &new_bk2).is_err());
+    assert!(matches!(
+        judge(&mut Img(new_bk2), &new_seal),
+        Verdict::Good(_)
+    ));
+}

@@ -753,6 +753,8 @@ impl Voice {
     /// Up to `max` bytes of a waiting Sympathetic note's clear done ahead
     /// (`SymPool::pre_clear`): its lines only while the voice is idle, the
     /// set it will ring at any time. What it cleared.
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
     pub fn sym_pre_clear(&mut self, pool: &mut SymPool, max: usize) -> usize {
         let engine = match &mut self.slot {
             EngineSlot::Modal(m) if !self.active => Some(&mut **m),
@@ -827,6 +829,8 @@ impl Voice {
 
     /// What the hit its DRUM slot sounds runs, for its Part's kit bill
     /// (`DrumEngine::runs`, #977).
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
     pub fn drum_runs(&self) -> Option<crate::dsp::drum::sound::Runs> {
         match &self.slot {
             EngineSlot::Drum(d) if self.active => d.runs(),

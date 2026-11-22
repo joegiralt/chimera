@@ -466,9 +466,9 @@ impl DrumEngine {
     /// What the hit runs, for its Part's kit bill (#977): the shape it
     /// was struck on, a filter route moving where its amounts are or
     /// glide to, the mods and AMP envelope it struck with, its gate where
-    /// it is or glides to.
-    #[inline(never)]
-    #[optimize(size)]
+    /// it is or glides to. Inlined into its one caller, bank 2's
+    /// (`AdmitDoor::ringing_kits`, ADR 0320).
+    #[inline(always)]
     pub fn runs(&self) -> Option<Runs> {
         let s = self.hit.as_ref()?.sound();
         let t = &self.follow.target;

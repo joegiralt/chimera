@@ -283,7 +283,8 @@ impl KsString {
     /// it wrote. The line comes to rest as `clear` leaves one (the
     /// shortest ring from the start), so it is silent above `dirty`
     /// whatever plays it next, and its note's `clear` writes the rest.
-    #[optimize(size)]
+    /// Inlined into its one caller, bank 2's (ADR 0320).
+    #[inline(always)]
     pub(super) fn clear_some(&mut self, max: usize) -> usize {
         let n = (max / size_of::<f32>()).min(self.dirty);
         let to = self.dirty - n;

@@ -2233,7 +2233,7 @@ impl Instrument {
         if bytes > avail {
             // The block's room clears its lines ahead; it waits for the
             // rest (#306).
-            let done = self.voices[v].sym_pre_clear(&mut self.sym, avail);
+            let done = Self::admission(|d| d.pre_clear(self, v, avail)).unwrap_or(0);
             self.clear_left -= done;
             self.clear_backlog = true;
             return false;
@@ -2358,50 +2358,18 @@ impl Instrument {
             .min(self.clear_left)
     }
 
-    /// The bytes this block may clear in all (#306, ADR 0311), asked at
-    /// each clear: what is left of the deadline (the audio share over
-    /// `AUDIO_BUDGET_PERCENT`) once the bookings and the reserve as they
-    /// stand, a note more (`SYM_CLEAR_NOTE_MARGIN`, up to the budget), and
-    /// ADR 0262's overhead for each Part with a voice booked and one more
-    /// are spent, at the clear's rate; at most one worst note-on. At a
-    /// full pool rev V clears 7,680 B a block, rev Y 4,344 B.
-    #[inline(never)]
-    #[optimize(size)]
+    /// The bytes this block may clear in all (`AdmitDoor::clear_room`,
+    /// bank 2's): one worst note-on with the door closed, as before.
     fn clear_room(&self) -> usize {
-        let budget = self.alloc.budget();
-        let now = self.alloc.sounding_cost() + self.reserved();
-        let booked = now.max((now + SYM_CLEAR_NOTE_MARGIN).min(budget.as_cost()));
-        let parts = self
-            .alloc
-            .slots()
-            .iter()
-            .filter_map(|s| s.part())
-            .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
-            .len();
-        let parts = (parts + 1).min(crate::hw::MAX_PARTS) as u32;
-        // A sample's cycles stay far under `u32::MAX / 100` at any clock.
-        let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
-        let used = booked
-            .0
-            .saturating_add(BLOCK_OVERHEAD.0 + PART_OVERHEAD.0 * parts);
-        let room = deadline.saturating_sub(used)
-            * (chimera_hal::BLOCK_SIZE as u32 / SYM_CLEAR_CYCLES_PER_BYTE);
-        (room as usize).min(SYM_CLEAR_BUDGET)
+        Self::admission(|d| d.clear_room(self)).unwrap_or(SYM_CLEAR_BUDGET)
     }
 
-    /// Each Part's kit bill as published, with each ringing hit's struck
-    /// runs folded in (`KitBill::with`, #977). Out of line: bank 1's.
-    #[inline(never)]
-    #[optimize(size)]
+    /// Each Part's kit bill with each ringing hit's runs folded in
+    /// (`AdmitDoor::ringing_kits`, bank 2's, #977); the kits as published
+    /// with the door closed.
     fn ringing_kits(&self) -> [KitBill; MAX_PARTS] {
-        let mut kits = PartId::ALL.map(|p| KIT_VIEW.bill(p));
-        for (v, p) in self.voices.iter().zip(&self.sounding) {
-            if let (Some(r), Some(p)) = (v.drum_runs(), p) {
-                let k = &mut kits[p.index()];
-                *k = k.with(r);
-            }
-        }
-        kits
+        Self::admission(|d| d.ringing_kits(self))
+            .unwrap_or_else(|| PartId::ALL.map(|p| KIT_VIEW.bill(p)))
     }
 
     /// A new formant note's reach on Part `p` (`HighNote::bill`, the
