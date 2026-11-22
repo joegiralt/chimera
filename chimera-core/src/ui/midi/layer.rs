@@ -639,19 +639,19 @@ mod tests {
             span: crate::midi_map::Span { min: 9, max: 255 },
             ..a
         };
-        assert!(l.edit(p, 0, a, a2));
+        assert_eq!(l.edit(p, 0, a, a2), Ok(()));
         let b2 = Binding {
             span: crate::midi_map::Span { min: 7, max: 255 },
             ..b
         };
-        assert!(!l.edit(p, 1, b, b2), "another row's edit waits");
+        assert_eq!(l.edit(p, 1, b, b2), Err(Busy), "another row's edit waits");
         assert_eq!(l.layers[0].entries(), &[a2, b]);
         // The first row again: merged, from the card's row.
         let a3 = Binding {
             span: crate::midi_map::Span { min: 3, max: 255 },
             ..a
         };
-        assert!(l.edit(p, 0, a2, a3));
+        assert_eq!(l.edit(p, 0, a2, a3), Ok(()));
         assert!(matches!(l.job, Some(CtlJob::Edit(_, x, y)) if x == a && y == a3));
     }
 }
