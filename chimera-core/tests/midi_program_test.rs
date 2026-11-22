@@ -396,3 +396,27 @@ fn a_program_change_to_another_engine_redraws_the_strip() {
         );
     }
 }
+
+/// #1068: an engine change from the box (an INIT load from the browser)
+/// redraws the strip as a program change does.
+#[test]
+fn a_browser_load_of_another_engine_redraws_the_strip() {
+    let draw = |ui: &mut UiState, fb: &mut screen::Fb| {
+        ui.render_dirty_with_audio(
+            fb,
+            &chimera_core::ui::perf::PerfStats::zero(),
+            Some(&screen::audio_fixture()),
+            &screen::scope_fixture(),
+        );
+    };
+    // From ALGO's pages, a fresh UI's, each time.
+    for e in [EngineType::Va, EngineType::Modal, EngineType::Drum] {
+        let mut ui = Box::new(screen::stack_ui());
+        let mut fb = screen::Fb::new();
+        draw(&mut ui, &mut fb);
+        screen::load_init(&mut ui, e);
+        screen::settle(&mut ui);
+        draw(&mut ui, &mut fb);
+        assert!(fb.hash() == screen::render_ui(&ui).hash(), "{e:?}: stale");
+    }
+}
