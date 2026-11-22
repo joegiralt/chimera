@@ -2225,6 +2225,14 @@ impl Instrument {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
+        if self.voices[v].is_active() {
+            // A glide steal on a sounding voice clears only its rings'
+            // growth and must not wait (a wait drops it out): it spends
+            // the room without pacing (ADR 0311's limit).
+            let bytes = self.voices[v].sym_note_on_clear(&self.sym, note, params);
+            self.clear_left = self.clear_left.saturating_sub(bytes);
+            return true;
+        }
         if self.clear_backlog {
             return false;
         }
