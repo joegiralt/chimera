@@ -1034,6 +1034,31 @@ mod console_edits {
         }
     }
 
+    /// `rm` then `put` of another Sound under the same id and name between
+    /// listing and EDIT: the put restarts the pair, and its first
+    /// generation is no longer 1 for every fresh file, so the witness
+    /// still tells the files apart (#455): FILE CHANGED, nothing loaded.
+    #[test]
+    fn a_console_rm_then_put_under_the_same_name_never_loads() {
+        let mut r = Rig::new();
+        let old = factory_sound(0);
+        let mut new = factory_sound(1);
+        new.name = old.name;
+        let id = r.library_with(&old);
+        r.open_library();
+        r.work();
+        let rm = format!(
+            "rm /CHIMERA/SOUNDS/{}\n",
+            std::str::from_utf8(&id.stem()).unwrap()
+        );
+        assert_eq!(r.console(&rm, b"", false), "OK\n");
+        assert_eq!(r.put_over(id, &stamped(&new), false), "READY\nOK\n");
+        r.press(ButtonId::Edit);
+        r.work();
+        assert_eq!(r.toast(), "FILE CHANGED");
+        loaded_neither(&r, &old, &new);
+    }
+
     #[test]
     fn a_console_put_over_after_listing_never_loads_the_other_sound() {
         let mut r = Rig::new();

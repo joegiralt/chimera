@@ -187,8 +187,8 @@ fn clear_of_the_loaded_file_is_refused() {
     same(&a, &q);
 }
 
-/// A pair deleted and made again at the same id starts at the same
-/// generation: the name tells them apart.
+/// A pair deleted and made again at the same id starts at another
+/// generation (#455): the witness tells them apart by it, and by the name.
 #[test]
 fn a_file_made_again_at_the_same_id_refuses_a_stale_confirmation() {
     let mut s = MemStore::new(1);
@@ -206,7 +206,7 @@ fn a_file_made_again_at_the_same_id_refuses_a_stale_confirmation() {
     let (mut bar, _) = Project::boxed();
     bar.set_name(name("BAR"));
     assert_eq!(save_new(&mut card, &mut s, &mut bar), id, "the same id");
-    assert_eq!(entry(&mut card, &mut s, id).generation, e.generation);
+    assert_ne!(entry(&mut card, &mut s, id).generation, e.generation);
     let moved = ProjectNote::FileChanged(Subject::Name(name("BAR")));
     assert_eq!(
         delete_project(&mut card, &mut s, &other, stale_del).out,
