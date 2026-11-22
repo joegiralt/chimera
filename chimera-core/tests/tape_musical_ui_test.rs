@@ -250,11 +250,11 @@ fn fade_steps_aside_for_amp_release() {
     let mut one = sound_on(Way::One);
     one.params.tape.drag = 0.5;
     assert_eq!(
-        view::band_note(tape(P::DRAG), &one, src),
+        view::band_note(Some(tape(P::DRAG)), &one, src),
         Some(view::FADE_HOLD_ONLY)
     );
     one.params.tape.drag = chimera_core::dsp::tape_engine::FADE_HOLD;
-    assert_eq!(view::band_note(tape(P::DRAG), &one, src), None);
+    assert_eq!(view::band_note(Some(tape(P::DRAG)), &one, src), None);
     fits_band(view::FADE_HOLD_ONLY);
     // No route into VCA: the key gates the voice, and FADE releases it.
     let mut s = sound_on(Way::Loop);
@@ -276,11 +276,18 @@ fn streamed_xfade_says_its_cap() {
     let streamed = ram.streaming(false);
     let x = tape(P::XFADE);
     // XFADE 0.1 of a 30 s loop asks 3 s: the loop head holds 100 ms.
-    assert_eq!(view::band_note(x, &s, streamed), Some(view::XFADE_CAPPED));
-    assert_eq!(view::band_note(x, &s, ram), None, "RAM holds any fade");
+    assert_eq!(
+        view::band_note(Some(x), &s, streamed),
+        Some(view::XFADE_CAPPED)
+    );
+    assert_eq!(
+        view::band_note(Some(x), &s, ram),
+        None,
+        "RAM holds any fade"
+    );
     let mut short = s.clone();
     short.params.tape.xfade = 0.003; // 90 ms
-    assert_eq!(view::band_note(x, &short, streamed), None);
+    assert_eq!(view::band_note(Some(x), &short, streamed), None);
     fits_band(view::XFADE_CAPPED);
     // On the page: the band says it where the hint goes.
     let mut ui = streamed_ui();
