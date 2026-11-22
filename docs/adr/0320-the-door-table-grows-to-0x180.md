@@ -6,7 +6,7 @@
 ## Context
 Bank 1 is frozen (ADR 0198): new work goes to bank 2 behind doors, and bank 1 keeps only door stubs. Batch E (ADR 0311) added three pieces of real-time code: SYMP's clear pacing (`SymPool::pre_clear`, `KsString::clear_some`, the block's clear room) and the ringing-hit DRUM fold (`DrumEngine::runs`, `Instrument::ringing_kits`). That came to about 1.25 KB of bank 1.
 
-Moving them behind a door failed to link. The door's table (`Bank2Door`) sits at 0x08100100, right after bank 2's 256-byte header. ORBIT's build already filled its 0x100 of room (256 B; 248 B without ORBIT). The board's table follows at a fixed 0x100, so `bank2.rs`'s size assert refused even one more entry. ADR 0283 had already gone round a full table once, by heading the S4 groups with new tables.
+Moving them behind a door failed to link. The door's table (`Bank2Door`) sits at 0x08100100, right after bank 2's 256-byte header. ORBIT's build already filled its 0x100 of room (256 B; 240 B without ORBIT). The board's table follows at a fixed 0x100, so `bank2.rs`'s size assert refused even one more entry. ADR 0283 had already gone round a full table once, by heading the S4 groups with new tables.
 
 ## Decision
 - **The table's room is 0x180** (`bank2::DOOR_ROOM`), up from 0x100. ORBIT's table is 268 B with batch E's three entries, which leaves room for about 29 more. A second assert keeps eight entries of headroom (`size_of::<Bank2Door>() + 32 <= DOOR_ROOM`), so the next growth asks for the next layout change before the link fails.

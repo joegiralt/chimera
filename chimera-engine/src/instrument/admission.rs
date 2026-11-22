@@ -141,19 +141,19 @@ impl Instrument {
 
     /// The bytes this block may clear in all (#306, ADR 0311), asked at
     /// each clear: what is left of the deadline (the audio share over
-    /// `AUDIO_BUDGET_PERCENT`) once the bookings and the reserve as they
-    /// stand, a note more (`SYM_CLEAR_NOTE_MARGIN`, up to the budget), and
-    /// ADR 0262's overhead for each Part with a voice booked and one more
-    /// are spent, at the clear's rate; at most one worst note-on. At a
-    /// full pool rev V clears 7,680 B a block, rev Y 4,344 B.
+    /// `AUDIO_BUDGET_PERCENT`) once the bookings and the reserve and ADR
+    /// 0262's overhead for each Part with a voice booked are spent, at the
+    /// clear's rate; at most one worst note-on. Every clear runs at the
+    /// render, after the block's note-ons have all booked (`Plays::Strike`),
+    /// so the bookings are the block's. At a full pool with six Parts rev V
+    /// clears 7,680 B a block, rev Y 4,344 B; a light pool clears more.
     fn clear_room_in(&self) -> usize {
-        use super::{
-            BLOCK_OVERHEAD, PART_OVERHEAD, SYM_CLEAR_BUDGET, SYM_CLEAR_CYCLES_PER_BYTE,
-            SYM_CLEAR_NOTE_MARGIN,
-        };
+        use super::{BLOCK_OVERHEAD, PART_OVERHEAD, SYM_CLEAR_BUDGET, SYM_CLEAR_CYCLES_PER_BYTE};
         let budget = self.alloc.budget();
         let now = self.alloc.sounding_cost() + self.reserved();
-        let booked = now.max((now + SYM_CLEAR_NOTE_MARGIN).min(budget.as_cost()));
+        // Judged at the render, after every note-on of the block has
+        // booked (`Plays::Strike`, ADR 0311): the bookings as they stand.
+        let booked = now;
         let parts = self
             .alloc
             .slots()
@@ -161,7 +161,7 @@ impl Instrument {
             .filter_map(|s| s.part())
             .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
             .len();
-        let parts = (parts + 1).min(crate::hw::MAX_PARTS) as u32;
+        let parts = parts as u32;
         // A sample's cycles stay far under `u32::MAX / 100` at any clock.
         let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
         let used = booked

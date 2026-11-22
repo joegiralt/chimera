@@ -37,6 +37,21 @@ impl Rig {
     /// Rev V's budget, Part 1 capped by its MAX VOICES (`part`, `cap`):
     /// a note past the cap steals its own. A Part's cap, not a starved budget: the clear
     /// room is a real chip's (ADR 0311).
+    /// A budget with room for one voice of Part 1's Sound beside the bus
+    /// and two Parts' knobs: a note of any Part steals.
+    fn starved(shared: &AudioShared) -> Self {
+        use chimera_core::dsp::fx_bus::FxBus;
+        use chimera_core::dsp::knobs::Knobs;
+        use chimera_core::dsp::lfo::LfoClock;
+        let p = &shared.parts[0];
+        let cost = chimera_core::dsp::voice::Voice::cost(&p.params, &p.mod_state).0;
+        let reserved = FxBus::COST.0 + Knobs::RESERVE.0 + LfoClock::RESERVE.0;
+        let need = (reserved + cost + 2 * Knobs::COST.0) as u64;
+        Self::with_budget(SampleBudget::for_cpu(
+            (need * 4_800_000).div_ceil(chimera_core::hw::AUDIO_BUDGET_PERCENT as u64) as u32,
+        ))
+    }
+
     fn capped() -> Self {
         Self::with_budget(SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V))
     }
@@ -244,7 +259,9 @@ fn another_parts_steal_cuts() {
     let mut shared = part(EngineType::Modal, Some(ResonatorMode::String), Steal::Glide);
     *shared.parts[1].params = (*shared.parts[0].params).clone();
     shared.parts[1].mix.channel = MidiChannel::new(1).unwrap();
-    let mut rig = Rig::capped();
+    // Room for one STRING voice in all (STRING clears nothing to pace):
+    // Part 2's note can only take Part 1's.
+    let mut rig = Rig::starved(&shared);
     let (mut out, mut ratios) = (Vec::new(), Vec::new());
     rig.inst.handle(on(0, C3), &shared);
     rig.run(&shared, 40, &mut out, &mut ratios);
@@ -257,6 +274,11 @@ fn another_parts_steal_cuts() {
     assert!(
         s.iter().any(|s| s.part() == Some(PartId::ALL[1])),
         "Part 2 took the voice"
+    );
+    assert_eq!(
+        s.iter().filter(|s| !s.is_free()).count(),
+        1,
+        "one voice in all: Part 2's note stole Part 1's"
     );
 }
 

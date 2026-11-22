@@ -417,6 +417,11 @@ struct Waiting {
 enum Plays {
     Note,
     Hit,
+    /// A Sympathetic note on its sounding voice (a re-strike, a glide
+    /// steal, a CUT): struck at the block's render, after every note-on of
+    /// the block has booked, so its clear is judged against the bookings
+    /// as they stand (#306, ADR 0311). One that can't is faded and waits.
+    Strike,
 }
 
 /// What admission paid for a streamed note (slice 1 § 5.5): its bill,
@@ -889,11 +894,6 @@ pub const SYM_CLEAR_CYCLES_PER_BYTE: u32 = 8;
 /// with a voice booked.
 pub const BLOCK_OVERHEAD: Cost = Cost(160);
 pub const PART_OVERHEAD: Cost = Cost(230);
-
-/// A note more the block may book after a clear is judged, cycles a
-/// sample: about the costliest voice (A16+17 915 and its chain), so the
-/// clear leaves it room. ORBIT's burst is in the reserve already.
-pub const SYM_CLEAR_NOTE_MARGIN: Cost = Cost(1_000);
 
 crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });
 
@@ -1528,10 +1528,18 @@ impl Instrument {
                     // Sympathetic starts now only if the block's clear
                     // budget takes it and no note waits on it before; else
                     // it waits, as a steal does (spec § 4.8).
-                    let deferred = !waits
-                        && SlotKind::of(&part.params) == SYMPATHETIC
-                        && !(self.voices[v].starts_now(&part.params, &self.sym)
-                            && self.admit(v, &part.params, note));
+                    // It is judged at the block's render, after every
+                    // note-on of the block has booked (ADR 0311): on its
+                    // sounding voice as a pending strike, on an idle one as
+                    // a waiting note; a stale engine fades out first.
+                    let sym = !waits && SlotKind::of(&part.params) == SYMPATHETIC;
+                    let starts = sym && self.voices[v].starts_now(&part.params, &self.sym);
+                    let deferred = sym && !starts;
+                    let pending = starts.then_some(if self.voices[v].is_active() {
+                        Plays::Strike
+                    } else {
+                        Plays::Note
+                    });
                     #[cfg(feature = "probe")]
                     let t2 = crate::probe::now();
                     #[cfg(feature = "probe")]
@@ -1548,6 +1556,13 @@ impl Instrument {
                             plays: Plays::Note,
                         });
                         voice.kill()
+                    } else if let Some(plays) = pending {
+                        self.waiting[v] = Some(Waiting {
+                            vel,
+                            source: part.source,
+                            plays,
+                        });
+                        false
                     } else {
                         self.sounding[v] = Some(q);
                         let base = CtxBase {
@@ -1989,7 +2004,8 @@ impl Instrument {
         let mut n = 0;
         for vi in VoiceIdx::ALL {
             let v = vi.index();
-            if !self.voices[v].is_active() && self.waiting[v].is_some() {
+            let strike = self.waiting[v].is_some_and(|w| w.plays == Plays::Strike);
+            if strike || (!self.voices[v].is_active() && self.waiting[v].is_some()) {
                 queue[n] = (self.alloc.slot(vi).age(), vi);
                 n += 1;
             }
@@ -2023,6 +2039,9 @@ impl Instrument {
     ) -> bool {
         let v = vi.index();
         let params = &shared.parts[q.index()].params;
+        if w.plays == Plays::Strike {
+            return self.start_strike(vi, (w, q, note, held), shared, src, ports);
+        }
         let hit = w.plays == Plays::Hit;
         if hit != (params.engine() == EngineType::Drum) {
             self.alloc.kill(vi);
@@ -2058,6 +2077,51 @@ impl Instrument {
             src,
             part: q,
             tune: self.tune + to,
+        };
+        ports.ctx(base, vi, port, |ctx| {
+            let _ = voice.note_on(note, w.vel, params, w.source, ctx);
+            if !held {
+                voice.note_off(ctx);
+            }
+        });
+        true
+    }
+
+    /// A pending Sympathetic strike on voice `v`'s sounding engine,
+    /// `start`'s (ADR 0311): judged against the block's bookings as they
+    /// stand, it strikes in place at the tuning its note-on set; one that
+    /// doesn't fit, or whose engine went stale, fades out and waits as a
+    /// note. Whether it started.
+    #[inline(never)]
+    fn start_strike<P: VoicePorts>(
+        &mut self,
+        vi: VoiceIdx,
+        (w, q, note, held): (Waiting, PartId, MidiNote, bool),
+        shared: &AudioShared,
+        src: &GateView<'_>,
+        ports: &mut P,
+    ) -> bool {
+        let v = vi.index();
+        let params = &shared.parts[q.index()].params;
+        let starts = SlotKind::of(params) == SYMPATHETIC
+            && self.voices[v].is_active()
+            && self.voices[v].starts_now(params, &self.sym);
+        if !(starts && self.admit(v, params, note)) {
+            self.waiting[v] = Some(Waiting {
+                plays: Plays::Note,
+                ..w
+            });
+            let _ = self.voices[v].kill();
+            return false;
+        }
+        self.sounding[v] = Some(q);
+        let port = self.port_of(v);
+        let voice = &mut self.voices[v];
+        let base = CtxBase {
+            sym: &mut self.sym,
+            src,
+            part: q,
+            tune: self.tune + self.tuned.now(v),
         };
         ports.ctx(base, vi, port, |ctx| {
             let _ = voice.note_on(note, w.vel, params, w.source, ctx);
@@ -2493,7 +2557,8 @@ impl Instrument {
                 .note()
                 .map(|n| KIT_VIEW.hit(id, n).bill(self.sample_rate)),
             Some(Waiting {
-                plays: Plays::Note, ..
+                plays: Plays::Note | Plays::Strike,
+                ..
             }) => None,
             None => self.voices[w]
                 .drum_bill()

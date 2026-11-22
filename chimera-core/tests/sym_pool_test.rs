@@ -1215,12 +1215,16 @@ fn alone5(n: u8, blocks: usize) -> Vec<Bits> {
 #[test]
 fn a_flood_mid_clear_keeps_the_books_and_the_deadline() {
     let mut s = mid_clear();
+    let refused = s.inst.allocator().refused();
     for k in 0..12u8 {
         s.on(usize::from(k % 4), 40 + k);
     }
     under_deadline(&mut s, 16, "flood");
-    if let Some(got) = heard(&mut s, 16, 32) {
-        assert_eq!(got, alone5(0, 16));
+    // Its voice stolen, the waiting note is dropped unheard and counted
+    // (ADR 0027); kept, it starts and sounds as alone.
+    match heard(&mut s, 16, 32) {
+        Some(got) => assert_eq!(got, alone5(0, 16)),
+        None => assert!(s.inst.allocator().refused() > refused, "dropped, counted"),
     }
 }
 
@@ -1234,7 +1238,54 @@ fn a_slot_handed_on_mid_clear_carries_nothing() {
     s.on(4, 12);
     let got = heard(&mut s, 16, 48).expect("a note sounds");
     assert!(
-        got == alone5(12, 16) || got[..1] == alone5(0, 1)[..],
-        "what starts sounds as alone"
+        got == alone5(12, 16) || got == alone5(0, 16),
+        "what starts sounds as alone, every block"
     );
+}
+
+/// The review's probe (#1080 round 3, C1′): Part 5's slot dirty to MIDI 0,
+/// then in one block its note-on and seven ALGO notes after it. The clear
+/// is judged before those notes book, so its room must already allow for
+/// a pool at its budget: no block passes its deadline.
+#[test]
+fn notes_booked_after_a_clear_in_the_same_block_keep_the_deadline() {
+    let mut parts = vec![(ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly); 4];
+    parts.push((sym(), PartMode::Poly));
+    let mut s = Stage::with_budget(&parts, SampleBudget::for_cpu(CPU_HZ_REV_V));
+    short_part(&mut s, 4);
+    s.on(4, 0);
+    for _ in 0..4 {
+        s.block();
+    }
+    s.off(4, 0);
+    s.until_idle(50);
+    let _ = take_cleared_bytes();
+    s.on(4, 0);
+    for k in 0..7u8 {
+        s.on(usize::from(k % 4), 60 + k);
+    }
+    under_deadline(&mut s, 16, "SYMP then 7 ALGO in one block");
+}
+
+/// A mono Sympathetic Part holding a high note on a light pool, then in
+/// one block a STEAL GLIDE down to MIDI 0 and a chord of seven ALGO notes
+/// after it: the glide's growth is judged at the render, against the
+/// bookings the chord made, so no block passes its deadline (ADR 0311).
+#[test]
+fn a_glide_steal_then_a_chord_in_one_block_keeps_the_deadline() {
+    let mut p = sym();
+    p.pitch.steal = Steal::Glide;
+    let mut parts = vec![(ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly); 4];
+    parts.push((p, PartMode::Mono));
+    let mut s = Stage::with_budget(&parts, SampleBudget::for_cpu(CPU_HZ_REV_V));
+    s.on(4, 96);
+    for _ in 0..24 {
+        s.block();
+    }
+    let _ = take_cleared_bytes();
+    s.on(4, 0);
+    for k in 0..7u8 {
+        s.on(usize::from(k % 4), 60 + k);
+    }
+    under_deadline(&mut s, 16, "GLIDE 96 → 0, then 7 ALGO, one block");
 }
