@@ -1186,3 +1186,26 @@ fn an_old_files_live_loads_as_stored() {
     assert_eq!(*q.orbit().scene(S[0]), Scene::init());
     assert_eq!(q.orbit().live().chords.tonic, PitchClass::G);
 }
+
+/// One rule for every lossy decode (#318, ADR 0312): a Part's Sound read
+/// leniently (here a FILTER entry this firmware doesn't know, skipped)
+/// reads Modified as a lossy ORBIT record does, never Saved: a save would
+/// write other bytes.
+#[test]
+fn a_leniently_read_sound_reads_modified() {
+    use chimera_core::addr::BlockRef;
+    use chimera_core::project::ProjectStatus::Modified;
+    let p = fixture_project();
+    let filter = BlockRef::Filter.disk_code().unwrap();
+    let f = edited(&p, |r| {
+        let part = find(r, RecordTag::Part, &[]);
+        let i = part
+            + r[part..]
+                .iter()
+                .position(|(t, b)| *t == RecordTag::Block.code() && b.first() == Some(&filter))
+                .expect("Part 1's FILTER");
+        r[i].1.extend_from_slice(&[250, 0, 0, 0, 0]);
+    });
+    assert!(loaded_lossy(&f).1, "an entry skipped");
+    assert_eq!(status_after_load(&f), [Modified; 2]);
+}
