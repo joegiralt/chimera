@@ -581,7 +581,7 @@ fn src_reads_states() {
     );
     assert_eq!(
         text(state(TapeModel::Transwave, Some(r))),
-        "NOT A TRANSWAVE / NO WAVE"
+        "NEEDS A WAVE TABLE / NO WAVE"
     );
     let gone = SourceRef { crc: 1, ..r };
     assert_eq!(
@@ -975,4 +975,24 @@ fn readout_names_in_full() {
     let mut ui = ui_at_deck();
     feed(&mut ui, Input::turn(EncoderId::A, 1)); // MODEL: WALK → STRETCH
     assert!(cell_reads(&render_ui(&ui), 0, "STRCH"));
+}
+
+/// #709: a source WAVE can't play says what it needs in the band and what
+/// to do in the hint's place, each inside the band.
+#[test]
+fn a_source_wave_cant_play_says_what_to_do() {
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::fmt::FmtBuf;
+    use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, FONT_VALUE, LABEL_TRACKING};
+    use chimera_core::ui::view::{SourceState, View, source_note};
+    let mut band = FmtBuf::new();
+    SourceState::NotTranswave.text(&mut band);
+    assert_eq!(band.as_str(), "NEEDS A WAVE TABLE");
+    let w = text_width(&FONT_VALUE, band.as_str(), LABEL_TRACKING);
+    assert!(w <= CONTENT_W, "band {w}px over {CONTENT_W}");
+    let note = source_note(&View::Source(SourceState::NotTranswave)).expect("a hint");
+    assert!(note.contains("TURN SOURCE"), "{note}");
+    let w = text_width(&FONT_LABEL, note, LABEL_TRACKING);
+    assert!(w <= CONTENT_W, "hint {w}px over {CONTENT_W}");
+    assert_eq!(source_note(&View::Source(SourceState::None)), None);
 }

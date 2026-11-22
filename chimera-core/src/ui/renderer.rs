@@ -1023,7 +1023,8 @@ impl Renderer {
             .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
             .or(tuning.as_ref().map(|l| l.as_str()))
             .or(tonal.as_ref().map(|l| l.as_str()))
-            .or_else(|| view::clash_note(&view, &f.ctx));
+            .or_else(|| view::clash_note(&view, &f.ctx))
+            .or_else(|| view::source_note(&view));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
                 let why = crate::ui::held::reason(s.why);

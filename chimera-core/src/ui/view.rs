@@ -528,7 +528,7 @@ impl SourceState {
             SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
             SourceState::Absent(Absence::NeedsRam(r)) => crate::ui::source_cell::refusal_words(r),
             SourceState::Damaged => crate::ui::source_cell::FILE_DAMAGED,
-            SourceState::NotTranswave => "NOT A TRANSWAVE",
+            SourceState::NotTranswave => "NEEDS A WAVE TABLE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
             SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
             SourceState::Failed(w) => w.words(),
@@ -1149,6 +1149,14 @@ pub fn clash_note(v: &View, ctx: &SlotCtx) -> Option<&'static str> {
     }
     crate::ui::cc::clash_note(v.addr()?, ctx.clash)
 }
+
+/// What to do about a SOURCE that won't play, in the hint's place (#709).
+pub fn source_note(v: &View) -> Option<&'static str> {
+    matches!(v, View::Source(SourceState::NotTranswave)).then_some(TURN_TO_A_WAVE)
+}
+
+/// WAVE on a source that isn't a wave table: what to do.
+pub const TURN_TO_A_WAVE: &str = "TURN SOURCE TO A WAVE TABLE";
 
 /// SETTINGS › TUNING's TUNING cell.
 pub const TUNING: ParamAddr = ParamAddr::new(BlockRef::Part, crate::part::PartParams::TUNING);
