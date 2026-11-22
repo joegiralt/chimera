@@ -558,7 +558,21 @@ impl Cursor {
                 self.state = Flow::Quiet;
                 self.gain.step = self.gain.step.min(-step);
             }
-            (None, true) => self.cold(port),
+            // Released: on from the head, as a start there would, if tape
+            // time is still inside it, rising over `DROP_FADE` (#608).
+            (None, true) => {
+                let file = self.file();
+                match self
+                    .head
+                    .filter(|&h| head_span(h, file).is_some_and(|s| s.holds(i0)))
+                {
+                    Some(h) => {
+                        self.state = Flow::Head(h.idx);
+                        self.gain.step = DROP_STEP;
+                    }
+                    None => self.cold(port),
+                }
+            }
             _ => {}
         }
         let quiet = hushed.is_some();

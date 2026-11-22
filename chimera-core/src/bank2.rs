@@ -649,15 +649,16 @@ const UI_SLOT: DoorSlot<UiDoor> = unsafe { DoorSlot::new(UI_DOOR_ADDR) };
 static UI_DOOR: UiDoor = UiDoor::OWN;
 
 /// `f` on the UI's table: bank 2's through the door on the unit with
-/// `bank2`, `None` closed; this build's own elsewhere; `None` without
-/// `tape`.
+/// `bank2`, `None` closed; this build's own elsewhere, `tape` or not: the
+/// table carries VOICE's, CHOKE's, the feel's and the band's words too
+/// (#829).
 #[inline(always)]
 pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
     #[cfg(all(feature = "bank2", target_os = "none"))]
     {
         DOOR_CELL.with_slot(UI_SLOT, f)
     }
-    #[cfg(all(feature = "tape", not(all(feature = "bank2", target_os = "none"))))]
+    #[cfg(not(all(feature = "bank2", target_os = "none")))]
     {
         // A host test under `bank2` answers as the unit does: only while
         // the door cell is open (`open_host`).
@@ -666,12 +667,6 @@ pub fn ui_door<R>(f: impl FnOnce(&UiDoor) -> R) -> Option<R> {
             return None;
         }
         Some(f(&UiDoor::OWN))
-    }
-    // Without TAPE's DSP (the bench) TAPE's UI is as closed, and links out.
-    #[cfg(not(feature = "tape"))]
-    {
-        let _ = f;
-        None
     }
 }
 

@@ -522,6 +522,7 @@ impl SourceState {
         use crate::ui::source_cell::{NOT_ON_CARD, READ_FAILED, SOURCE_MISSING};
         match self {
             SourceState::Absent(Absence::Missing) => SOURCE_MISSING,
+            SourceState::Absent(Absence::NoRoom) => crate::ui::settings::prompt::POOL_FULL,
             SourceState::Absent(Absence::NotOnCard) => NOT_ON_CARD,
             SourceState::Absent(Absence::ReadFailed) => READ_FAILED,
             SourceState::Absent(Absence::StreamsFull) => crate::ui::source_cell::STREAMS_FULL,
@@ -543,6 +544,7 @@ impl SourceState {
         let _ = match self {
             SourceState::None => buf.write_str("NONE"),
             SourceState::Absent(Absence::Missing) => buf.write_str("MISSING"),
+            SourceState::Absent(Absence::NoRoom) => buf.write_str("NO ROOM"),
             SourceState::Absent(Absence::NotOnCard) => buf.write_str("NO FILE"),
             SourceState::Absent(Absence::ReadFailed) | SourceState::Failed(_) => {
                 buf.write_str("ERROR")
@@ -805,6 +807,21 @@ pub fn cell_words(def: &BlockDef, v: &View, ctx: &SlotCtx) -> Words {
     match v.addr() {
         Some(a) if def.edits_pad() && !a.block.is_pad() => Words::Pad,
         _ => v.words(ctx),
+    }
+}
+
+/// The reverb send's hint while bank 2 is closed: it plays nothing (#547).
+const REV_CLOSED: Hint = &[Gesture("REVERB ▸", crate::bank2::NEEDS_UPDATE)];
+
+/// `words`, but the reverb send's say `NEEDS UPDATE` while bank 2 is
+/// closed instead of naming a TYPE that can't play (#547). `None`: a
+/// build without bank 2.
+pub fn closed_words(v: &View, words: Words, bank2: Option<crate::bank2::Bank2Status>) -> Words {
+    let send = v.addr() == Some(ParamAddr::new(BlockRef::Out, OutParams::SEND3));
+    if send && bank2.is_some_and(|b| !b.is_open()) {
+        Words::Own(REV_CLOSED)
+    } else {
+        words
     }
 }
 

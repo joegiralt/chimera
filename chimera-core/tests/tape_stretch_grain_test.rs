@@ -3,6 +3,10 @@
 //! Beads; SPRAY scatters them; END HOLD parks at the end, STOP fades out;
 //! SPEED 0 freezes.
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use core::mem::MaybeUninit;

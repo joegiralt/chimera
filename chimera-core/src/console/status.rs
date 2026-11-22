@@ -31,6 +31,16 @@ pub enum Sram4 {
 }
 
 impl Sram4 {
+    /// The stream rings live in SRAM4: the registry lends rows only on
+    /// RAM that passed (#768); else nothing streams, and a source too big
+    /// for the arena reads STREAMS FULL. Whole sources play either way.
+    pub fn lends_streams(self) -> bool {
+        match self {
+            Sram4::Ok => true,
+            Sram4::Untested | Sram4::Failed => false,
+        }
+    }
+
     fn word(self) -> &'static str {
         match self {
             Sram4::Untested => "untested",

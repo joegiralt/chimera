@@ -273,7 +273,11 @@ impl Console {
             Some(Err(Refusal::TooLong))
         } else {
             let mut words = Words { rest: used };
-            words.next().map(|word| parse(word, words))
+            // An echoing tty's copy of an answer is no request (#315).
+            words
+                .next()
+                .filter(|w| !w.eq_ignore_ascii_case(b"OK") && !w.eq_ignore_ascii_case(b"ERR"))
+                .map(|word| parse(word, words))
         };
         self.len = 0;
         self.overflowed = false;

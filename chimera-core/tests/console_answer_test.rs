@@ -938,6 +938,11 @@ fn bank2_install_answers() {
             "ERR bank2: firmware unsealed\n",
         ),
         (refused(Bank2Refusal::Busy), "ERR bank2: busy\n"),
+        // As `sweep`'s: the restart an install ends in would lose them.
+        (
+            refused(Bank2Refusal::Unsaved),
+            "ERR bank2: unsaved changes, save first\n",
+        ),
         // The words `chimera-usb update` matches: `status`'s line after ERR.
         (
             refused(Bank2Refusal::SlotForeign(chimera_image::Slot::Mixer)),
@@ -1204,6 +1209,80 @@ fn the_install_and_the_door_decide_the_answer() {
         installed(r, &Bank2Status::Torn, AUDIO),
         fail(Bank2Fail::Readback(Bank2Status::Corrupt))
     );
+}
+
+/// USB took its layout at boot, door closed: console alone. Only an install
+/// that opens the door restarts, so the boot lays MIDI and audio out (#1064).
+#[test]
+fn only_an_install_that_opens_the_door_restarts() {
+    let opened = Bank2Answer::Open {
+        version: v020(),
+        audio: AUDIO,
+    };
+    assert!(opened.restarts());
+    for a in [
+        Bank2Answer::Already,
+        Bank2Answer::Refused(Bank2Refusal::Busy),
+        Bank2Answer::Failed {
+            why: Bank2Fail::Door,
+            audio: AUDIO,
+        },
+    ] {
+        assert!(!a.restarts(), "{a:?}");
+    }
+}
+
+/// Before anything is written: card work pending is busy, unsaved
+/// changes (the install's restart would lose them) refuse (#1064).
+#[test]
+fn an_install_waits_for_card_work_and_refuses_unsaved_changes() {
+    use chimera_core::console::install_guard;
+    assert_eq!(install_guard(false, false), None);
+    assert_eq!(install_guard(true, false), Some(Bank2Refusal::Busy));
+    assert_eq!(install_guard(false, true), Some(Bank2Refusal::Unsaved));
+    assert_eq!(install_guard(true, true), Some(Bank2Refusal::Busy));
+}
+
+/// Which restart a console answer ends in, over every input: `dfu` first,
+/// then `sweep`'s request, each only once its answer is out; an install
+/// that opened the door even if its answer stalled (#1064).
+#[test]
+fn the_restart_table() {
+    use chimera_core::console::{RestartKind, restart_after};
+    let open = Bank2Answer::Open {
+        version: v020(),
+        audio: AUDIO,
+    };
+    let sweeps = [
+        None,
+        Some(SweepAsk::Requested),
+        Some(SweepAsk::Unsaved),
+        Some(SweepAsk::Unused),
+        Some(SweepAsk::Failed(StoreError::NoCard)),
+    ];
+    let installs = [None, Some(open), Some(Bank2Answer::Already)];
+    for dfu in [false, true] {
+        for sweep in sweeps {
+            for bank2 in installs {
+                for sent in [false, true] {
+                    let want = if dfu {
+                        sent.then_some(RestartKind::Dfu)
+                    } else if sweep == Some(SweepAsk::Requested) {
+                        sent.then_some(RestartKind::Sweep)
+                    } else if bank2 == Some(open) {
+                        Some(RestartKind::Bank2)
+                    } else {
+                        None
+                    };
+                    assert_eq!(
+                        restart_after(dfu, sweep, bank2.as_ref(), sent),
+                        want,
+                        "dfu {dfu} sweep {sweep:?} bank2 {bank2:?} sent {sent}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]

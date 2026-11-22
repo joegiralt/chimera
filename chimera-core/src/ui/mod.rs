@@ -79,7 +79,7 @@ pub(crate) mod walk;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use crate::storage::{Card, CardEvent, Exit, SystemSettings, SystemSync};
+use crate::storage::{BootNote, Card, CardEvent, Exit, LoadError, SystemSettings, SystemSync};
 use chimera_hal::store::Store;
 use chimera_hal::{
     ALL_BUTTONS, ALL_ENCODERS, ButtonId, ButtonState, Controls, Edges, EncoderId, Ms, PART_BUTTONS,
@@ -787,6 +787,20 @@ impl UiState {
         }
     }
 
+    /// Bank 2 closed at boot, after the project's note: the reverb, TAPE
+    /// and the rest of bank 2 play nothing, so the boot says so in
+    /// ABOUT's words (`NEEDS UPDATE`, `SLOT IN USE`, #544), unless a
+    /// boot toast is up already (a load's error, SWEEP STOPPED): it keeps
+    /// its place, and ABOUT still says it.
+    pub fn note_bank2(&mut self) {
+        if self.toast.text().is_some() {
+            return;
+        }
+        if let Some(s) = self.bank2.filter(|s| !s.is_open()) {
+            self.show_boot_fault(s.label());
+        }
+    }
+
     /// A project note as a toast: a save's time for SAVED, else an error's.
     pub fn show_note(&mut self, n: ProjectNote) {
         let ms = match n {
@@ -794,6 +808,25 @@ impl UiState {
             _ => busy::Toast::ERROR_MS,
         };
         self.toast.show(busy::Toast { text: n.line(), ms });
+    }
+
+    /// SYSTEM's boot note, after `boot_project`: a SYSTEM file this
+    /// firmware can't read kept the defaults, so NEW's toast gives way to
+    /// why (#197). No card, no file or a card fault: the project's note,
+    /// which mounted the card itself, stands.
+    pub fn show_system_note(&mut self, note: Option<BootNote>) {
+        match note {
+            Some(BootNote::Error(LoadError::File(err))) => self.show_note(ProjectNote::File {
+                err,
+                subject: project::Subject::System,
+            }),
+            Some(
+                BootNote::NoCard
+                | BootNote::NoFile
+                | BootNote::Error(LoadError::Store(_) | LoadError::Missing | LoadError::Busy),
+            )
+            | None => {}
+        }
     }
 
     /// A load's note. A NEW that came up partial says so instead
@@ -3153,6 +3186,8 @@ impl UiState {
         if mv != 0.0 {
             let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
             p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
+            // The reel is the hand: a mapped POSITION's ramp stops (#524).
+            self.cc_hand(self.active_part, SCRUB_FINGER);
         }
         mv != 0.0
     }
@@ -3535,6 +3570,7 @@ impl UiState {
                 if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub
                 {
                     self.jog.turn(delta, controls.now_ms());
+                    self.cc_hand(at, SCRUB_FINGER);
                     continue;
                 }
                 // The reverb turns by its TYPE's panel, and TYPE keeps the

@@ -3,6 +3,10 @@
 //! the note-on ramp, the macros' easing and MOTION's walk. Precedent:
 //! Digitakt II manual § Playback modes; Morphagene manual (Organize).
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use chimera_core::dsp::tape_engine::TapeMachine;

@@ -5,6 +5,10 @@
 //! ignores. Precedent: the
 //! Digitakt II's machines, each its own labelled page.
 
+// It plays TAPE's DSP as bank 1 builds it: under `bank2` the engine is
+// the door's proxy (tape_proxy_test), and that doesn't link (#1018).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 mod screen;
 

@@ -77,6 +77,15 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
     }
 }
 
+/// A project load's streamed pass: how many it streamed, and the sources
+/// left out for room that now fit whole, another's read having missed:
+/// the loader reads those whole after it (#765).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Streamed {
+    pub n: u8,
+    pub whole: SourceSet,
+}
+
 /// What bank 1 may call of a streamed load (ADR 0137): the heads'
 /// placement, the load's passes and a project load's streamed sources,
 /// all bank 2's with `bank2` (`load`, `stage::place`).
@@ -84,7 +93,7 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
 pub struct LoadDoor {
     heads_for: fn(SourceRef, &TapeEngineParams) -> Result<Heads, Refusal>,
     step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
-    sources: fn(&mut dyn Store, &Ready, &mut Project, SourceSet) -> u8,
+    sources: fn(&mut dyn Store, &Ready, &mut Project, SourceSet) -> Streamed,
 }
 
 impl LoadDoor {
@@ -122,7 +131,7 @@ impl LoadDoor {
         r: &Ready,
         p: &mut Project,
         ids: SourceSet,
-    ) -> u8 {
+    ) -> Streamed {
         (self.sources)(s, r, p, ids)
     }
 

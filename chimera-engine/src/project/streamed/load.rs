@@ -10,7 +10,7 @@ use super::super::arena::ARENA_BYTES;
 use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
 use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
-use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, load_kind};
+use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, Streamed, load_kind};
 use crate::dsp::tape_engine::read::{DESC_LEN, write_head_table};
 use crate::storage::{
     CardError, CardFault, Crc32, LoadError, Ready, SourceLayout, SourceReadError, held_len,
@@ -248,8 +248,13 @@ impl StreamLoad {
 /// does; one every stream row refuses, or in too many runs, stays absent
 /// and says why. How many streamed. A card fault ends them.
 // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
-pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids: SourceSet) -> u8 {
-    let (mut n, mut fault) = (0u8, false);
+pub(super) fn stream_sources(
+    s: &mut dyn Store,
+    r: &Ready,
+    p: &mut Project,
+    ids: SourceSet,
+) -> Streamed {
+    let (mut n, mut fault, mut whole) = (0u8, false, SourceSet::EMPTY);
     for id in ids.iter() {
         let Some(e) = p.pool.source(id) else { continue };
         // A card fault ends the reads: the rest read as failed.
@@ -297,11 +302,22 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 p.pool.mark_absent(id, Absence::NeedsRam(why));
                 continue;
             }
-            LoadKind::Whole => continue,
+            // Room since: read whole after this pass (#765).
+            LoadKind::Whole => {
+                whole = whole.with(id);
+                continue;
+            }
         };
-        // Its runs don't hold its samples, or its heads don't fit the gap.
+        // Its runs don't hold its samples (the file's), or its heads don't
+        // fit the gap (didn't fit, #765).
         let Some(mut l) = StreamLoad::found(p, head, heads, runs) else {
-            p.pool.mark_absent(id, Absence::Missing);
+            let file = SourceLayout::whole(head).and_then(|l| StreamFile::from_layout(&l, runs));
+            let why = if file.is_some() {
+                Absence::NoRoom
+            } else {
+                Absence::Missing
+            };
+            p.pool.mark_absent(id, why);
             continue;
         };
         // One card operation, as `read_sources`' whole reads (ADR 0087),
@@ -323,7 +339,7 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
                 }
                 // The heads didn't fit; `Sounding` is a re-head's alone.
                 StreamStep::Failed(StreamFail::Pool(_) | StreamFail::Sounding) => {
-                    break Some(Absence::Missing);
+                    break Some(Absence::NoRoom);
                 }
             }
         };
@@ -331,5 +347,5 @@ pub(super) fn stream_sources(s: &mut dyn Store, r: &Ready, p: &mut Project, ids:
             p.pool.mark_absent(id, w);
         }
     }
-    n
+    Streamed { n, whole }
 }

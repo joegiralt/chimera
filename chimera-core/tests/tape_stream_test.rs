@@ -3,6 +3,10 @@
 //! whole; a late card drops out and comes back cleanly; a chord's burst
 //! holds behind 100 ms heads; a short loop in a head never asks the card.
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use chimera_core::dsp::tape_engine::TapeMachine;

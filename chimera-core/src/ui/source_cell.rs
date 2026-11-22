@@ -12,7 +12,7 @@ use core::ops::ControlFlow;
 use core::num::NonZeroU32;
 
 use chimera_hal::card_bus::CardFault;
-use chimera_hal::store::{ReadSink, Store, StoreError};
+use chimera_hal::store::{ReadSink, Store, StoreError, VolumeId};
 
 use crate::dsp::tape_engine::params::TapeEngineParams;
 #[cfg(feature = "tape")]
@@ -27,8 +27,8 @@ pub use crate::project::{LoadKind, load_kind};
 #[cfg(feature = "tape")]
 use crate::project::{StreamLoad, StreamStep};
 use crate::storage::{
-    Card, CardEvent, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, Stem, TapeList,
-    TapeSource, after_mount, held_for_file_len, source_name,
+    Card, MAX_TAPES, Ready, SourceCheck, SourceHead, SourceRef, Stem, TapeList, TapeSource,
+    after_mount, held_for_file_len, source_name,
 };
 #[cfg(feature = "tape")]
 use crate::stream::stage::{Heads, heads_for};
@@ -507,19 +507,23 @@ pub struct SourceCell {
     stuck: [Option<HeadsKey>; MAX_SOURCES],
     /// The card IRQ's read fault, as the last UI pass met it.
     read: Recovery,
+    /// The volume the last pass found mounted: the streamed sources' card.
+    /// NO CARD forgets nothing here, so the same card back keeps them.
+    vol: Option<VolumeId>,
 }
 
-/// A stream read fault, from the UI's side: the card IRQ sets it, a mount
-/// clears it.
+/// A stream read fault, from the UI's side: the card IRQ sets it, the UI
+/// clears it once a re-init mounted (`recover`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Recovery {
     Clear,
     /// A re-init and mount owed: this pass, and the next while the bus is
     /// busy (the card untouched, C1).
     Owed,
-    /// The re-init failed: tried again after its backoff, or sooner by
-    /// any card op's mount, so a transient error mends itself while a
-    /// card that won't come back costs one re-init every few seconds.
+    /// The re-init failed: tried again after its backoff, or at once once
+    /// a card op's mount finds a card, so a transient error mends itself
+    /// while a card that won't come back costs one re-init every few
+    /// seconds.
     Stuck(Backoff),
 }
 
@@ -585,29 +589,29 @@ impl SourceCell {
         #[cfg(feature = "tape")]
         stuck: [None; MAX_SOURCES],
         read: Recovery::Clear,
+        vol: None,
     };
 
     /// Once a pass, before any card work: under a stream read fault the
-    /// card re-inited and mounted (`Store::recover`). Another card's volume
-    /// takes the streamed sources with it (`Project::lose_streams`).
+    /// card re-inited and mounted (`Store::recover`). A volume other than
+    /// the last pass's, by this mount or a card op's since, takes the
+    /// streamed sources with it (`Project::lose_streams`); only then is
+    /// the fault cleared, so the card IRQ never reads another card's
+    /// blocks through a stale row (#610).
     pub fn recover<S: Store>(&mut self, card: &mut Card, s: &mut S, p: &mut Project) {
+        let mut mounted = false;
         self.read = match (s.read_fault(), self.read) {
             (CardFault::Clear, _) => Recovery::Clear,
-            (CardFault::Read, Recovery::Stuck(Backoff(n))) if n > 0 => {
+            (CardFault::Read, Recovery::Stuck(Backoff(n)))
+                if n > 0 && !matches!(card, Card::Ready(_)) =>
+            {
                 Recovery::Stuck(Backoff(n - 1))
             }
             (CardFault::Read, was) => match s.recover() {
                 Err(StoreError::Busy) => Recovery::Owed,
                 r => {
-                    let (c, event) = after_mount(*card, r);
-                    *card = c;
-                    if event.is_some_and(|e| e != CardEvent::Same) {
-                        p.lose_streams();
-                        #[cfg(feature = "tape")]
-                        {
-                            self.stuck = [None; MAX_SOURCES];
-                        }
-                    }
+                    (*card, _) = after_mount(*card, r);
+                    mounted = r.is_ok();
                     match (r, was) {
                         (Ok(_), _) => Recovery::Clear,
                         (Err(_), Recovery::Stuck(_)) => Recovery::Stuck(Backoff::THEN),
@@ -616,6 +620,21 @@ impl SourceCell {
                 }
             },
         };
+        if let Card::Ready(v) = *card {
+            if self.vol.is_some_and(|was| was != v) {
+                p.lose_streams();
+                #[cfg(feature = "tape")]
+                {
+                    self.stuck = [None; MAX_SOURCES];
+                }
+            }
+            self.vol = Some(v);
+        }
+        // `lose_streams`' clears happen before this `Release`; the card
+        // IRQ `Acquire`s the fault before it reads a row (`serving`).
+        if mounted {
+            s.clear_read_fault();
+        }
     }
 
     /// Card work is queued: BUSY shows. A re-head runs unseen.

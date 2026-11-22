@@ -3,6 +3,10 @@
 //! head stays within a clamp's step of it. And whatever changes mid-note,
 //! every machine's output on a sine stays finite and near the sine's peak.
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use core::mem::MaybeUninit;

@@ -4,6 +4,10 @@
 //! Operator's Manual p. 32 (TIMESTRETCH, D-TIME, MONO and POLY); the JUCE
 //! forum's Akai-style two-grain stretch (2024).
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use core::mem::MaybeUninit;

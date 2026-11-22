@@ -10,8 +10,8 @@ use chimera_core::board::BoardId;
 use chimera_core::boot::{BootSeen, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, wait_until};
 use chimera_core::console::{
     AnswerClock, Bank2Answer, BankRegs, CardAnswer, CardArg, Console, FlashPeek, FlashRegs, Frame,
-    Hand, Hands, LoopTimer, Out, PEEK_AT, Refusal, Request, Served, Stalled, Stats, SweepAsk, Unit,
-    WallClock, answer, serial_hex,
+    Hand, Hands, LoopTimer, Out, PEEK_AT, Refusal, Request, RestartKind, Served, Stalled, Stats,
+    SweepAsk, Unit, WallClock, answer, restart_after, serial_hex,
 };
 use chimera_core::perf::load::AudioStats;
 use chimera_core::triple::Reader;
@@ -164,10 +164,17 @@ pub struct DfuAsked(());
 #[must_use]
 pub struct SweepAsked(());
 
+/// `bank2 install` opened the door and its `OK` is out: the boot it
+/// restarts into lays USB out with MIDI and audio (#1064). Only
+/// `Usb::service` makes one.
+#[must_use]
+pub struct Bank2Opened(());
+
 /// A console answer that ends in a restart.
 pub enum Restart {
     Dfu(DfuAsked),
     Sweep(SweepAsked),
+    Bank2(Bank2Opened),
 }
 
 /// `card`'s measurement, run before its answer starts: `None` without one
@@ -581,14 +588,11 @@ impl Usb {
             if unit.forget {
                 ui.forget_library();
             }
-            let restart = match (dfu, sweep_ask) {
-                (true, _) => Restart::Dfu(DfuAsked(())),
-                (false, Some(SweepAsk::Requested)) => Restart::Sweep(SweepAsked(())),
-                _ => return None,
+            let restart = match restart_after(dfu, sweep_ask, bank2.as_ref(), sent.is_ok())? {
+                RestartKind::Dfu => Restart::Dfu(DfuAsked(())),
+                RestartKind::Sweep => Restart::Sweep(SweepAsked(())),
+                RestartKind::Bank2 => Restart::Bank2(Bank2Opened(())),
             };
-            if sent.is_err() {
-                return None;
-            }
             // `flush` empties the class's buffer, not the endpoint: polls
             // until the host has had time to collect the last IN packet.
             let start = crate::controls::now_ms();

@@ -289,6 +289,76 @@ class Tool(unittest.TestCase):
         self.assertEqual(tool.first_wait("stats"), tool.SILENCE_S)
         self.assertGreaterEqual(tool.CARD_WAIT_S, 30)
 
+    def test_an_ok_with_words_ends_the_answer_and_prints(self):
+        # #1065: protocol 4's queued acts and `ed since` end on `OK <words>`.
+        answers = {
+            b"ed set MIDI.SYNC INT\n": b"OK queued\n",
+            b"ed since 0\n": b"chg 3 MIDI.SYNC 0\nOK 6 more\n",
+        }
+        with FakeUnit(answers) as u:
+            queued = run_tool(["ed", "set", "MIDI.SYNC", "INT"], u.target)
+            since = run_tool(["ed", "since", "0"], u.target)
+        self.assertEqual((queued.returncode, queued.stdout), (0, b"OK queued\n"), queued.stderr)
+        self.assertEqual((since.returncode, since.stdout), (0, b"chg 3 MIDI.SYNC 0\nOK 6 more\n"), since.stderr)
+
+    def tty_sysfs(self, root, ttys):
+        r = pathlib.Path(root)
+        for dev, vid, pid, tty_, *product in ttys:
+            d = r / "devices" / dev
+            (d / (dev + ":1.0")).mkdir(parents=True)
+            (d / "idVendor").write_text(vid + "\n")
+            (d / "idProduct").write_text(pid + "\n")
+            if product:
+                (d / "product").write_text(product[0] + "\n")
+            (r / "class/tty" / tty_).mkdir(parents=True)
+            (r / "class/tty" / tty_ / "device").symlink_to(d / (dev + ":1.0"))
+        (r / "bus/usb/devices").mkdir(parents=True)
+
+    def pick(self, root, link=None, answers=True):
+        """`target` with no CHIMERA_USB: the udev link `link` (absent if
+        None), and a `status` check that answers as Chimera or not."""
+        saved = tool.UDEV_LINK, tool.is_chimera
+        self.addCleanup(lambda: setattr(tool, "UDEV_LINK", saved[0]) or setattr(tool, "is_chimera", saved[1]))
+        tool.UDEV_LINK = link or os.path.join(root, "no-such-link")
+        self.asked = []
+        tool.is_chimera = lambda t: self.asked.append(t) or answers
+        return tool.target({"CHIMERA_SYSFS": root})
+
+    def test_the_default_port_is_the_consoles_by_usb_id(self):
+        # #314: /dev/ttyACM0 is another CDC device's; never guess it.
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"), ("1-2", "0483", "5740", "ttyACM3")))
+            self.assertEqual(self.pick(root), tool.Tty("tty", "/dev/ttyACM3"))
+            self.assertEqual(self.asked, [tool.Tty("tty", "/dev/ttyACM3")], "one match: status confirms it")
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-3", "1a86", "7523", "ttyACM0"),))
+            self.assertNotEqual(self.pick(root), tool.Tty("tty", "/dev/ttyACM0"))
+
+    def test_the_udev_link_comes_first(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-2", "0483", "5740", "ttyACM3"),))
+            link = os.path.join(root, "chimera")
+            pathlib.Path(link).touch()
+            self.assertEqual(self.pick(root, link), tool.Tty("tty", link))
+            self.assertEqual(self.asked, [])
+
+    def test_among_several_the_one_named_chimera(self):
+        # A stock PreenFM3 shares 0483:5740; its product string isn't ours.
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-2", "0483", "5740", "ttyACM1", "PreenFM3"), ("1-3", "0483", "5740", "ttyACM2", "Chimera")))
+            self.assertEqual(self.pick(root), tool.Tty("tty", "/dev/ttyACM2"))
+            self.assertEqual(self.asked, [], "the name says so")
+
+    def test_one_match_that_doesnt_answer_as_chimera_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.tty_sysfs(root, (("1-2", "0483", "5740", "ttyACM3", "PreenFM3"),))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as e:
+                self.pick(root, answers=False)
+        self.assertEqual(e.exception.code, 1)
+        self.assertIn("/dev/ttyACM3", err.getvalue())
+        self.assertIn("doesn't answer as Chimera", err.getvalue())
+
     def test_a_card_stopped_short_prints_what_it_measured(self):
         with FakeUnit({b"card seed=7\n": b"seed 7\noverruns 0\nERR card: timeout\n"}) as u:
             r = run_tool(["card", "seed=7"], u.target)
@@ -1148,18 +1218,41 @@ class Bank2(unittest.TestCase):
     def test_puts_then_installs_and_exits_0_on_open(self):
         answers = self.status(bytes(8), "empty")
         answers[b"bank2 install"] = b"audio overruns 0 -> 0 blocks +40\nOK bank2 open 0.2.0 02e440e2\n"
+        answers[b"status"] = b"bank2 open 0.2.0 02e440e2\nOK\n"
         with PutUnit(answers=answers) as u:
             r = self.run_bank2(u)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(u.requests[0], b"bank2")
         self.assertTrue(u.requests[1].startswith(b"put /CHIMERA/SYSTEM/BANK2.BK2 %d " % len(self.bk2)))
-        self.assertEqual(u.requests[-1], b"bank2 install")
+        self.assertEqual(u.requests[-2:], [b"bank2 install", b"status"])
         self.assertEqual(u.data, bytes(self.bk2))
         self.assertEqual(r.stdout, b"audio overruns 0 -> 0 blocks +40\nOK bank2 open 0.2.0 02e440e2\n")
+
+    def test_an_install_that_opens_waits_for_the_restart(self):
+        # #1064: the unit restarts once its install opens the door; the
+        # tool says so and returns once the console answers again.
+        answers = self.status(bytes(8), "empty")
+        answers[b"bank2 install"] = b"OK bank2 open 0.2.0 02e440e2\n"
+        answers[b"status"] = b"bank2 open 0.2.0 02e440e2\nOK\n"
+        with PutUnit(answers=answers) as u:
+            r = self.run_bank2(u)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(u.requests[-2:], [b"bank2 install", b"status"])
+        self.assertIn(b"restarting", r.stderr)
+
+    def test_unsaved_changes_refuse_plainly(self):
+        answers = self.status(bytes(8), "empty")
+        answers[b"bank2 install"] = b"ERR bank2: unsaved changes, save first\n"
+        with PutUnit(answers=answers) as u:
+            r = self.run_bank2(u)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stderr.strip().splitlines()[-1], b"ERR bank2: unsaved changes, save first")
+        self.assertNotIn(b"status", u.requests)
 
     def test_a_seal_that_differs_installs(self):
         answers = self.status(bytes(range(9, 17)))
         answers[b"bank2 install"] = b"OK bank2 open v\n"
+        answers[b"status"] = b"bank2 open v\nOK\n"
         with PutUnit(answers=answers) as u:
             r = self.run_bank2(u)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -1385,9 +1478,11 @@ class Update(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn("OK updated 0.2.0 02e440e2", out)
         put, dfu, status = self.sent("put /CHIMERA/SYSTEM/BANK2.BK2 "), self.sent("dfu-util"), self.sent("status")
-        self.assertEqual((len(put), len(dfu), len(status)), (1, 1, 1), self.events)
+        # One status before (unsaved changes?), one after the flash.
+        self.assertEqual((len(put), len(dfu), len(status)), (1, 1, 2), self.events)
+        self.assertLess(status[0], put[0])
         self.assertLess(put[0], dfu[0])
-        self.assertLess(dfu[0], status[0])
+        self.assertLess(dfu[0], status[1])
         self.assertEqual(u.data, self.bk2)
         self.assertEqual(self.sent("bank2"), [], "the boot installs it, not the console")
         self.assertEqual(backs, [tool.UPDATE_BOOT_WAIT_S], "the first boot installs before the console comes up")
@@ -1401,6 +1496,17 @@ class Update(unittest.TestCase):
             self.assertEqual(rc, 2, err)
             self.assertIn("flashed, but the unit's %s slot (%s) holds other code" % (name, addr), err)
             self.assertNotIn("OK updated", out)
+
+    def test_unsaved_changes_stop_the_update_before_anything(self):
+        # The flash restarts the unit (and an install after it would refuse
+        # them): `update` says so first, nothing staged or flashed.
+        answers = {b"status": self.status(self.open_line()).replace(b"protocol 1\n", b"protocol 1\nstate MODIFIED\n")}
+        with PutUnit(answers=answers) as u:
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 1, err)
+        self.assertIn("unsaved changes", err)
+        self.assertIn("nothing flashed", err)
+        self.assertEqual(self.sent("put ") + self.sent("to-dfu") + self.sent("dfu-util"), [], self.events)
 
     def test_a_plain_ok_stages_too(self):
         with PutUnit(answers={b"status": self.status(self.open_line())}) as u:
@@ -1457,6 +1563,24 @@ class Update(unittest.TestCase):
         self.assertLess(puts[1], install[0])
         self.assertLess(install[0], status[-1])
         self.assertEqual(u.data, self.bk2)
+
+    def test_an_install_after_the_flash_waits_for_the_restart(self):
+        # #1064: the firmware restarts once its install opens the door (USB's
+        # MIDI and audio are a boot's layout): status is read after it.
+        answers = {
+            b"bank2": b"bank2 empty\nOK\n",
+            b"bank2 install": b"OK bank2 open 0.2.0 02e440e2\n",
+            b"status": self.status(self.open_line()),
+        }
+        back, backs = tool.back_after_flash, []
+        tool.back_after_flash = lambda t, env, secs, serial=None: backs.append(secs) or back(t, env, secs, serial)
+        self.addCleanup(setattr, tool, "back_after_flash", back)
+        with PutUnit(answers=answers, refuse=OLD_PUT, refuse_once=True) as u:
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(backs, [tool.UPDATE_BOOT_WAIT_S, tool.RESTART_WAIT_S])
+        install, status = self.sent("bank2 install"), self.sent("status")
+        self.assertLess(install[0], status[-1])
 
     def flash_first(self, line, bk2=None):
         if bk2 is not None:

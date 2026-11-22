@@ -3,6 +3,10 @@
 //! the wear: a falling one-pole, hiss and dropouts. Precedent: a Mellotron
 //! gives each note its own strip of tape.
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use core::mem::MaybeUninit;

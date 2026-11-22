@@ -251,11 +251,15 @@ pub trait Store {
     fn read_fault(&self) -> CardFault {
         CardFault::Clear
     }
-    /// After a read fault: the medium re-inited, then `mount`, whose
-    /// success clears the fault. `Busy`: the card untouched.
+    /// After a read fault: the medium re-inited, then `mount`. The fault
+    /// stays until `clear_read_fault`. `Busy`: the card untouched.
     fn recover(&mut self) -> Result<VolumeId, StoreError> {
         self.mount()
     }
+    /// The card IRQ may read again: its caller has dropped what belonged
+    /// to another card first (#610). Its store `Release`s the fault, the
+    /// IRQ `Acquire`s it before it reads a stream row.
+    fn clear_read_fault(&mut self) {}
     /// Each op below: open volume, check id == vol (else `VolumeChanged`,
     /// nothing touched), act, close every handle.
     fn list(

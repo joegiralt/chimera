@@ -26,7 +26,7 @@ use chimera_core::project::{
 };
 use chimera_core::storage::source_file;
 use chimera_core::storage::{
-    Card, SourceHead, SourceLayout, SystemSettings, SystemSync, TapeSource, WholeShape,
+    Card, CardEvent, SourceHead, SourceLayout, SystemSettings, SystemSync, TapeSource, WholeShape,
     held_for_file_len, source_crc, source_file_min_len, write_descriptor, write_source,
 };
 use chimera_core::stream::layout::StreamFile;
@@ -106,6 +106,19 @@ struct Log {
     /// What a `recover` gives: `Ok` mounts, clearing the fault.
     recovery: Result<(), StoreError>,
     recovers: u32,
+    /// A streamed source's row, watched: whether it was still in the
+    /// registry when the fault cleared (#610: the card IRQ reads again
+    /// from then on, so another card's rows must be gone first).
+    watch: Option<(&'static StreamRegistry, SourceId)>,
+    live_at_clear: Option<bool>,
+}
+
+impl Log {
+    /// The fault clears: from here on the card IRQ reads.
+    fn clear(&mut self) {
+        self.fault = CardFault::Clear;
+        self.live_at_clear = self.watch.map(|(r, id)| r.get(id).is_some());
+    }
 }
 
 struct Counted<'a>(&'a mut dyn ReadSink, u32);
@@ -130,8 +143,10 @@ impl Store for Log {
     fn recover(&mut self) -> Result<VolumeId, StoreError> {
         self.recovers += 1;
         self.recovery?;
-        self.fault = CardFault::Clear;
         self.inner.mount()
+    }
+    fn clear_read_fault(&mut self) {
+        self.clear();
     }
     fn list(
         &mut self,
@@ -216,6 +231,8 @@ impl Rig {
             fault: CardFault::Clear,
             recovery: Ok(()),
             recovers: 0,
+            watch: None,
+            live_at_clear: None,
         };
         let mut card = Card::new();
         for (h, d) in on_card {
@@ -1308,9 +1325,13 @@ fn focus_band_reads_card_read_failed() {
     assert_eq!(rig.s.recovers, 1, "a failed re-init waits");
     assert_eq!(rig.band(), READ_FAILED);
 
-    // A mount by any card op clears the fault, and the band.
-    rig.s.fault = CardFault::Clear;
+    // A card op's mount that finds the card: re-inited at once, not
+    // after the backoff, and the band clears.
+    rig.s.recovery = Ok(());
+    let op = rig.card.run(&mut rig.s, |_, _| Ok::<(), StoreError>(()));
+    assert!(op.is_ok());
     rig.work();
+    assert_eq!(rig.s.recovers, 2, "tried at once");
     assert_eq!(rig.band(), fine);
 
     (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Busy));
@@ -1318,7 +1339,7 @@ fn focus_band_reads_card_read_failed() {
     assert_eq!(rig.band(), READ_FAILED);
     rig.s.recovery = Ok(());
     rig.work();
-    assert_eq!(rig.s.recovers, 3, "busy: tried again");
+    assert_eq!(rig.s.recovers, 4, "busy: tried again");
     assert_eq!(rig.s.fault, CardFault::Clear);
     assert_eq!(rig.band(), fine);
 }
@@ -1347,6 +1368,71 @@ fn volume_change_clears_registry() {
     rig.s.inner.swap(2);
     rig.work();
     assert_eq!(rig.s.fault, CardFault::Clear, "mounted");
+    assert!(rig.registry().get(id).is_none(), "its row gone");
+    assert_eq!(rig.band(), SOURCE_MISSING);
+}
+
+/// #610: another card's rows are gone before the fault clears, so the
+/// card IRQ's first read after it never finds one.
+#[test]
+fn another_cards_rows_go_before_the_fault_clears() {
+    let b = bed(4);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    rig.s.watch = Some((rig.registry(), id));
+    rig.s.fault = CardFault::Read;
+    rig.s.inner.swap(2);
+    rig.work();
+    assert_eq!(rig.s.fault, CardFault::Clear, "mounted");
+    assert_eq!(
+        rig.s.live_at_clear,
+        Some(false),
+        "cleared with its row live"
+    );
+    assert_eq!(rig.band(), SOURCE_MISSING);
+}
+
+/// #610: NO CARD while faulted forgets no volume: the same card back
+/// keeps its rows and plays on.
+#[test]
+fn no_card_then_the_same_card_keeps_its_rows() {
+    let b = bed(5);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    let fine = rig.band();
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::NoCard));
+    rig.work();
+    rig.s.recovery = Ok(());
+    for _ in 0..200 {
+        rig.work();
+    }
+    assert_eq!(rig.s.fault, CardFault::Clear, "mounted");
+    assert!(rig.registry().get(id).is_some(), "its row kept");
+    assert_eq!(rig.band(), fine);
+}
+
+/// #610: a card op's mount that finds another card while the streams are
+/// faulted: the streams go with the old card, and only then does the
+/// fault clear.
+#[test]
+fn an_ops_mount_on_another_card_loses_the_streams() {
+    let b = bed(4);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    rig.s.watch = Some((rig.registry(), id));
+    (rig.s.fault, rig.s.recovery) = (CardFault::Read, Err(StoreError::Io));
+    rig.work();
+    rig.s.inner.swap(2);
+    rig.s.recovery = Ok(());
+    let op = rig.card.run(&mut rig.s, |_, _| Ok::<(), StoreError>(()));
+    assert!(matches!(op.map(|o| o.event), Ok(CardEvent::Swapped { .. })));
+    rig.work();
+    assert_eq!(rig.s.fault, CardFault::Clear, "mounted");
+    assert_eq!(
+        rig.s.live_at_clear,
+        Some(false),
+        "cleared with its row live"
+    );
     assert!(rig.registry().get(id).is_none(), "its row gone");
     assert_eq!(rig.band(), SOURCE_MISSING);
 }

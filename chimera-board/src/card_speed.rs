@@ -1400,7 +1400,9 @@ fn ui_read(store: &mut SdStore, vol: VolumeId, bed0: FileName) -> bool {
     store.read(vol, bed0, &mut First).is_ok()
 }
 
-/// B5's 4 KB at `slot` of the test file, split where a run ends.
+/// B5's 4 KB at `slot` of the test file, split where a run ends: through
+/// the shared card's write, which asks the streams' quiet first, as the
+/// UI's writes do (#767).
 fn write_4k(
     store: &mut SdStore,
     ext: &Extents,
@@ -1408,14 +1410,13 @@ fn write_4k(
     blocks: &[Block; WRITE_BLOCKS],
 ) -> Result<(), StoreError> {
     let from = FileBlock::new(slot * FOUR_K.get());
+    let card = store.device();
     for (lba, n) in ext.transfers(from, FOUR_K.get(), FOUR_K) {
         let k = usize::try_from(n.get()).unwrap_or(WRITE_BLOCKS);
         let part = blocks.get(..k).ok_or(StoreError::Io)?;
-        store.device().with_device(|dev| {
-            dev.start_op();
-            dev.write(part, BlockIdx(lba.get()))
-                .map_err(|e| dev.classify(&e))
-        })??;
+        card.start_op();
+        card.write(part, BlockIdx(lba.get()))
+            .map_err(|e| card.classify(&e))?;
     }
     Ok(())
 }
