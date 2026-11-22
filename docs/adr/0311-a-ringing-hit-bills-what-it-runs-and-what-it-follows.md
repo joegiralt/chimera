@@ -39,7 +39,10 @@ The DRUM bill (ADR 0269, 0274, 0287) is worked out from the kit as last publishe
 ## Consequences
 - **Sound:** none changes. Bills move admission only, and every golden is bit-identical.
 - **Voices:** a pad edit under ringing hits books up to 140 a sample a hit in the publish's block, and 60 while the glide runs (about 300 ms). A full pool refuses new hits for that window rather than overrunning. A kit republished on a cheaper filter keeps its ringing hits' bills until they end.
-- **Bank 1:** `KitBill::with_sound`, the recost fold and `follow_bill` (measured in the batch's budget lines).
+- **Flash:** `KitBill::with_sound`, the recost fold (`ringing_kits`) and `follow_bill` sit in bank 1, out of line and built for size, with the struck sound borrowed (`DrumHit::sound`), never copied. `just check`'s measure on a clean tree, after merging origin/0.4 96bda5be:
+  - bank 1 is 16–112 B under the old lines in every set (default 893,960 → 893,888; ORBIT 908,104 → 908,040);
+  - bank 2 is unchanged (default 600,192; ORBIT 632,928).
+  - Each bank-1 line is set to its measure.
 
 ## Sources
 - private issue #962, private issue #977, private issue #836, private issue #1026.
