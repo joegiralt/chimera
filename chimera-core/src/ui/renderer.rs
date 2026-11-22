@@ -1187,11 +1187,14 @@ impl Renderer {
             // LOOPFM: WAVE is the oscillator's loop depth (#667).
             Reads::Va(VaGlyph::Wave(osc)) => {
                 let [wave, shape] = self.eased_set(f, osc.params());
-                let [mode, blend] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
-                if va_mode(mode) == crate::dsp::va::VaMode::LoopFm {
-                    Gauge::VaLoop {
-                        b0: crate::dsp::va::lbfm::target_b0(blend, wave),
-                    }
+                let [blend] = self.eased_set(f, [VA_MIX_PARAMS[1]]);
+                // MODE is a choice: read as stored, never through the
+                // modes between on its way.
+                let mode = f.parts[f.active_part.index()].sound.params.va.mode;
+                if mode == crate::dsp::va::VaMode::LoopFm {
+                    Gauge::VaLoop(super::glyph::LoopB0::new(crate::dsp::va::lbfm::target_b0(
+                        blend, wave,
+                    )))
                 } else {
                     Gauge::VaWave(Morph {
                         wave: Unit::new(wave),

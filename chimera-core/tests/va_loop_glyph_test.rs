@@ -13,9 +13,9 @@ use chimera_core::ui::theme::{FOCUS_BOTTOM, HEADER_BOTTOM, SCREEN_W, WAVE_X};
 use embedded_graphics::pixelcolor::IntoStorage;
 use screen::{load_init, render_ui, settle, stack_ui};
 
-/// WAVE 1's glyph box on VA's home page, OSC 1 at `wave` and `shape`,
-/// MODE `mode` at BLEND `blend`.
-fn glyph(mode: VaMode, blend: f32, wave: f32, shape: f32) -> Vec<u16> {
+/// VA's home page, WAVE 1 focused, OSC 1 at `wave` and `shape`, MODE
+/// `mode` at BLEND `blend`, settled.
+fn va_ui(mode: VaMode, blend: f32, wave: f32, shape: f32) -> chimera_core::ui::UiState {
     chimera_core::bank2::DOOR_CELL.open_host_if_linked();
     let mut ui = stack_ui();
     load_init(&mut ui, EngineType::Va);
@@ -27,7 +27,12 @@ fn glyph(mode: VaMode, blend: f32, wave: f32, shape: f32) -> Vec<u16> {
         va.shape[0] = shape;
     }
     settle(&mut ui);
-    let fb = render_ui(&ui);
+    ui
+}
+
+/// WAVE 1's glyph box on VA's home page (`va_ui`).
+fn glyph(mode: VaMode, blend: f32, wave: f32, shape: f32) -> Vec<u16> {
+    let fb = render_ui(&va_ui(mode, blend, wave, shape));
     let mut px = vec![];
     for y in HEADER_BOTTOM..FOCUS_BOTTOM {
         for x in WAVE_X..SCREEN_W {
@@ -52,4 +57,40 @@ fn loopfm_draws_the_loop_wave_sets() {
 fn other_modes_draw_the_oscillators_shape() {
     let m = VaMode::Mix;
     assert!(glyph(m, 0.8, 0.5, 0.0) != glyph(m, 0.8, 0.5, 1.0));
+}
+
+/// The glyph's depth is the engine's: `target_b0(BLEND, WAVE)`.
+#[test]
+fn the_loop_glyphs_depth_is_target_b0() {
+    use chimera_core::dsp::va::lbfm::target_b0;
+    use chimera_core::ui::glyph::{Gauge, LoopB0};
+    for (blend, wave) in [(0.2, 0.5), (0.8, 0.5), (0.8, 0.9), (1.0, 1.0)] {
+        let ui = va_ui(VaMode::LoopFm, blend, wave, 0.3);
+        assert_eq!(
+            ui.shown_gauge(),
+            Some(Gauge::VaLoop(LoopB0::new(target_b0(blend, wave)))),
+            "BLEND {blend} WAVE {wave}"
+        );
+    }
+}
+
+/// MODE is a choice: its glyph switches on the frame MODE does, never
+/// through the modes between on the way (review of #667).
+#[test]
+fn modes_glyph_switches_with_mode_not_through_the_ones_between() {
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::glyph::Gauge;
+    let mut ui = va_ui(VaMode::Mix, 0.8, 0.5, 0.3);
+    ui.project_mut()
+        .edit_part(PartId::ALL[0])
+        .sound
+        .params
+        .va
+        .mode = VaMode::LoopFm;
+    ui.update(UiTick::for_test());
+    assert!(
+        matches!(ui.shown_gauge(), Some(Gauge::VaLoop(_))),
+        "{:?}",
+        ui.shown_gauge()
+    );
 }

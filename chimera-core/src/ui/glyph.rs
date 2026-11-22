@@ -55,7 +55,7 @@ pub enum Gauge {
     /// A VA oscillator's scope under LOOPFM (ADR 0162, #667): its looped
     /// wave at its own `b0` (`lbfm::target_b0` of BLEND and its WAVE),
     /// `va_loop_trace`.
-    VaLoop { b0: f32 },
+    VaLoop(LoopB0),
     /// OSC 1 MODE OSC 2: `va_mix_trace`.
     VaMix(VaMix),
     /// A crossfader at the set AMOUNT, its ends named by MODE
@@ -237,12 +237,28 @@ pub fn va_wave_trace<const N: usize>(m: Morph, half: i32) -> [i32; N] {
     )
 }
 
+/// A LOOPFM oscillator's `b0`: `target_b0`'s, in −0.95..=0 (the paper's
+/// negative root; 0 never loops).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoopB0(f32);
+
+impl LoopB0 {
+    /// `b0` held to −0.95..=0.
+    pub fn new(b0: f32) -> Self {
+        Self(clampf(b0, -0.95, 0.0))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
 /// One period of a LOOPFM oscillator (`lbfm`) at `b0` across `N`
 /// points, as `va_wave_trace` draws the others.
-pub fn va_loop_trace<const N: usize>(b0: f32, half: i32) -> [i32; N] {
+pub fn va_loop_trace<const N: usize>(b0: LoopB0, half: i32) -> [i32; N] {
     let last = (N - 1).max(1) as f32;
     scaled(
-        core::array::from_fn(|i| lbfm(i as f32 / last, b0)),
+        core::array::from_fn(|i| lbfm(i as f32 / last, b0.get())),
         0.0,
         half,
     )
@@ -845,7 +861,7 @@ impl Gauge {
             | Gauge::Staff { .. }
             | Gauge::Wave(_)
             | Gauge::VaWave(_)
-            | Gauge::VaLoop { .. }
+            | Gauge::VaLoop(_)
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
             | Gauge::Tape(_)
@@ -864,7 +880,7 @@ impl Gauge {
         let m = |m: &Morph| q(m.wave.get()) | q(m.shape.get()) << 10;
         match self {
             Gauge::VaWave(o) => m(o),
-            Gauge::VaLoop { b0 } => q(-b0),
+            Gauge::VaLoop(b0) => q(-b0.get()),
             Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
                 .wrapping_add(v.mode as u32),
             Gauge::Blend { mode, .. } => *mode as u32,
