@@ -56,6 +56,11 @@ pub enum Origin {
         secs: f32,
         tail: f32,
         morph: bool,
+        /// Rendered once and kept (`frozen`, a path under
+        /// `tools/factory-tapes/`): its 48 kHz samples as raw f32 LE, read
+        /// back bit for bit instead of rendered, so an engine change never
+        /// moves its pin or the Sounds on it (#352).
+        frozen: Option<String>,
     },
     /// The tool's own synthesis, seeded: no recording in it.
     Synth { kind: Synth, secs: f32 },
@@ -198,6 +203,7 @@ fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
             secs,
             tail: num(t, "tail")?.unwrap_or(0.0),
             morph: get(t, "morph") == Some("sweep"),
+            frozen: get(t, "frozen").map(Into::into),
         },
         "synth" => Origin::Synth {
             kind: match need(t, "synth")? {
@@ -337,6 +343,17 @@ pub fn audio(r: &SourceRecipe, dir: &Path) -> Result<Option<Mono>, String> {
     };
     Ok(Some(match &r.origin {
         Origin::Render {
+            frozen: Some(file), ..
+        } => {
+            let path = format!("{ROOT}/tools/factory-tapes/{file}");
+            let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+            let (samples, rest) = bytes.as_chunks::<4>();
+            if !rest.is_empty() {
+                return Err(format!("{path}: not whole f32s"));
+            }
+            mono(samples.iter().map(|b| f32::from_le_bytes(*b)).collect())
+        }
+        Origin::Render {
             sound,
             from,
             modal,
@@ -344,6 +361,7 @@ pub fn audio(r: &SourceRecipe, dir: &Path) -> Result<Option<Mono>, String> {
             secs,
             tail,
             morph,
+            frozen: None,
         } => {
             let mut s = chimera_sound(sound)?;
             if let Some(m) = modal {

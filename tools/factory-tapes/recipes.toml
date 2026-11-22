@@ -276,6 +276,10 @@ secs = "2.5"
 # Past the pad's attack: frame 0 sounds.
 from = "0.5"
 morph = "sweep"
+# Frozen (#352): MORPH PAD as origin/0.4 (6fb04d0e) rendered it, its 48 kHz
+# samples as raw f32 LE, read back instead of rendered again: the engine's
+# sine table changed under it, and TINZ plays this source bit for bit.
+frozen = "frozen/WAVE-MORPH.f32"
 # C3: 48 000 / 130.8128 Hz.
 transwave = "366.94"
 

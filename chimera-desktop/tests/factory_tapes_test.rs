@@ -46,23 +46,28 @@ fn manifest_crcs_are_pinned() {
     let (r, built) = set();
     let pins = pinned();
     assert_eq!(pins.len(), r.sources.len(), "a pin a source");
+    let mut off = Vec::new();
     for (s, b) in r.sources.iter().zip(built) {
         let pin = pins
             .iter()
             .find(|p| p.0 == s.name.as_str())
             .unwrap_or_else(|| panic!("{} unpinned", s.name.as_str()));
         match b {
-            Some(b) => assert_eq!(
-                b.head.sref.crc,
-                pin.1,
+            Some(b) if b.head.sref.crc != pin.1 => off.push(format!(
                 "{}: {:08X}, pinned {:08X}",
                 s.name.as_str(),
                 b.head.sref.crc,
                 pin.1
-            ),
+            )),
+            Some(_) => {}
             None => eprintln!("{}: its CC0 original is absent, skipped", s.name.as_str()),
         }
     }
+    assert!(
+        off.is_empty(),
+        "every source off its pin:\n{}",
+        off.join("\n")
+    );
 }
 
 /// Every factory source's descriptor reads back to its own bytes.
@@ -141,6 +146,11 @@ impl Rig {
 
     /// `note` at velocity 100, `blocks` of it held: ADR 0063's LUFS on P1.
     fn lufs(&mut self, note: u8, blocks: usize) -> f32 {
+        lufs(&self.play(note, blocks))
+    }
+
+    /// `note` at velocity 100, `blocks` of it held: P1 before the limiter.
+    fn play(&mut self, note: u8, blocks: usize) -> Vec<f32> {
         let ev = NoteEvent {
             channel: self.shared.parts[0].mix.channel,
             note: MidiNote::new(note).unwrap(),
@@ -172,7 +182,7 @@ impl Rig {
                 p1.extend_from_slice(&self.dac.input()[0]);
             }
         }
-        lufs(&p1)
+        p1
     }
 }
 
@@ -373,3 +383,53 @@ fn factory_sounds_save_as_loaded() {
         );
     }
 }
+
+/// #352: WAVE MORPH is MORPH PAD as origin/0.4 (6fb04d0e) rendered it, kept
+/// as a file (`frozen`): the engine's sine may change, its source may not.
+#[test]
+fn wave_morph_is_frozen() {
+    let (r, built) = set();
+    let i = r
+        .sources
+        .iter()
+        .position(|s| s.name.as_str() == "WAVE MORPH")
+        .unwrap();
+    let crc = built[i]
+        .as_ref()
+        .expect("built from the repo")
+        .head
+        .sref
+        .crc;
+    assert_eq!(crc, 0xFD87_A9B7, "{crc:08X}");
+}
+
+/// TINZ, on its source, at its root for two seconds through the Instrument:
+/// P1 bit for bit as origin/0.4 (6fb04d0e) played it.
+#[test]
+fn tinz_plays_as_on_0_4() {
+    let (r, built) = set();
+    let s = r.sounds.iter().find(|s| s.name.as_str() == "TINZ").unwrap();
+    let b = r
+        .sources
+        .iter()
+        .zip(built)
+        .find(|(x, _)| x.name == s.source)
+        .and_then(|(_, b)| b.as_ref())
+        .unwrap();
+    let snd = tape_sound(s, &b.head);
+    let (mut p, _) = Project::boxed();
+    let id = p.source_store(b.head.sref, &held(b)).unwrap();
+    let tok = p.pool().table().reader().unwrap();
+    let out = Rig::new(&snd, Some(tok), Some(id)).play(((b.head.root + 50) / 100) as u8, 2 * BPS);
+    let h = out
+        .iter()
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    assert!(out.iter().any(|x| x.abs() > 1e-3), "silent");
+    assert_eq!(h, TINZ_0_4, "0x{h:016x}");
+}
+
+/// `tinz_plays_as_on_0_4`'s hash on origin/0.4 (6fb04d0e).
+const TINZ_0_4: u64 = 0xaea6_c69f_d102_d3e6;
