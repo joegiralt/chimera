@@ -73,9 +73,6 @@ pub struct VaDoor {
     pub osc1_phase: ModEntry,
     /// PHASE's OSC 2, plain, reporting its steps (`m`, `k` unread).
     pub osc2_steps: ModEntry,
-    /// AM's whole render, its product's steps and slope kinks corrected
-    /// (`VaEngine::render_am_kinks`, #660).
-    am: crate::dsp::va::AmRender,
 }
 
 #[cfg(feature = "bank2")]
@@ -85,7 +82,6 @@ pub const DOOR: VaDoor = VaDoor {
     osc2_rev: OSC2_REV,
     osc1_phase: OSC1_PHASE,
     osc2_steps: OSC2_STEPS,
-    am: crate::dsp::va::VaEngine::render_am_kinks,
 };
 
 #[cfg(feature = "bank2")]
@@ -101,17 +97,6 @@ impl VaDoor {
         wave: [f32; 2],
     ) {
         (self.loopfm)(e, out, l, gain, x, wave)
-    }
-
-    #[inline(always)]
-    pub(in crate::dsp::va) fn am(
-        &self,
-        e: &mut crate::dsp::va::VaEngine,
-        out: &mut [f32; BLOCK_SIZE],
-        l: &crate::dsp::va::Lanes,
-        gain: crate::dsp::va::Gain,
-    ) {
-        (self.am)(e, out, l, gain)
     }
 }
 
@@ -196,34 +181,6 @@ pub fn osc2_steps(
     let mut draw = || js.draw(stab);
     o.pm_jumps = PM_JUMPS;
     o.render_in::<BLOCK_SIZE, false, false, false, false, true>(
-        out,
-        mk,
-        r,
-        jit,
-        &mut draw,
-        &ZEROS,
-        (0.0, 0.0),
-    );
-}
-
-/// AM's OSC 1 (`<64, true, false, true, false>` with `PH`, #660): the
-/// plain instance's wraps and sub flips in `mk`, its steps left naive and
-/// listed (`VarOsc::listed_steps`, up to `PM_JUMPS` a block; past them
-/// corrected as ever), never marked.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-pub fn osc1_steps(
-    o: &mut VarOsc,
-    out: &mut [f32; BLOCK_SIZE],
-    mk: &mut [[f32; 2]; BLOCK_SIZE],
-    r: &Ramps,
-    jit: &mut WrapJitter,
-    stab: &mut Stability,
-    js: JitterScale,
-) {
-    let mut draw = || js.draw(stab);
-    o.pm_jumps = PM_JUMPS;
-    o.render_in::<BLOCK_SIZE, true, false, true, false, true>(
         out,
         mk,
         r,

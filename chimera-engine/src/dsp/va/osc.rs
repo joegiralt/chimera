@@ -19,6 +19,7 @@
 //! the wraps, the sub's flips and the jitter. A plain instance never
 //! touches `read` but to leave it on the clock.
 
+pub mod am;
 mod anchor;
 pub mod door;
 pub mod solo;
@@ -1563,7 +1564,12 @@ impl VarOsc {
             let span = (i0, i1);
             macro_rules! run {
                 ($a:ty, $b:ty) => {
-                    if MOD || PH {
+                    if PH && FLIP && !MOD {
+                        // AM's OSC 1 (#660): its own module's, linked high
+                        am::run::<$a, $b, N, REC, SYNC, FLIP, MOD, PH>(
+                            self, &blk, span, r, out, mk, jit, draw, m, k,
+                        )
+                    } else if MOD || PH {
                         door::run::<$a, $b, N, REC, SYNC, FLIP, MOD, PH>(
                             self, &blk, span, r, out, mk, jit, draw, m, k,
                         )

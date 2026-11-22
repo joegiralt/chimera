@@ -67,23 +67,39 @@ struct Magic(u32);
 const MAGIC: Magic = Magic(0xB2A5_0283);
 
 /// The solos' table, at its own slot after the door (`VA_SOLO_DOOR_ADDR`,
-/// `bank2.x`). Its entry is private, called only through `through`.
+/// `bank2.x`), and AM's corrected render beside it (#660: the main door's
+/// table has no room left). Its entries are private, called only through
+/// `through` and `through_am`.
 #[repr(C)]
 pub struct SoloDoor {
     magic: Magic,
     solo: SoloEntry,
+    am: crate::dsp::va::AmRender,
 }
 
 impl SoloDoor {
     const OWN: SoloDoor = SoloDoor {
         magic: MAGIC,
         solo: SoloEntry(play),
+        am: crate::dsp::va::VaEngine::render_am_kinks,
     };
 
     /// The plain renders' solo (`play`).
     #[inline(always)]
     pub fn solo(&self) -> &SoloEntry {
         &self.solo
+    }
+
+    /// AM's corrected render (`VaEngine::render_am_kinks`).
+    #[inline(always)]
+    pub(in crate::dsp::va) fn am(
+        &self,
+        e: &mut crate::dsp::va::VaEngine,
+        out: &mut [f32; BLOCK_SIZE],
+        l: &crate::dsp::va::Lanes,
+        gain: crate::dsp::va::Gain,
+    ) {
+        (self.am)(e, out, l, gain)
     }
 }
 
@@ -122,6 +138,24 @@ pub fn through<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
         }
         #[cfg(feature = "test-support")]
         if FORCE_PAIRS.with(core::cell::Cell::get) {
+            return None;
+        }
+        Some(f(&SoloDoor::OWN))
+    }
+}
+
+/// `f` on the table for AM's render: `through`'s, but never forced to
+/// pairs (AM's oscillators are always its listing pairs).
+#[inline(always)]
+pub fn through_am<R>(f: impl FnOnce(&SoloDoor) -> R) -> Option<R> {
+    #[cfg(all(feature = "bank2", target_os = "none"))]
+    {
+        crate::bank2::DOOR_CELL.with_slot(SLOT, f)
+    }
+    #[cfg(not(all(feature = "bank2", target_os = "none")))]
+    {
+        #[cfg(feature = "bank2")]
+        if !crate::bank2::DOOR_CELL.is_open() {
             return None;
         }
         Some(f(&SoloDoor::OWN))

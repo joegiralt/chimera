@@ -1230,10 +1230,7 @@ impl VaEngine {
     #[inline(never)]
     fn render_am(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         #[cfg(feature = "bank2")]
-        if crate::bank2::DOOR_CELL
-            .with(|d| d.va.am(self, out, l, gain))
-            .is_none()
-        {
+        if osc::solo::through_am(|t| t.am(self, out, l, gain)).is_none() {
             self.run(out, l, PlainMode::Am, gain);
         }
         #[cfg(not(feature = "bank2"))]
@@ -1244,7 +1241,8 @@ impl VaEngine {
     /// leave their steps naive and list them (OSC 2 first, so OSC 1's own
     /// marks, its wraps and sub flips, are the block's), and the operator's
     /// corrector (`AmKinks`) steps and bends the product at each, one
-    /// sample late. Bank 2's (`*8VaEngine15render_am_kinks*`).
+    /// sample late. Bank 2's (`*8VaEngine15render_am_kinks*`), reached
+    /// through the solos' table (`osc::solo::through_am`).
     #[inline(never)]
     pub fn render_am_kinks(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
         let Self {
@@ -1267,7 +1265,7 @@ impl VaEngine {
             &ZEROS,
             (0.0, 0.0),
         );
-        osc::door::osc1_steps(o1, out, mk, &l.osc[0], &mut jit[0], stab, js);
+        osc::am::osc1_steps(o1, out, mk, &l.osc[0], &mut jit[0], stab, js);
         #[cfg(any(test, feature = "test-support"))]
         {
             self.played = [Some(Played::Pair); 2];
