@@ -339,12 +339,27 @@ pub struct OrbitRunner {
     /// Each Part's SNAP and HELD last handed on: an edit re-snaps its held
     /// keys at once, as a harmony change does (#322).
     snaps: [(LiveSnap, Held); MAX_PARTS],
+    /// A gate build's `bank2 erase` shut it (`shut_in`): stopped, its
+    /// offs sent, until the write is done (#784).
+    #[cfg(feature = "bank2-gate")]
+    pub(super) shut: Shut,
     /// The external tempo the reverb follows, a beat in samples, with the
     /// BPM set when it was taken (`follow`).
     ext: Option<(u32, Bpm)>,
 }
 
 const _: () = assert!(size_of::<OrbitRunner>() <= 1024);
+
+/// A gate build's `bank2 erase` and ORBIT (#784): playing as ever, asked
+/// to stop by the gate (the next block through the door does it), or
+/// stopped with its offs sent until the write is done.
+#[cfg(feature = "bank2-gate")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shut {
+    Open,
+    Asked,
+    Shut,
+}
 
 impl OrbitRunner {
     /// Reserved from the voice budget while ORBIT plays, as `FxBus::COST`
@@ -383,6 +398,8 @@ impl OrbitRunner {
             take: Take::new(),
             harmony: None,
             snaps: [(LiveSnap::Off, Held::Stay); MAX_PARTS],
+            #[cfg(feature = "bank2-gate")]
+            shut: Shut::Open,
             ext: None,
         }
     }
@@ -589,6 +606,11 @@ impl OrbitRunner {
         src: &GateView<'_>,
         ports: &mut P,
     ) -> Events {
+        #[cfg(feature = "bank2-gate")]
+        if self.shut == Shut::Asked {
+            self.shut_in(inst, shared);
+            return Events::new();
+        }
         #[cfg(feature = "probe")]
         crate::probe::begin();
         let sent = self.advance(shared);
@@ -639,6 +661,29 @@ impl OrbitRunner {
             Some((beat, _)) => Tempo::from_beat(beat, self.sample_rate.get()),
             None => Tempo::from_bpm(self.clock.bpm().get() as f32),
         }
+    }
+
+    /// Before bank 2's door closes for a write (#784): every note ORBIT
+    /// holds let go now, while its code is still there to send the offs,
+    /// the transport down and the harmony let go, so nothing it started
+    /// sounds on and a reopen resumes nothing stale. Shut until the gate
+    /// opens it (`LoadGate::before_block`).
+    #[cfg(feature = "bank2-gate")]
+    #[inline(never)]
+    fn shut_in(&mut self, inst: &mut Instrument, shared: &AudioShared) {
+        let sent = self.state.stop();
+        Self::send(
+            inst,
+            (shared, &GateView::empty()),
+            &sent,
+            &mut self.fired,
+            &mut NoPorts,
+        );
+        self.transport = false;
+        (self.ext_start, self.ext_play) = (false, None);
+        inst.set_harmony(None);
+        self.harmony = None;
+        self.shut = Shut::Shut;
     }
 
     /// A project load, at `epoch`: it killed every voice, so nothing to

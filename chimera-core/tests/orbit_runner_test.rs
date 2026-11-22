@@ -55,10 +55,12 @@ impl Rig {
     }
 
     fn block(&mut self) {
-        if self
-            .gate
-            .before_block(&self.link, &mut self.inst, &self.shared)
-        {
+        if self.gate.before_block(
+            &self.link,
+            &mut self.inst,
+            &self.shared,
+            Some(&mut *self.runner),
+        ) {
             self.runner.block(&mut self.inst, &self.shared);
         }
         self.inst

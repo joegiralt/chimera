@@ -349,7 +349,7 @@ fn block<P: OrbitPorts>(r: Run<'_>, shared: &AudioShared, ports: &mut P) {
         orbit,
     } = r;
     inst.run_block_ported(sources, out, shared, ports, |inst, reads, ports| {
-        if gate.before_block(&LOAD_LINK, inst, shared) {
+        if gate.before_block(&LOAD_LINK, inst, shared, orbit.runner()) {
             let now = orbit.now();
             let play = |src: chimera_engine::note_queue::SourceId<NOTE_SOURCES>, ev| match ev {
                 // Capture sees the raw key, before any snap.

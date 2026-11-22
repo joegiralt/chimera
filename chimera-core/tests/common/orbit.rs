@@ -195,6 +195,12 @@ impl OrbitRig {
         &self.inst
     }
 
+    /// The load link the gate steps on.
+    #[allow(dead_code)]
+    pub fn link(&self) -> &LoadLink {
+        &self.link
+    }
+
     /// A key on Part `p`'s channel, as a keyboard plays it: queued for the
     /// next block, which drains it inside the load gate.
     pub fn key(&mut self, p: usize, note: u8, on: bool) {
@@ -270,10 +276,12 @@ impl OrbitRig {
         let bpm_before = self.last_view.bpm;
         let pending_before = self.runner.pending();
 
-        if self
-            .gate
-            .before_block(&self.link, &mut self.inst, &self.shared)
-        {
+        if self.gate.before_block(
+            &self.link,
+            &mut self.inst,
+            &self.shared,
+            Some(&mut *self.runner),
+        ) {
             let now = self.runner.now();
             for (src, ev) in self.keys.drain(..) {
                 match ev {
