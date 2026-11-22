@@ -28,7 +28,6 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
     RINGS_PARAMS, Reads, Rings, RingsPart, TAPE_GLYPH_PARAMS, Tail, VA_MIX_PARAMS, VaGlyph, VaMix,
-    va_mode,
 };
 use crate::ui::hint;
 use crate::ui::lfo_glyph::{self, LfoGauge};
@@ -215,6 +214,9 @@ pub struct Renderer {
     /// CUSTOM's cursor in twelfths round the circle, unwrapped, so it eases
     /// the short way across 11 and 0 (`animation::nearest`).
     pub orbit_cursor: AnimatedValue,
+    /// The params a glyph reads that its page has no cell for, each
+    /// eased in a lane of its own (#284), bank 2's (`notes::Lanes`).
+    pub lanes: crate::ui::notes::Lanes,
 }
 
 impl Default for Renderer {
@@ -230,6 +232,7 @@ impl Renderer {
             set: [AnimatedValue::new(0.5).with_speed(KNOB_SPEED); 6],
             branch_scroll: AnimatedValue::new(0.0).with_speed(0.25),
             orbit_cursor: AnimatedValue::new(0.0),
+            lanes: crate::ui::notes::Lanes::new(),
         }
     }
 
@@ -1014,9 +1017,14 @@ impl Renderer {
                 .or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
                 .or_else(|| view::ratio_note(a, sound))
         });
-        let note = view
-            .addr()
-            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
+        // SOURCE has no address: its own state says what to do (#709).
+        let (at, src) = match view {
+            View::Source(s) => (None, Some(s)),
+            v => (v.addr(), v.addr().map(|_| f.ctx.src)),
+        };
+        let note = src
+            .and_then(|s| view::band_note(at, sound, s))
+            .or_else(|| at.and_then(|a| view::delay_note(a, &f.ctx)))
             .or(tuning.as_ref().map(|l| l.as_str()))
             .or(tonal.as_ref().map(|l| l.as_str()))
             .or_else(|| view::clash_note(&view, &f.ctx));
@@ -1168,17 +1176,34 @@ impl Renderer {
                                 frame,
                             ))
                         } else {
-                            Gauge::Tail(Tail::from_set(f.ctx.rev, set, focus, frame))
+                            Gauge::Tail(Tail::from_set(
+                                f.ctx.rev,
+                                set,
+                                (f.fx.reverb.sync, f.rev_clock),
+                                focus,
+                                frame,
+                            ))
                         }
                     }
                 }
             }
+            // LOOPFM: WAVE is the oscillator's loop depth (#667).
             Reads::Va(VaGlyph::Wave(osc)) => {
                 let [wave, shape] = self.eased_set(f, osc.params());
-                Gauge::VaWave(Morph {
-                    wave: Unit::new(wave),
-                    shape: Unit::new(shape),
-                })
+                let [blend] = self.eased_set(f, [VA_MIX_PARAMS[1]]);
+                // MODE is a choice: read as stored, never through the
+                // modes between on its way.
+                let mode = f.parts[f.active_part.index()].sound.params.va.mode;
+                if mode == crate::dsp::va::VaMode::LoopFm {
+                    Gauge::VaLoop(super::glyph::LoopB0::new(crate::dsp::va::lbfm::target_b0(
+                        blend, wave,
+                    )))
+                } else {
+                    Gauge::VaWave(Morph {
+                        wave: Unit::new(wave),
+                        shape: Unit::new(shape),
+                    })
+                }
             }
             Reads::Va(VaGlyph::Mode) => {
                 Gauge::VaMix(VaMix::from_set(self.eased_set(f, VA_MIX_PARAMS)))
@@ -1211,10 +1236,12 @@ impl Renderer {
             },
             Reads::Drum => f.ctx.pad.map_or(Gauge::None, Gauge::Drum),
             Reads::Va(VaGlyph::Blend) => {
-                let [mode, amount] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
+                // MODE as stored, as WAVE's reads it: a choice never rolls
+                // through the modes between.
+                let [amount] = self.eased_set(f, [VA_MIX_PARAMS[1]]);
                 Gauge::Blend {
                     value: amount,
-                    mode: va_mode(mode),
+                    mode: f.parts[f.active_part.index()].sound.params.va.mode,
                 }
             }
         });
@@ -1270,16 +1297,42 @@ impl Renderer {
     }
 
     /// A composite's inputs, `addrs`' set values normalized: eased (`set`)
-    /// where the page has a slot for one, else stored; never `anim` or
-    /// anything modulated, so the glyph only ever moves by its own
-    /// animation.
+    /// where the page has a slot for one, else in its lane off the page
+    /// (`off_page`); never `anim` or anything modulated, so the glyph only
+    /// ever moves by its own animation.
     fn eased_set<const N: usize>(&self, f: &Frame, addrs: [ParamAddr; N]) -> [f32; N] {
-        let stored = stored_set(&Stored(f), addrs);
-        core::array::from_fn(|i| {
-            (0..f.def.params.len())
-                .find(|&s| slot_addr(f.def, s, &f.ctx) == Some(addrs[i]))
-                .map_or(stored[i], |s| self.set[s].current())
-        })
+        let mut out = [0.0; N];
+        self.eased_into(f, &addrs, &mut out);
+        out
+    }
+
+    /// `eased_set` once for every size, out of line.
+    #[inline(never)]
+    fn eased_into(&self, f: &Frame, addrs: &[ParamAddr], out: &mut [f32]) {
+        for (o, &a) in out.iter_mut().zip(addrs) {
+            let stored = Stored(f)
+                .block(a.block)
+                .map_or(0.0, |b| b.normalized(a.param));
+            *o = match (0..f.def.params.len()).find(|&s| slot_addr(f.def, s, &f.ctx) == Some(a)) {
+                Some(s) => self.set[s].current(),
+                None => self.off_page(a, stored),
+            };
+        }
+    }
+
+    /// `at`'s value in its lane off the page, `stored` until it has one
+    /// or with bank 2 closed (#284).
+    #[inline(never)]
+    fn off_page(&self, at: ParamAddr, stored: f32) -> f32 {
+        let mut out = stored;
+        crate::bank2::ui_door(|u| {
+            u.notes(crate::ui::notes::Ask::Lane {
+                lanes: &self.lanes,
+                at,
+                out: &mut out,
+            })
+        });
+        out
     }
 
     /// The gauge the focus band shows now: none while a prime status holds
@@ -1453,12 +1506,6 @@ impl Renderer {
 /// line would reach (ADR 0154).
 fn hint_right(gauge: &Gauge) -> i32 {
     components::focus_label_slot(gauge).right
-}
-
-/// `addrs`' stored values, normalized: `eased_set`'s fallback for a param
-/// the page has no slot for.
-fn stored_set<const N: usize>(stored: &impl BlockRead, addrs: [ParamAddr; N]) -> [f32; N] {
-    addrs.map(|a| stored.block(a.block).map_or(0.0, |b| b.normalized(a.param)))
 }
 
 /// The edited Part's stored blocks and the FX's, read-only.

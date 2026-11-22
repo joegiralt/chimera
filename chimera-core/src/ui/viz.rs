@@ -776,12 +776,13 @@ where
         PLOT_BASE - (h * (out(db) + 48.0) / 48.0) as i32
     });
     draw::text(d, &theme::FONT_LABEL, "IN", x1 + 4, PLOT_BASE, theme::MID);
+    // Clear of KEY's hint on the status line above (#1066).
     draw::text(
         d,
         &theme::FONT_LABEL,
         "OUT",
         x0 - 20,
-        PLOT_TOP + 8,
+        PLOT_TOP + 11,
         theme::MID,
     );
     let key_x = x1 - 4 - draw::text_width(&theme::FONT_LABEL, key, 0);

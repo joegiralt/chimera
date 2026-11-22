@@ -334,7 +334,7 @@ pub enum SourceState {
     /// dropping out over the records that won't de-frame.
     Damaged,
     /// TRANSWAVE on a source that isn't one.
-    NotTranswave,
+    NotWaveTable,
     /// TRON on a zone set (the streamed TRON's).
     ZonesOnTron,
     /// A streamed source the note would need in RAM (slice 1 § 2.3).
@@ -388,7 +388,7 @@ impl SourceState {
         };
         match pool.source_view(r) {
             Some(v) if wave::playable(p.way(), &v) => held,
-            Some(_) if p.machine == TapeMachine::Wave => SourceState::NotTranswave,
+            Some(_) if p.machine == TapeMachine::Wave => SourceState::NotWaveTable,
             None if pool.streamed(r) => match tape_engine::needs_ram(p) {
                 Some(n) => SourceState::NeedsRam(n),
                 None => held.streaming(p.tape > 0.0),
@@ -529,7 +529,7 @@ impl SourceState {
             SourceState::Absent(Absence::Fragmented) => crate::ui::source_cell::FRAGMENTED,
             SourceState::Absent(Absence::NeedsRam(r)) => crate::ui::source_cell::refusal_words(r),
             SourceState::Damaged => crate::ui::source_cell::FILE_DAMAGED,
-            SourceState::NotTranswave => "NOT A TRANSWAVE",
+            SourceState::NotWaveTable => "NEEDS A WAVE TABLE",
             SourceState::ZonesOnTron => "ZONES: NOT TRON",
             SourceState::NeedsRam(n) => crate::ui::source_cell::needs_ram_words(n),
             SourceState::Failed(w) => w.words(),
@@ -550,12 +550,12 @@ impl SourceState {
                 buf.write_str("ERROR")
             }
             SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
-            SourceState::Absent(Absence::Fragmented) => buf.write_str("COPY"),
+            SourceState::Absent(Absence::Fragmented) => buf.write_str("FRAG"),
             SourceState::Absent(Absence::NeedsRam(r)) => {
                 buf.write_str(crate::ui::source_cell::refusal_cell(r))
             }
             SourceState::Damaged => buf.write_str("BAD FILE"),
-            SourceState::NotTranswave => buf.write_str("NO WAVE"),
+            SourceState::NotWaveTable => buf.write_str("NO WAVE"),
             SourceState::ZonesOnTron => buf.write_str("ZONES"),
             SourceState::NeedsRam(_) => buf.write_str("RAM"),
             SourceState::Held { rate, frames, .. } => {
@@ -1271,9 +1271,11 @@ pub fn ratio_note(addr: ParamAddr, sound: &Sound) -> Option<crate::project::Line
 }
 
 /// What the focus band says in its hint's place about a TAPE cell: why
-/// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
-/// its loop head holds. Bank 2's (`walk::band_note_in`): closed, nothing.
-pub fn band_note(addr: ParamAddr, sound: &Sound, src: SourceState) -> Option<&'static str> {
+/// it is dimmed (`tape_note`), a streamed LOOP's XFADE past the 100 ms
+/// its loop head holds, or, for SOURCE (`addr` none), what to do about a
+/// source the machine can't play (#709). Bank 2's (`walk::band_note_in`):
+/// closed, nothing.
+pub fn band_note(addr: Option<ParamAddr>, sound: &Sound, src: SourceState) -> Option<&'static str> {
     crate::bank2::ui_door(|u| u.band_note(addr, sound, src)).flatten()
 }
 

@@ -81,7 +81,7 @@ fn sync_is_cell_e_on_char_and_grain() {
         assert_eq!(ui.cell_text_for_test(SYNC_SLOT).as_str(), "SYNC");
         let sound = &ui.project().part(ui.active_part).sound;
         assert_eq!(
-            view::band_note(at(DelayParams::SYNC), sound, ctx.src),
+            view::band_note(Some(at(DelayParams::SYNC)), sound, ctx.src),
             Some("TIME TURNS NOTES OF THE TEMPO")
         );
         feed(&mut ui, Input::turn(EncoderId::E, -1));
@@ -208,7 +208,7 @@ fn a_folded_note_reads_as_it_plays_and_redraws() {
     assert_eq!(ui.cell_text_for_test(TIME_SLOT).as_str(), "1/4");
     let sound = ui.project().part(ui.active_part).sound.clone();
     let src = ui.slot_ctx_for_test().src;
-    let note = |a| view::band_note(at(a), &sound, src);
+    let note = |a| view::band_note(Some(at(a)), &sound, src);
     assert_eq!(note(DelayParams::NOTE), None);
     let mut fb = screen::Fb::new();
     ui.render_dirty_with_scope(&mut fb, &perf, &scope);

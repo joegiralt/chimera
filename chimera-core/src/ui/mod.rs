@@ -3825,6 +3825,20 @@ impl UiState {
                 {
                     *value = spec.offset_normalized(*value, offset);
                 }
+                // An ENV A stage moves by the TIME or LEVEL it primes (#149).
+                let mut stage = None;
+                crate::bank2::ui_door(|u| {
+                    u.notes(notes::Ask::Stage {
+                        addr,
+                        value: *value,
+                        sound,
+                        sources: &mod_sources,
+                        out: &mut stage,
+                    })
+                });
+                if let Some(v) = stage {
+                    *value = v;
+                }
             }
         }
 
@@ -3833,6 +3847,14 @@ impl UiState {
             a.set_target(v);
             a.update();
         }
+        // A glyph's params off the page ease too (#284).
+        crate::bank2::ui_door(|u| {
+            u.notes(notes::Ask::Ease {
+                lanes: &mut self.renderer.lanes,
+                perf: self.project.perf(),
+                part: self.active_part,
+            })
+        });
 
         // Animate branch scroll for dungeon map sub-pages.
         // Ensure the active row's bottom edge (y + LINE_HEIGHT) is on screen.
@@ -3994,6 +4016,14 @@ impl UiState {
         )
     }
 
+    /// The focus band's gauge as the next frame draws it, for tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shown_gauge(&self) -> Option<glyph::Gauge> {
+        let perf = PerfStats::zero();
+        let scope = [0.0; SCOPE_LEN];
+        self.renderer.shown_gauge(&self.frame(&perf, None, &scope))
+    }
+
     /// What one frame draws from.
     fn frame<'a>(
         &'a self,
@@ -4081,31 +4111,22 @@ impl UiState {
     }
 
     /// Where the UI is as (place, node, sub) for the header and map keys:
-    /// Part n's pages n, its mixer 10 + n, its Sound rung 30 + n, SETTINGS 20,
-    /// ORBIT on ring r 40 + r.
+    /// Part n's pages 64 + 8 × its chain + n (a program change swaps the
+    /// chain under a page that stays put, #1068), its mixer 10 + n, its
+    /// Sound rung 30 + n, SETTINGS 20, ORBIT on ring r 40 + r.
     fn loc_tag(&self) -> (u8, u8, u8) {
         let place = match (self.loc.settings(), self.loc.part(), self.loc.orbit()) {
             (_, _, Some(o)) => 40 + o.ring().get(),
             (Some(_), _, _) | (_, None, _) => 20,
             (_, Some(p), _) if self.loc.on_mixer() => 10 + p.index() as u8,
             (_, Some(p), _) if self.loc.browse().is_some() => 30 + p.index() as u8,
-            (_, Some(p), _) => p.index() as u8,
+            (_, Some(p), _) => 64 + 8 * self.chain_of(p) as u8 + p.index() as u8,
         };
         let at = self
             .loc
             .page(&self.cx())
             .map_or((0, 0), |(_, at)| (at.node(), at.sub()));
         (place, at.0, at.1)
-    }
-
-    /// 1 while the shown Part's chain has FRM: the map's sub-row changes
-    /// under a page that stays put.
-    fn formant_key(&self) -> u8 {
-        let on = self
-            .loc
-            .part()
-            .is_some_and(|p| self.chain_of(p).has_formant_page());
-        u8::from(on)
     }
 
     /// Snapshot of what region `kind` shows; a region redraws when it changes.
@@ -4229,7 +4250,7 @@ impl UiState {
                     Pages::Row => 0,
                     Pages::Stack => region::quantize(self.renderer.branch_scroll.current()),
                 },
-                f.ctx.model as u8 | f.ctx.tape.index() << 4 | self.formant_key() << 7,
+                f.ctx.model as u8 | f.ctx.tape.index() << 4,
                 f.pages as u8,
             ),
             RegionKind::Grid => RegionData::grid_with_value(

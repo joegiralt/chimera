@@ -40,7 +40,19 @@ fn gauge_at(glyph: FocusGlyph, fmt: ValFmt, v: f32, rev: ReverbType) -> Gauge {
         Reads::Composite(CompositeId::Reverb) if rev == ReverbType::Quad => {
             Gauge::Cube(chimera_core::ui::glyph::Cube::from_set([v; 6], None, 0))
         }
-        Reads::Composite(CompositeId::Reverb) => Gauge::Tail(Tail::from_set(rev, [v; 11], None, 0)),
+        Reads::Composite(CompositeId::Reverb) => Gauge::Tail(Tail::from_set(
+            rev,
+            [v; 11],
+            (
+                chimera_core::dsp::reverb::RevSync::Off,
+                (
+                    chimera_core::dsp::rev::sync::Tempo::DEFAULT,
+                    chimera_core::dsp::rev::sync::FoldState(0),
+                ),
+            ),
+            None,
+            0,
+        )),
         Reads::Va(VaGlyph::Wave(_)) => Gauge::VaWave(Morph {
             wave: Unit::new(v),
             shape: Unit::new(v),
