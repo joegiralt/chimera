@@ -18,7 +18,7 @@ use chimera_hal::card_bus::CardFault;
 use chimera_hal::units::StreamCount;
 
 use crate::comp_key::Pairs;
-use crate::dsp::ease::{Ease, ease_coeff, step_of};
+use crate::dsp::ease::{Ease, GATE_BLOCKS, ease_coeff, step_of};
 use crate::dsp::engines::{EngineCtx, SlotKind};
 use crate::dsp::fx_bus::{FX_SENDS, FxBus, FxParams};
 use crate::dsp::knobs::{Gliding, KnobDelta, KnobPublisher, Knobs, Pace};
@@ -495,6 +495,55 @@ pub struct MixState {
     pans: [Option<(u32, (f32, f32))>; MAX_PARTS],
     /// L and R (pan × LEVEL) and the three sends, per Part.
     gains: [[Ease; MIX_GAINS]; MAX_PARTS],
+    /// Each Part's DAC pair, crossfaded when OUT moves it.
+    routes: [Route; MAX_PARTS],
+}
+
+/// A Part's DAC pair. An OUT moved while the Part sounds crossfades from
+/// the pair it leaves over `GATE_BLOCKS` (20 ms), linearly, as the stage
+/// gates do, never a cut (#250). Zero bytes are unprimed: the first block
+/// lands.
+#[derive(Clone, Copy, Debug, Default)]
+struct Route {
+    now: u8,
+    was: u8,
+    /// Blocks of the crossfade still to run.
+    left: u8,
+    primed: bool,
+}
+
+impl Route {
+    /// The pairs this block feeds, each with its share's `(from, to)`:
+    /// `to`'s, whole, or while a move fades `to`'s rising and the left
+    /// pair's falling. A Part not sounding lands.
+    #[inline]
+    fn step(&mut self, to: usize, sounding: bool) -> [(usize, (f32, f32)); 2] {
+        let to = to as u8;
+        if !self.primed || !sounding {
+            *self = Route {
+                now: to,
+                was: to,
+                left: 0,
+                primed: true,
+            };
+        } else if to != self.now {
+            // Back to the pair it is leaving: on from where the fade is.
+            self.left = if to == self.was && self.left > 0 {
+                GATE_BLOCKS - self.left
+            } else {
+                GATE_BLOCKS
+            };
+            (self.was, self.now) = (self.now, to);
+        }
+        let share = |n: u8| f32::from(GATE_BLOCKS - n) / f32::from(GATE_BLOCKS);
+        let from = share(self.left);
+        self.left = self.left.saturating_sub(1);
+        let to = share(self.left);
+        [
+            (usize::from(self.now), (from, to)),
+            (usize::from(self.was), (1.0 - from, 1.0 - to)),
+        ]
+    }
 }
 
 /// A Part's eased gains: L, R and the three sends.
@@ -598,7 +647,8 @@ fn mix_sided(
     let mut n = 0;
     let mut dry = [[(&buses[0], 0.0f32, 0.0f32); MAX_PARTS]; DAC_PAIRS];
     let mut dry_n = [0usize; DAC_PAIRS];
-    let mut moving = [(&buses[0], 0usize, [0.0f32; MIX_GAINS]); MAX_PARTS];
+    // Two a Part while OUT's move crossfades it.
+    let mut moving = [(&buses[0], 0usize, [0.0f32; MIX_GAINS]); 2 * MAX_PARTS];
     let mut moving_n = 0;
     // The sided Parts, by pair: the side, its gains, their steps.
     let mut sided = [[(&buses[0], [0.0f32; 4]); MAX_PARTS]; DAC_PAIRS];
@@ -619,6 +669,7 @@ fn mix_sided(
             s1,
             s2,
         ];
+        let route = mix.routes[p].step(part.mix.output.index(), written[p]);
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to
         // add, and its gains land unheard.
@@ -638,17 +689,29 @@ fn mix_sided(
         let bus = &buses[p];
         src[n] = (bus, [g[2].0, g[3].0, g[4].0]);
         n += 1;
-        let k = part.mix.output.index();
-        dry[k][dry_n[k]] = (bus, g[0].0, g[1].0);
-        dry_n[k] += 1;
-        if g.iter().any(|g| g.0 != g.1) {
-            moving[moving_n] = (bus, k, g.map(|g| step_of(g, BLOCK_SIZE)));
-            moving_n += 1;
-        }
-        if let Some(side) = &sides[p] {
-            let (l, r) = (step_of(g[0], BLOCK_SIZE), step_of(g[1], BLOCK_SIZE));
-            sided[k][sided_n[k]] = (side, [g[0].0, g[1].0, l, r]);
-            sided_n[k] += 1;
+        // Its pair, and while OUT's move fades the pair it leaves: L and R
+        // at each one's share, the sends with the first alone.
+        for (i, &(k, (a, b))) in route.iter().enumerate() {
+            if i == 1 && a == 0.0 && b == 0.0 {
+                break;
+            }
+            let lr = |(x, y): (f32, f32)| (x * a, y * b);
+            let (l, r) = (lr(g[0]), lr(g[1]));
+            dry[k][dry_n[k]] = (bus, l.0, r.0);
+            dry_n[k] += 1;
+            let mut steps = g.map(|g| step_of(g, BLOCK_SIZE));
+            (steps[0], steps[1]) = (step_of(l, BLOCK_SIZE), step_of(r, BLOCK_SIZE));
+            if i == 1 {
+                steps[2..].fill(0.0);
+            }
+            if steps.iter().any(|&s| s != 0.0) {
+                moving[moving_n] = (bus, k, steps);
+                moving_n += 1;
+            }
+            if let Some(side) = &sides[p] {
+                sided[k][sided_n[k]] = (side, [l.0, r.0, steps[0], steps[1]]);
+                sided_n[k] += 1;
+            }
         }
     }
     let moving = &moving[..moving_n];

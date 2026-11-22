@@ -321,7 +321,12 @@ fn mix_parts_is_bit_identical_to_the_reference() {
             }
             part.mix.level = rnd();
             part.params.out.sends = [rnd(), rnd(), rnd()].map(SendLevel::new);
-            part.mix.output = pairs[(rnd() * 3.0) as usize % 3];
+            // Each Part's pair held: an OUT move crossfades (#250, its own
+            // test), the reference cuts.
+            let pick = pairs[(rnd() * 3.0) as usize % 3];
+            if block == 0 {
+                part.mix.output = pick;
+            }
         }
         let buses: [[f32; BLOCK_SIZE]; MAX_PARTS] = core::array::from_fn(|_| {
             core::array::from_fn(|_| match rnd() {
@@ -1744,4 +1749,38 @@ fn the_sounding_set_follows_note_on_and_off() {
         }
     }
     panic!("the Part still sounds long after its note-off");
+}
+
+/// A sounding Part's OUT moved from pair 2 to pair 3 crossfades over
+/// `GATE_BLOCKS` (20 ms), as the stage gates do, never a cut that clicks
+/// (#250): a few blocks in, both pairs carry it; after, pair 3 alone, at
+/// the level it had on pair 2.
+#[test]
+fn an_out_change_crossfades_between_pairs() {
+    use chimera_core::dsp::ease::GATE_BLOCKS;
+    let mut rig = Rig::new();
+    let mut shared = AudioShared::default();
+    shared.parts[0].mix.output = DacPair::P2;
+    shared.parts[0].params.out.sends = [SendLevel::OFF; FX_SENDS];
+    rig.inst.handle(on(0, 60), &shared);
+    for _ in 0..200 {
+        rig.block(&shared);
+    }
+    let steady = peak(&rig.out()[1]);
+    assert!(steady > 0.01, "the Part sounds on pair 2: {steady}");
+    shared.parts[0].mix.output = DacPair::P3;
+    let mut peaks = vec![];
+    for _ in 0..usize::from(GATE_BLOCKS) + 8 {
+        rig.block(&shared);
+        peaks.push((peak(&rig.out()[1]) / steady, peak(&rig.out()[2]) / steady));
+    }
+    let mid = usize::from(GATE_BLOCKS) / 2;
+    let (was, now) = peaks[mid];
+    assert!(
+        (0.2..0.8).contains(&was) && (0.2..0.8).contains(&now),
+        "halfway, both pairs: {peaks:?}"
+    );
+    let (was, now) = *peaks.last().unwrap();
+    assert_eq!(was, 0.0, "{peaks:?}");
+    assert!((now - 1.0).abs() < 0.05, "{peaks:?}");
 }
