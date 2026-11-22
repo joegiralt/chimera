@@ -41,6 +41,15 @@ fn status_reports_sram4() {
     assert_eq!(line(&status(&ui), "sram4"), "FAIL");
 }
 
+/// #768: rings on SRAM4 that failed its self-test, or that no test
+/// passed, lend no stream rows.
+#[test]
+fn only_a_passed_sram4_lends_streams() {
+    assert!(Sram4::Ok.lends_streams());
+    assert!(!Sram4::Failed.lends_streams());
+    assert!(!Sram4::Untested.lends_streams());
+}
+
 #[test]
 fn status_reports_the_load_net() {
     let ui = Box::new(UiState::new());

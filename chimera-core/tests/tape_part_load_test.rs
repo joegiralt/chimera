@@ -327,6 +327,82 @@ mod streamed {
         );
     }
 
+    /// #765: a source pass 1 left out for room loads whole in pass 2 once
+    /// another's read misses and leaves it the room: never left absent.
+    #[test]
+    fn a_source_that_now_fits_loads_whole() {
+        let mut s = MemStore::new(1);
+        let (a, b) = (source(40, 60_000), source(41, 60_000));
+        put(&mut s, &a);
+        put(&mut s, &b);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, a.0.sref);
+        tape_part(&mut p, t, 1, b.0.sref);
+        p.source_absent(a.0.sref).unwrap();
+        p.source_absent(b.0.sref).unwrap();
+        // A's file damaged after the save: pass 2's whole read misses it.
+        let mut card = Card::new();
+        assert!(matches!(
+            save_at(&mut card, &mut s, &mut p, 1),
+            ProjectNote::Saved(_)
+        ));
+        let mut file = file_bytes(&mut s, &a);
+        let n = file.len();
+        file[n - 64] ^= 0x01;
+        s.plant(source_file(a.0.sref), &file);
+        let (mut q, t) = Project::boxed();
+        let vol = s.mount().unwrap();
+        let id = ProjectId::new(1).unwrap();
+        let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol }).expect("no prompt");
+        let out = load_project(&mut card, &mut s, &mut q, go, &LoadLink::new());
+        assert!(out.swap.is_some(), "{:?}", out.note);
+        assert_eq!(q.pool().held(a.0.sref), None, "A's read missed");
+        assert!(q.pool().held(b.0.sref).is_some(), "B loads whole");
+        assert!(!q.pool().streamed(b.0.sref), "whole, not streamed");
+        assert!(
+            !matches!(out.note, Some(ProjectNote::DidntFit { .. })),
+            "nothing left out for room: {:?}",
+            out.note
+        );
+    }
+
+    /// #765: heads with no room in the gap leave their source absent as
+    /// didn't fit (POOL FULL), not SOURCE MISSING.
+    #[test]
+    fn heads_with_no_room_read_pool_full() {
+        use chimera_core::ui::settings::prompt::POOL_FULL;
+        use chimera_core::ui::view::SourceState;
+        let mut s = MemStore::new(1);
+        let (a, b) = (source(42, 102_800), source(43, 150_000));
+        put(&mut s, &a);
+        put(&mut s, &b);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, a.0.sref);
+        tape_part(&mut p, t, 1, b.0.sref);
+        p.source_absent(a.0.sref).unwrap();
+        p.source_absent(b.0.sref).unwrap();
+        let (q, note) = round_trip(&mut s, &mut p, false);
+        assert!(q.pool().held(a.0.sref).is_some(), "A held");
+        assert!(!q.pool().streamed(a.0.sref), "A whole");
+        let id = q.pool().find_source(b.0.sref).expect("the ref kept");
+        assert_eq!(q.pool().absence(id), Some(Absence::NoRoom));
+        let st = SourceState::of(
+            &q.part(PartId::ALL[1]).sound.params.tape,
+            Some(b.0.sref),
+            q.pool(),
+        );
+        let mut w = chimera_core::ui::fmt::FmtBuf::new();
+        st.text(&mut w);
+        assert_eq!(w.as_str(), POOL_FULL);
+        assert_eq!(
+            note,
+            Some(ProjectNote::DidntFit {
+                sounds: 0,
+                sources: 1
+            })
+        );
+    }
+
     /// `file`'s seal on `s`.
     fn seal_of(s: &mut MemStore, file: chimera_hal::store::FileName) -> Seal {
         let vol = s.mount().unwrap();

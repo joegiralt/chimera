@@ -52,6 +52,8 @@ pub trait Medium: BlockDevice {
     fn read_fault(&self) -> CardFault {
         CardFault::Clear
     }
+    /// `Store::clear_read_fault`.
+    fn clear_read_fault(&self) {}
 }
 
 /// Where the SD bus is: acquiring at the init clock under `SD_ACQUIRE_MS`,
@@ -572,6 +574,10 @@ impl<D: Medium> FatStore<D> {
 impl<D: Medium> Store for FatStore<D> {
     fn read_fault(&self) -> CardFault {
         self.dev.read_fault()
+    }
+
+    fn clear_read_fault(&mut self) {
+        self.dev.clear_read_fault();
     }
 
     /// The card left mid-read: re-inited first, so the mount acquires it.
