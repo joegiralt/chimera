@@ -893,9 +893,8 @@ pub const PART_OVERHEAD: Cost = Cost(230);
 /// The bytes a block may clear (#306, ADR 0311): what is left of the
 /// deadline (the audio share over `AUDIO_BUDGET_PERCENT`) once `booked`
 /// and the overhead of `parts` Parts are spent, at the clear's rate; at
-/// most one worst note-on. Admission keeps `booked` under the share, so
-/// a full pool still clears about 8 KB a block on rev V with six Parts:
-/// a worst note-on in four blocks.
+/// most one worst note-on. Booked at the share, six Parts sounding, rev
+/// V still clears 7,680 B a block: a worst note-on in five blocks.
 pub fn sym_clear_room(budget: SampleBudget, booked: Cost, parts: usize) -> usize {
     // A sample's cycles stay far under `u32::MAX / 100` at any clock.
     let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
@@ -2368,16 +2367,19 @@ impl Instrument {
             .iter()
             .filter_map(|s| s.part())
             .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p));
+        // The block's notes may book the pool to its budget, and a Part
+        // its first voice, before the clear runs.
+        let budget = self.alloc.budget();
+        let booked = self.alloc.sounding_cost() + self.reserved();
         sym_clear_room(
-            self.alloc.budget(),
-            self.alloc.sounding_cost() + self.reserved(),
-            // A Part may book its first voice this block.
-            parts.len() + 1,
+            budget,
+            booked.max(budget.as_cost()),
+            (parts.len() + 1).min(MAX_PARTS),
         )
     }
 
     /// Each Part's kit bill as published, with each ringing hit's struck
-    /// sound folded in (`KitBill::with_sound`, #977). Out of line: bank 1's.
+    /// runs folded in (`KitBill::with`, #977). Out of line: bank 1's.
     #[inline(never)]
     #[optimize(size)]
     fn ringing_kits(&self) -> [KitBill; MAX_PARTS] {

@@ -998,7 +998,7 @@ fn short_part(s: &mut Stage, part: usize) {
 
 /// Rev V's budget: Part 5's Sympathetic note at MIDI 0 played and gone
 /// idle, so its slot's set and lines are dirty end to end; then Parts 1
-/// to 4 hold ALGO notes on every voice.
+/// to 4 hold ALGO notes up to the budget, room left for one SYMP voice.
 fn loaded() -> Stage {
     let mut parts = vec![(ParamSnapshot::for_engine(EngineType::Algo), PartMode::Poly); 4];
     parts.push((sym(), PartMode::Poly));
@@ -1010,21 +1010,26 @@ fn loaded() -> Stage {
     }
     s.off(4, 0);
     s.until_idle(50);
-    for n in 0..16u8 {
-        s.on(usize::from(n % 4), 60 + n);
+    // As many ALGO voices as leave the Sympathetic note one (a Part's
+    // first-voice terms and a margin in the spare one), at most seven.
+    let bill = |p: &chimera_core::instrument::PartAudio| Voice::cost(&*p.params, &*p.mod_state).0;
+    let room = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0
+        - FxBus::COST.0
+        - chimera_core::budget::CONTROL_RESERVE.0
+        - bill(&s.shared.parts[4]);
+    let n = (room / bill(&s.shared.parts[0])).saturating_sub(1).min(7) as u8;
+    for k in 0..n {
+        s.on(usize::from(k % 4), 60 + k);
         s.block();
     }
-    assert!(
-        s.inst.allocator().slots().iter().all(|x| !x.is_free()),
-        "every voice booked"
-    );
+    assert_eq!(s.inst.allocator().refused(), 0, "the load fits");
     let _ = take_cleared_bytes();
     s
 }
 
 /// A full pool plus a low Sympathetic note: no block's model passes its
 /// deadline, the clear spread over the blocks with room, and the note
-/// sounds within about 5 ms.
+/// sounds within six blocks (8 ms).
 #[test]
 fn a_low_note_on_a_full_pool_keeps_every_block_under_its_deadline() {
     let mut s = loaded();
@@ -1044,9 +1049,10 @@ fn a_low_note_on_a_full_pool_keeps_every_block_under_its_deadline() {
             first = Some(b);
         }
     }
+    assert_eq!(s.inst.allocator().refused(), 0, "the note is admitted");
     let first = first.expect("the note sounds");
     assert!(clearing >= 2, "the clear spread: {clearing} blocks");
-    assert!(first <= 5, "it starts within ~5 ms: block {first}");
+    assert!(first <= 6, "it starts within ~8 ms: block {first}");
 }
 
 /// The note sounds as alone once its strings are clear: nothing of the
