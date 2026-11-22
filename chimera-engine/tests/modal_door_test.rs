@@ -272,14 +272,16 @@ fn hashes() -> Vec<(String, u64, u64)> {
 
 /// Taken on main before the move (bc20ae7c; the six "alone" rows on
 /// 5ec76841, where the first 60 match too), bank 1's own path: the DAC's
-/// hash and Part 1's bus's. The four rows whose note-on PITCH is bent
-/// (STRING's and SYMP's "moving bent" and "pitch alone") re-taken when the
-/// routed pitch re-plucks at its length (#233, ADR 0310).
+/// hash and Part 1's bus's. Re-taken for #233 (ADR 0310): the four rows
+/// whose note-on PITCH is bent (STRING's and SYMP's "moving bent" and
+/// "pitch alone") re-pluck at the routed length, and SYMP's chords (init,
+/// long, high: INIT's vibrato route is a PITCH route) bill the re-pluck on
+/// the clear budget.
 const BEFORE: &[(&str, u64, u64)] = &[
     ("String init", 0x2945be550b3e07b5, 0x552b36dadf56e7ca),
     ("Modal init", 0x8b5eefc284bee8d5, 0xa4ee49337f312386),
     ("Bowed init", 0x7e5effbe95300b81, 0x810027f802c57e01),
-    ("Sympathetic init", 0xf05e3c880ee71391, 0x05070edb756816c9),
+    ("Sympathetic init", 0x53695b5c4f92a36d, 0xa73d3f23da35cbfd),
     ("res M16 s0 b0.3", 0xc4982421ee9fd159, 0x71691cdb267a201d),
     (
         "res M16 s0 b0.3 high",
@@ -389,7 +391,7 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ),
     ("res M48 bright", 0x53c50acf6c337071, 0x0f2ad3729a1d1d6e),
     ("String moving", 0x402a7255058060bd, 0x5cadee53687eb150),
-    ("String moving bent", 0xde313011665c6729, 0x1666978ccfabc890),
+    ("String moving bent", 0x2451b8fdae46eda1, 0xbdc8b874d08569a0),
     ("String long", 0x92a98d981b6c5bdd, 0xc696ce8a284a471b),
     ("String high", 0x377459bbf7ffe955, 0xca3b387165bd73d3),
     ("Bowed moving", 0x2097f24de0efa479, 0xb422150fc049bcd8),
@@ -399,11 +401,11 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ("Sympathetic moving", 0x15e2a492843f5c89, 0x1d3bd9c7aa682ff2),
     (
         "Sympathetic moving bent",
-        0xd2e7df54dbd19851,
-        0x5c5ba9a546637af5,
+        0xe859a7d48fd05f25,
+        0x5ad7ded582f34705,
     ),
-    ("Sympathetic long", 0x2de8c24df4eecc49, 0x9d6d167e4a0669d0),
-    ("Sympathetic high", 0xae5539d74b0b3875, 0xd16f7d128abe9d8c),
+    ("Sympathetic long", 0xeb1f3f8c13ebba45, 0x64ef7888328847ab),
+    ("Sympathetic high", 0x3dc309fc98b9e14d, 0xe2046c42e75ae445),
     (
         "Sympathetic structure alone",
         0xa5901a6dc550038d,
@@ -411,15 +413,15 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ),
     (
         "Sympathetic pitch alone",
-        0xcd469a3b325fff05,
-        0xf854ccbf9bc59b7c,
+        0x760b7c88877eb5dd,
+        0xc7ee8b683e0d7710,
     ),
     (
         "String structure alone",
         0xe664e574592131ed,
         0xc9a18268a06ed11e,
     ),
-    ("String pitch alone", 0x7c5b7f995521ba61, 0xf2538bcf71a86761),
+    ("String pitch alone", 0x6fe41e76cff5e77d, 0xfb33403a3543dfef),
     (
         "Bowed structure alone",
         0x7e5effbe95300b81,

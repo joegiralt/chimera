@@ -85,8 +85,9 @@ fn voice_is_its_chain_plus_one_slot() {
 /// pressure, the VCA routes' two rows (ADR 0236). SLIDE adds 16 B: its
 /// value, the voice's own MPE bend and slide, padding (ADR 0252). The
 /// played Sound's WIDTH adds 8 B, its 4 and padding; the last block's
-/// OUT PAN and BASE (`LastPlayed`) 8 B more (ADR 0294).
-const VOICE_SIZE_BEFORE: usize = 6_728;
+/// OUT PAN and BASE (`LastPlayed`) 8 B more (ADR 0294). The routed
+/// re-pluck's noise seed adds 8 B, its 4 and padding (ADR 0310).
+const VOICE_SIZE_BEFORE: usize = 6_736;
 
 /// ADR 0131: the formant kinds live in the Algo slot, which still fits
 /// inside Modal's, so they add nothing to `EngineSlot`.

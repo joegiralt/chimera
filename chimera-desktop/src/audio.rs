@@ -540,7 +540,8 @@ fn flush_denormals() {
 }
 
 /// The engine's frames at `from` Hz to the device's `to`: linear between
-/// neighbours, a frame late. At equal rates each frame passes untouched.
+/// neighbours, a frame late, with no anti-alias filter, so don't judge tone
+/// on a 44.1 kHz device. At equal rates each frame passes untouched.
 struct Resample {
     step: f64,
     frac: f64,
