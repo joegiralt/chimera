@@ -90,7 +90,9 @@ impl SoloDoor {
         &self.solo
     }
 
-    /// AM's corrected render (`VaEngine::render_am_kinks`).
+    /// AM's corrected render (`VaEngine::render_am_kinks`); without
+    /// `bank2`, AM calls it directly.
+    #[cfg_attr(not(feature = "bank2"), allow(dead_code))]
     #[inline(always)]
     pub(in crate::dsp::va) fn am(
         &self,
