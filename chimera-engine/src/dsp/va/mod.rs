@@ -424,7 +424,7 @@ pub const COST_FM: Cost = Cost(580);
 pub const COST_LOOPFM: Cost = Cost(480);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 72.6 (with `am_reach` at the
 /// BLEND ramp's two ends a block, ADR 0176) + 29.9 + 95 = 534.3; the unit
-/// read 550. Its product's corrector (#660, ADR 0313) adds, by
+/// read 550. Its product's corrector (#660, ADR 0321) adds, by
 /// `tools/loop_count.py` on `render_am_kinks` in the release ELF: the
 /// operator's round 55 instructions a sample against 41 (+14), a listed
 /// step's slow round 80 more at six a block at the worst voice (+7.5), and
@@ -1237,7 +1237,7 @@ impl VaEngine {
         self.render_am_kinks(out, l, gain);
     }
 
-    /// AM with its product corrected (#660, ADR 0313): both oscillators
+    /// AM with its product corrected (#660, ADR 0321): both oscillators
     /// leave their steps naive and list them (OSC 2 first, so OSC 1's own
     /// marks, its wraps and sub flips, are the block's), and the operator's
     /// corrector (`AmKinks`) steps and bends the product at each, one
@@ -1997,7 +1997,7 @@ mod tests {
     /// Every MODE's output bits, hashed (FNV-1a): two notes, STABILITY's
     /// jitter, SUB, a SHAPE and a MODE change under way. The constant is
     /// main's before NOISE (ADR 0197): LEVEL 0 must leave every bit as it was.
-    /// Re-pinned for AM's corrected product (#660, ADR 0313).
+    /// Re-pinned for AM's corrected product (#660, ADR 0321).
     #[test]
     fn noise_off_is_bit_identical() {
         let mut h = 0xcbf2_9ce4_8422_2325u64;

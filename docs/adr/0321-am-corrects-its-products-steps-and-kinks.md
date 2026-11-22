@@ -1,4 +1,4 @@
-# 0313. Correct AM's product at its oscillators' steps, in bank 2
+# 0321. Correct AM's product at its oscillators' steps, in bank 2
 
 - **Status:** Accepted (2026-11-22)
 - **Deciders:** Claude (the 0.4 bug sweep, batch D2: no known bug rolls to 0.5); the owner hears the before/after renders

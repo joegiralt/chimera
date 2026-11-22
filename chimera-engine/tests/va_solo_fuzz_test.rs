@@ -67,7 +67,7 @@ fn solos_play_their_pairs_and_807e740d_bit_for_bit() {
 
 /// `va_fuzz::digest` of scenes `0..PINNED` at origin/0.4 `807e740d`,
 /// door toggled (`bank2`, `test-support`). Re-taken for AM's corrected
-/// product (#660, ADR 0313): the scenes that play AM moved.
+/// product (#660, ADR 0321): the scenes that play AM moved.
 #[cfg(feature = "bank2")]
 const DIGESTS: [u64; PINNED] = [
     0xda5eda69b4c38822,

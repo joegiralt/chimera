@@ -64,7 +64,7 @@ fn matrices(engine: EngineType) -> [ModState; 3] {
 /// CLEAN, the 2040, DIRTY, LADDER and SEM; then every VA MODE. The
 /// constant is the plain VCA's (ADR 0195), read again on the integrated
 /// tree with the gate's door closed: TAPE's INIT is WALK's there. Re-taken
-/// for VA AM's corrected product (#660, ADR 0313).
+/// for VA AM's corrected product (#660, ADR 0321).
 #[test]
 fn the_gate_at_zero_is_todays_vca_bit_for_bit() {
     let mut h = 0xcbf2_9ce4_8422_2325u64;

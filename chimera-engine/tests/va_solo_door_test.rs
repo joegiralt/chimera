@@ -231,7 +231,7 @@ const AM_CLOSED: [u64; 5] = [
 
 /// `other_prints` at origin/0.4 `807e740d` (VA's oscillators as at
 /// `262039d9`): five a MODE, the four anchors then `moving`. AM's five
-/// (15..20) re-taken for its corrected product (#660, ADR 0313).
+/// (15..20) re-taken for its corrected product (#660, ADR 0321).
 const OTHER: [u64; 45] = [
     0x44b546c94c265857,
     0x4c7711c123beaf92,

@@ -986,7 +986,7 @@ fn steal_glide_glides() {
 
 #[test]
 fn bills_follow_the_mode() {
-    // AM 590 with its product corrected (#660, ADR 0313)
+    // AM 590 with its product corrected (#660, ADR 0321)
     let bills = [530, 550, 540, 550, 540, 580, 590, 550, 480, 610, 590];
     assert!(VaEngine::mode_cost(VaMode::Sync) > VaEngine::mode_cost(VaMode::Mix));
     for (mode, bill) in VaMode::ALL.into_iter().zip(bills) {

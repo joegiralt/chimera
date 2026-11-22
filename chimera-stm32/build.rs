@@ -380,7 +380,7 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // `ui::ed_cue` (ADR 0285) goes with them: `ed set`'s cue on the box.
     // VA's solos (ADR 0283): `va::osc::solo`, the saw's runs on its
     // anchor, the next S4 group; AM's corrected render and its OSC 1's
-    // listing instance (#660, ADR 0313: `VaEngine::render_am_kinks`,
+    // listing instance (#660, ADR 0321: `VaEngine::render_am_kinks`,
     // `va::osc::am`) after them, reached through the solos' table. Its table heads the S4 groups
     // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
     // would take S0-S3 under ADR 0251's 8 KB.

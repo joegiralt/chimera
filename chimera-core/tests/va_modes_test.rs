@@ -813,7 +813,7 @@ fn am_level_matches_mix() {
 /// passes −45 dB, AM does (the product of two band-limited waves adds lines
 /// at |f1 ± f2|). Past it AM runs into RING's product and is held to RING's
 /// own figure at BLEND 1, `max(−45, RING + 0.5)` (ADR 0176). The
-/// product's steps and slope kinks are corrected (#660, ADR 0313).
+/// product's steps and slope kinks are corrected (#660, ADR 0321).
 #[test]
 fn am_alias_gate() {
     let mut fails = Vec::new();
@@ -855,7 +855,7 @@ fn am_alias_gate() {
                         println!("{at}: AM {a:.1} / MIX {m:.1} dB");
                         // saw × saw at the fifth read −43.5 dB before the
                         // product's steps and slope kinks were corrected
-                        // (#660, ADR 0313): no exception
+                        // (#660, ADR 0321): no exception
                         -45.0
                     };
                     if m <= -45.0 {

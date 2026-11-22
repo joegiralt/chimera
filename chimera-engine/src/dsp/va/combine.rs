@@ -350,7 +350,7 @@ pub type Steps = [(usize, f32, f32); STEPS];
 /// A listed block's steps at most: `PM_JUMPS` and the last block's carry.
 pub const STEPS: usize = super::osc::PM_JUMPS as usize + 2;
 
-/// AM's product corrector (#660, ADR 0313), one sample late: the
+/// AM's product corrector (#660, ADR 0321), one sample late: the
 /// oscillators' steps come in naive and listed, so AM's product
 /// `K·a·(c₀ + c₁·b)` (`Operator::at`) is corrected here, each step at its
 /// place with the product's own step (polyBLEP) and its slope's jump
