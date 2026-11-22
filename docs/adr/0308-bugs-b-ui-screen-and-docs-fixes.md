@@ -55,8 +55,9 @@ without a reason, and the batch's bank-2 code moved its budget lines.
   harmony reaches `live_note`, so the row did nothing. What the page should
   draw is an enhancement, filed apart.
 - **Budgets.** Bank 2's lines rise by the code above, measured:
-  default and bank2-gate +1056 B, orbit +960 B. Bank 1 stays inside its
-  lines.
+  default and bank2-gate +1056 B, orbit +960 B. Bank 1's bench-orbit
+  line rises 120 B (#709's words and the door calls), measured; every other
+  bank-1 set stays inside its line.
 
 ## Alternatives considered
 - #1068: forcing a full redraw on every program change; the key is cheaper
