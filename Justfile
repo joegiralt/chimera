@@ -31,7 +31,7 @@ editor-sim:
     trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
     cargo run -p chimera-desktop --bin chimera-desktop
 
-# The editor kit (ADR 0320): what chimera-releases' editor builds and tests
+# The editor kit (ADR 0322): what chimera-releases' editor builds and tests
 # against, into target/editor-kit/<version>/ for its editor/kit/<version>/.
 # The unit's protocol text (`ed describe` of every engine, MIXER, SETTINGS,
 # MAP and ORBIT; each engine's INIT panels; the engines; a Part refusal),

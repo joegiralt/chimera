@@ -1,4 +1,4 @@
-# 0320. Move the editor and the site to chimera-releases under GPLv3
+# 0322. Move the editor and the site to chimera-releases under GPLv3
 
 - **Status:** Accepted (2026-11-22)
 - **Deciders:** owner
