@@ -53,10 +53,10 @@ editor-kit version:
     echo "editor kit: $out"
 
 # The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
-# into `out`. Stripped, then wasm-opt'd if there is one whose sha256 is the
-# pinned release binary's (`just editor-wasm-opt`'s, else one on PATH;
-# optional: it trims ~17%, ~2% gzipped; any other is not run); each size
-# printed, and checked for build paths. Its own target dir (target-wasm): the
+# into `out`. Stripped, then wasm-opt'd by the one whose sha256 is the pinned
+# release binary's (`just editor-wasm-opt`'s, else one on PATH; any other is
+# not run, and without it nothing is built: every kit's wasm is the same
+# build); each size printed, and checked for build paths. Its own target dir (target-wasm): the
 # host's builds aren't touched.
 editor-screen out="target/editor-kit/screen.wasm":
     #!/usr/bin/env bash
@@ -92,7 +92,8 @@ editor-screen out="target/editor-kit/screen.wasm":
         BINARYEN_CORES=10 "$opt" -Oz --all-features "$out" -o "$out"
         size wasm-opt
     else
-        echo "screen.wasm: no pinned wasm-opt (optional; just editor-wasm-opt fetches it)"
+        echo "screen.wasm: no pinned wasm-opt: \`just editor-wasm-opt\` fetches it" >&2
+        exit 1
     fi
     just check-bin-paths "$out"
 
@@ -566,11 +567,12 @@ release version *flags:
     gh release create "v$V" "${assets[@]}" -R $REPO --draft --title "Chimera $V" --notes-file "$out/RELEASE-NOTES.md"
     echo "drafted v$V on $REPO: review and publish it there"
 
-# Fail if a binary carries a home directory, the cargo registry or the user name (#413).
+# Fail if a binary carries a home directory, the cargo registry, the user name
+# (#413), a crate's source path or the remapped repo (`/build/chimera`).
 check-bin-paths bin:
     #!/usr/bin/env bash
     set -euo pipefail
-    if strings -a {{bin}} | grep -E -e '/home/' -e '\.cargo/registry' -e "$(id -un)"; then
+    if strings -a {{bin}} | grep -E -e '/home/' -e '\.cargo/registry' -e "$(id -un)" -e 'chimera-[a-z]*/src' -e '/build/chimera'; then
         echo "{{bin}} leaks a build path" >&2; exit 1
     fi
 
