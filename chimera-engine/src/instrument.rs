@@ -41,7 +41,7 @@ use crate::orbit::RingIdx;
 use crate::orbit::ring::Harmony;
 use crate::orbit::runner::{OrbitRunner, OrbitShared};
 use crate::params::{EngineType, ParamSnapshot};
-use crate::part::{Held, LiveSnap, PartParams};
+use crate::part::{DacPair, Held, LiveSnap, PartParams};
 use crate::part_eq::bill::SmartBill;
 use crate::preset::{Part, Performance, Sound};
 use crate::project::{Loads, PartId, Project, SourceId};
@@ -496,52 +496,56 @@ pub struct MixState {
     /// L and R (pan × LEVEL) and the three sends, per Part.
     gains: [[Ease; MIX_GAINS]; MAX_PARTS],
     /// Each Part's DAC pair, crossfaded when OUT moves it.
-    routes: [Route; MAX_PARTS],
+    routes: [Option<Route>; MAX_PARTS],
 }
 
 /// A Part's DAC pair. An OUT moved while the Part sounds crossfades from
 /// the pair it leaves over `GATE_BLOCKS` (20 ms), linearly, as the stage
-/// gates do, never a cut (#250). Zero bytes are unprimed: the first block
-/// lands.
-#[derive(Clone, Copy, Debug, Default)]
+/// gates do, never a cut (#250). A move back mid-fade carries on from
+/// where the fade is; a move to a third pair waits for the fade to land,
+/// then fades on, so the pair it leaves is never cut either. `None` in
+/// `MixState` is unprimed: the first block lands.
+#[derive(Clone, Copy, Debug)]
 struct Route {
-    now: u8,
-    was: u8,
+    now: DacPair,
+    was: DacPair,
     /// Blocks of the crossfade still to run.
     left: u8,
-    primed: bool,
 }
 
 impl Route {
+    /// Landed on `to`.
+    fn on(to: DacPair) -> Route {
+        Route {
+            now: to,
+            was: to,
+            left: 0,
+        }
+    }
+
     /// The pairs this block feeds, each with its share's `(from, to)`:
-    /// `to`'s, whole, or while a move fades `to`'s rising and the left
+    /// `now`'s, whole, or while a move fades `now`'s rising and the left
     /// pair's falling. A Part not sounding lands.
     #[inline]
-    fn step(&mut self, to: usize, sounding: bool) -> [(usize, (f32, f32)); 2] {
-        let to = to as u8;
-        if !self.primed || !sounding {
-            *self = Route {
-                now: to,
-                was: to,
-                left: 0,
-                primed: true,
-            };
-        } else if to != self.now {
-            // Back to the pair it is leaving: on from where the fade is.
-            self.left = if to == self.was && self.left > 0 {
-                GATE_BLOCKS - self.left
-            } else {
-                GATE_BLOCKS
-            };
-            (self.was, self.now) = (self.now, to);
+    fn step(r: &mut Option<Route>, to: DacPair, sounding: bool) -> [(usize, (f32, f32)); 2] {
+        if !sounding {
+            *r = None;
+        }
+        let r = r.get_or_insert(Route::on(to));
+        if to != r.now {
+            if r.left == 0 {
+                (r.was, r.now, r.left) = (r.now, to, GATE_BLOCKS);
+            } else if to == r.was {
+                (r.was, r.now, r.left) = (r.now, to, GATE_BLOCKS - r.left);
+            }
         }
         let share = |n: u8| f32::from(GATE_BLOCKS - n) / f32::from(GATE_BLOCKS);
-        let from = share(self.left);
-        self.left = self.left.saturating_sub(1);
-        let to = share(self.left);
+        let from = share(r.left);
+        r.left = r.left.saturating_sub(1);
+        let to = share(r.left);
         [
-            (usize::from(self.now), (from, to)),
-            (usize::from(self.was), (1.0 - from, 1.0 - to)),
+            (r.now.index(), (from, to)),
+            (r.was.index(), (1.0 - from, 1.0 - to)),
         ]
     }
 }
@@ -669,7 +673,7 @@ fn mix_sided(
             s1,
             s2,
         ];
-        let route = mix.routes[p].step(part.mix.output.index(), written[p]);
+        let route = Route::step(&mut mix.routes[p], part.mix.output, written[p]);
         let eases = &mut mix.gains[p];
         // A part with no voices this block has a silent bus: nothing to
         // add, and its gains land unheard.
