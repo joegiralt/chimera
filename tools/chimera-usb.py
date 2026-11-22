@@ -47,17 +47,21 @@ already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
 Python 3 and its standard library only; Linux and macOS (no Windows).
 `update` checks the whole pair before it touches the unit, stops before
-the flash if the .bk2 can't go onto the card, waits up to 2 minutes
+the flash if the project has unsaved changes or the .bk2 can't go onto the card, waits up to 2 minutes
 for the unit to answer after the flash, and exits 0 only once
 `status` shows the pair's seal open (`OK updated <version>`);
-it needs dfu-util. `bank2` exits 0 on OK (or `OK already installed`), 2 if
+it needs dfu-util. An install that opens bank 2 restarts the unit (its USB
+MIDI and audio come up at boot): `bank2` waits up to a minute for it, then
+exits 0 on OK (or `OK already installed`), 2 if
 the file belongs to another firmware (`staged: needs firmware <version>`: it
 installs at the next boot of that firmware), 1 on any other ERR.
 `--version` prints this tool's release.
 
-The port: CHIMERA_USB picks it. Unset, the first of /dev/chimera,
-/dev/ttyACM0 (Linux) or /dev/cu.usbmodem* (macOS) that exists; else give a
-device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
+The port: CHIMERA_USB picks it. Unset, on Linux /dev/chimera (the udev
+rule's link), else the tty whose USB id is the console's, one named Chimera
+before a stock PreenFM3's (one found only by its id must answer `status` as
+Chimera); elsewhere pyserial's, else the first /dev/cu.usbmodem* (macOS);
+else give a device path, or `tcp:HOST:PORT`. On Linux, if it says "no access", either
 add yourself to the dialout group (then log out and in again), or run the
 `sudo tee` line it prints once. Shots are saved in the current directory;
 CHIMERA_SHOTS picks another. Where there is no /sys (macOS, Windows),
@@ -110,6 +114,7 @@ BANK2_SEAL = slice(0x18, 0x20)  # the .bk2 header's seal
 BK2_HEADER = 256
 BK2_MAX = 1 << 20  # bank 2's slots: 1 MB
 UPDATE_BOOT_WAIT_S = 120.0  # the first boot installs the .bk2 behind DON'T POWER OFF, then the console comes up
+RESTART_WAIT_S = 60.0  # `bank2 install` opened the door: the unit restarts so USB lays out MIDI and audio (#1064)
 # Firmware from before bank 2 refuses the path (its `put` usage, exactly): the
 # .bk2 then goes after the flash.
 OLD_PUT_REFUSALS = (
@@ -194,16 +199,54 @@ def target(env) -> Target:
                 sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(found)))
             if found:
                 return Tty("tty", found[0])
-        for p in ["/dev/chimera", "/dev/ttyACM0", *sorted(glob.glob("/dev/cu.usbmodem*"))]:
-            if os.path.exists(p):
+            for p in sorted(glob.glob("/dev/cu.usbmodem*")):
                 return Tty("tty", p)
-        return Tty("tty", "/dev/ttyACM0")
+            return Tty("tty", "/dev/ttyACM0")
+        return default_port(env)
     if v == "sim":
         return Tcp("tcp", *SIM)
     if v.startswith("tcp:"):
         host, port = v[4:].rsplit(":", 1)
         return Tcp("tcp", host, int(port))
     return Tty("tty", v)
+
+
+UDEV_LINK = "/dev/chimera"  # the udev rule's symlink (UDEV_HINT)
+
+
+def default_port(env) -> Tty:
+    """Linux, no CHIMERA_USB: the udev link; else the tty whose USB id is
+    the console's, one named Chimera before others with that id (a stock
+    PreenFM3 shares it), never a guessed /dev/ttyACM0 (#314). One found
+    only by its id must answer `status` as Chimera first."""
+    if os.path.exists(UDEV_LINK):
+        return Tty("tty", UDEV_LINK)
+    ports = unit_ports(env)
+    named = [p for p in ports if "chimera" in (p.product or "").lower()]
+    pool = named or ports
+    if len(pool) > 1:
+        sys.exit(fail("several units on USB (%s): set CHIMERA_USB=<port> to pick one" % ", ".join(p.path for p in pool)))
+    if not pool:
+        return Tty("tty", UDEV_LINK)  # opening it says there is no console
+    t = Tty("tty", pool[0].path)
+    if not named and not is_chimera(t):
+        sys.exit(fail("%s has the console's USB id but doesn't answer as Chimera: set CHIMERA_USB=<port>" % t.path))
+    return t
+
+
+def is_chimera(t: Target) -> bool:
+    """`t` answers `status` with Chimera's `firmware` line."""
+    try:
+        conn = Conn(t)
+    except (OSError, TermiosError):
+        return False
+    try:
+        status, body = request(conn, "status")
+    except (NoAnswer, Vanished):
+        return False
+    finally:
+        conn.close()
+    return status is Status.OK and any(ln.startswith(b"firmware ") for ln in body.splitlines())
 
 
 def describe(t: Target) -> str:
@@ -332,17 +375,28 @@ class ErrLine(bytes):
     before = b""
 
 
-def answer(conn: Conn, first=SILENCE_S) -> tuple:
+LISTS = ("ls",)  # answers whose rows are `<name> <size>`: a file may be named OK or ERR
+ROW = re.compile(rb"\S+ [0-9]+")
+
+
+def answer(conn: Conn, first=SILENCE_S, listing=False) -> tuple:
     """(Status.OK, body) or (Status.ERR, the ERR line), the first byte
-    waited for up to `first` s.
+    waited for up to `first` s. An `OK <words>` line ends the body too;
+    in a `listing`, a `<name> <size>` row never does, whatever its name.
 
     A `SHOT` header line stays in the body, followed by exactly its length
     of pixel bytes. Raises NoAnswer, Vanished or BadShot."""
     rd, body = Reader(conn, first), b""
     while True:
         ln = rd.line()
+        if listing and ROW.fullmatch(ln):
+            body += ln + b"\n"
+            continue
         if ln == b"OK":
             return Status.OK, body
+        # `OK queued`, `ed since`'s `OK <gen> [more]`: the line is the news.
+        if ln.startswith(b"OK "):
+            return Status.OK, body + ln + b"\n"
         if ln == b"ERR" or ln.startswith(b"ERR "):
             err = ErrLine(ln)
             err.before = body
@@ -381,7 +435,8 @@ def request(conn: Conn, line) -> tuple:
 
     def ask():
         send(conn, line)
-        return answer(conn, first_wait(text.lower()))
+        word = (text.lower().split() or [""])[0]
+        return answer(conn, first_wait(text.lower()), word in LISTS)
 
     return retry_busy(ask)
 
@@ -785,7 +840,14 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     """Put `local` where the unit stages it and have the unit write it:
     0 on OK, 2 if it is for another firmware or the unit's slot holds other
     code, else 1. `note` leads every failure message (update: \"flashed, but \")."""
-    fail = lambda m: _fail(note + m)
+    return install_bk2(t, env, local, note)[0]
+
+
+def install_bk2(t: Target, env, local: str, note: str = "") -> tuple:
+    """`bank2_install`'s exit code, and the unit once back from the restart
+    an install that opens the door ends in (#1064: USB's MIDI and audio
+    are a boot's layout), else None."""
+    fail = lambda m: (_fail(note + m), None)
     if not local.lower().endswith(".bk2"):
         return fail("bank2 takes a .bk2 file, not %s (the .bin goes by DFU)" % local)
     try:
@@ -797,20 +859,21 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
     seal = data[BANK2_SEAL].hex()
     rc = wait_console(env, float(env.get("CHIMERA_DFU_WAIT", "10")))
     if rc:
-        return rc
+        return rc, None
+    serial = unit_serial(t, env)  # the unit before its restart, to know it after
     conn = open_conn(t)
     try:
         status, body = request(conn, "bank2")
         state = body.decode(errors="replace").splitlines()[:1]
         if status is Status.OK and state and state[0].startswith("bank2 open ") and state[0].endswith(" seal=" + seal):
             print("OK already installed")
-            return 0
+            return 0, None
         status, body = retry_busy(lambda: put(conn, data, BANK2_REMOTE, show_progress))
         print(file=sys.stderr)
         if status is Status.ERR:
             return fail(body.decode(errors="replace"))
         if body.startswith(b"staged:"):
-            return stage_only(body, note)
+            return stage_only(body, note), None
         for _ in range(BUSY_TRIES):
             send(conn, "bank2 install")
             ln, before = bank2_answer(conn)
@@ -829,16 +892,24 @@ def bank2_install(t: Target, env, local: str, note: str = "") -> int:
         conn.close()
     sys.stdout.buffer.write(before)
     text = ln.decode(errors="replace")
+    if text.startswith("OK bank2 open "):
+        print(text)
+        sys.stdout.flush()
+        print("restarting: the open door's USB MIDI and audio come up at boot", file=sys.stderr)
+        try:
+            return 0, back_after_flash(t, env, RESTART_WAIT_S, serial)
+        except NotBack as e:
+            return fail("bank2: installed, but the unit isn't back %g s after its restart: %s" % (RESTART_WAIT_S, e.reason()))
     if text.startswith("OK"):
         print(text)
-        return 0
+        return 0, None
     foreign = text.startswith("ERR bank2 slot foreign ") and foreign_slot(text)
     if foreign:
-        fail(foreign)
-        return 2
+        _fail(note + foreign)
+        return 2, None
     if "staged: needs firmware" in text:
-        fail(text + LATER)
-        return 2
+        _fail(note + text + LATER)
+        return 2, None
     return fail(text)
 
 
@@ -946,6 +1017,14 @@ class UnitPort(NamedTuple):
 
     path: str
     serial: Optional[str]
+    product: Optional[str] = None
+
+
+def _read(path: pathlib.Path) -> Optional[str]:
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
 
 
 def unit_ports(env) -> list:
@@ -956,7 +1035,7 @@ def unit_ports(env) -> list:
             from serial.tools import list_ports
         except ImportError:
             return []
-        return [UnitPort(p.device, getattr(p, "serial_number", None)) for p in list_ports.comports() if (p.vid, p.pid) == tuple(CONSOLE_ID)]
+        return [UnitPort(p.device, getattr(p, "serial_number", None), getattr(p, "product", None)) for p in list_ports.comports() if (p.vid, p.pid) == tuple(CONSOLE_ID)]
     out = []
     for d in sorted(pathlib.Path(env.get("CHIMERA_SYSFS", "/sys"), "class/tty").glob("*")):
         usb = (d / "device").resolve().parent  # the interface's parent: the USB device
@@ -966,11 +1045,8 @@ def unit_ports(env) -> list:
             continue  # a virtual console, or a device leaving mid-read
         if ids != CONSOLE_ID:
             continue
-        try:
-            serial = (usb / "serial").read_text().strip()
-        except OSError:
-            serial = None
-        out.append(UnitPort("/dev/" + d.name, serial))
+        serial, product = (_read(usb / f) for f in ("serial", "product"))
+        out.append(UnitPort("/dev/" + d.name, serial, product))
     return out
 
 
@@ -1141,6 +1217,15 @@ def stage(t: Target, env, pkg: Package):
         return rc
     conn = open_conn(t)
     try:
+        # The flash restarts the unit, and an install after it refuses
+        # unsaved changes: they stop the update first (firmware too old to
+        # say goes on).
+        try:
+            status, body = request(conn, "status")
+        except NoAnswer:
+            status, body = Status.ERR, b""
+        if status is Status.OK and b"state MODIFIED" in body.splitlines():
+            return fail("update: the project has unsaved changes: save it (or load another), then run update again; nothing flashed")
         status, body = retry_busy(lambda: put(conn, pkg.bk2, BANK2_REMOTE, show_progress))
     except PutRefused as e:
         return fail("\nupdate: %s: nothing flashed" % e)
@@ -1219,11 +1304,12 @@ def update(t: Target, env, pkg: Package) -> int:
             return fail(not_back(pkg, e, UPDATE_BOOT_WAIT_S))
         if staged:
             return updated(back.target, pkg, back)
-        # The port it came back on carries on: the install, then status again.
-        rc = bank2_install(back.target, env, str(k), "update: flashed, but ")
+        # The port it came back on carries on: the install, then status again
+        # (after the restart an install that opens the door ends in).
+        rc, again = install_bk2(back.target, env, str(k), "update: flashed, but ")
         if rc:
             return rc
-    return updated(back.target, pkg)
+    return updated(again.target, pkg, again) if again else updated(back.target, pkg)
 
 
 def card_wait(t: Target, env, verbs) -> int:

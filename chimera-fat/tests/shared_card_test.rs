@@ -6,7 +6,9 @@ use chimera_fat::sd_addr::{AddrMode, CardAddr};
 use chimera_fat::shared_card::{Hooks, SharedCard, SharedError};
 use chimera_fat::{FatStore, Medium};
 use chimera_hal::Ms;
-use chimera_hal::card_bus::{CardBus, CardFault, Owner, Quiet, Taker, WATCHDOG_MS};
+use chimera_hal::card_bus::{
+    CardBus, CardFault, Owner, Quiet, Taker, Took, UI_TURN_MS, WATCHDOG_MS,
+};
 use chimera_hal::store::{Dir, FileName, ReadSink, Store, StoreError};
 use chimera_hal::units::{Millis, StreamCount};
 use core::cell::{Cell, RefCell};
@@ -28,6 +30,9 @@ thread_local! {
     /// The bus's quiet at each device write.
     static WROTE: RefCell<Vec<Quiet>> = const { RefCell::new(Vec::new()) };
     static PENDS: Cell<u32> = const { Cell::new(0) };
+    /// A card IRQ the streams saturate: it holds the bus `SATURATE_HOLD`
+    /// ms a fill and takes it again at once, as `keep` does (#569).
+    static SATURATE: Cell<Option<(&'static CardBus, u32)>> = const { Cell::new(None) };
     /// Every device call and the stream's give, with the bus's owner then.
     static LOG: RefCell<Vec<(&'static str, Owner)>> = const { RefCell::new(Vec::new()) };
 }
@@ -41,7 +46,11 @@ fn fresh() {
     WROTE.with_borrow_mut(Vec::clear);
     PENDS.set(0);
     LOG.with_borrow_mut(Vec::clear);
+    SATURATE.set(None);
 }
+
+/// Fills of this many ms, back to back.
+const SATURATE_HOLD: u32 = 5;
 
 fn now() -> Ms {
     let t = CLOCK.get();
@@ -61,6 +70,15 @@ fn now() -> Ms {
         && t == at
     {
         bus.answer_quiet(Ms(t));
+    }
+    if let Some((bus, since)) = SATURATE.get() {
+        let due = t.wrapping_sub(since) >= SATURATE_HOLD;
+        if bus.owner() == Owner::Stream && due {
+            bus.give();
+        }
+        if bus.owner() == Owner::Free && bus.take_or_want(Ms(t)) == Took::Taken {
+            SATURATE.set(Some((bus, t)));
+        }
     }
     Ms(t)
 }
@@ -402,5 +420,26 @@ fn a_stuck_stream_is_asked_to_abort() {
     assert!(bus.try_take(Taker::Stream, Ms(0)));
     assert_eq!(read(&c), Err(SharedError::Busy));
     assert!(bus.take_abort());
-    assert_eq!(PENDS.get(), 1);
+    // The abort's pend, then the turn the UI gave up on (#569).
+    assert_eq!(PENDS.get(), 2);
+    assert!(!bus.turn_asked(), "a UI that gave up leaves no turn");
+}
+
+/// #569: streams that always want the card no longer starve a UI read
+/// into `Busy`: after `UI_TURN_MS` it asks a turn and gets the bus at the
+/// next give, slower but never failing.
+#[test]
+fn a_saturated_stream_load_gives_the_ui_a_turn() {
+    let (c, bus, _) = card(false);
+    assert!(bus.try_take(Taker::Stream, Ms(0)));
+    SATURATE.set(Some((bus, 0)));
+    assert_eq!(read(&c), Ok(()));
+    let took = CLOCK.get();
+    assert!(took >= UI_TURN_MS.get(), "the streams first: {took} ms");
+    assert!(
+        took <= UI_TURN_MS.get() + 2 * SATURATE_HOLD,
+        "then the next give: {took} ms"
+    );
+    assert!(!bus.turn_asked());
+    assert_eq!(PENDS.get(), 1, "the UI's give woke the streams");
 }

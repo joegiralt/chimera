@@ -810,6 +810,21 @@ pub fn cell_words(def: &BlockDef, v: &View, ctx: &SlotCtx) -> Words {
     }
 }
 
+/// The reverb send's hint while bank 2 is closed: it plays nothing (#547).
+const REV_CLOSED: Hint = &[Gesture("REVERB ▸", crate::bank2::NEEDS_UPDATE)];
+
+/// `words`, but the reverb send's say `NEEDS UPDATE` while bank 2 is
+/// closed instead of naming a TYPE that can't play (#547). `None`: a
+/// build without bank 2.
+pub fn closed_words(v: &View, words: Words, bank2: Option<crate::bank2::Bank2Status>) -> Words {
+    let send = v.addr() == Some(ParamAddr::new(BlockRef::Out, OutParams::SEND3));
+    if send && bank2.is_some_and(|b| !b.is_open()) {
+        Words::Own(REV_CLOSED)
+    } else {
+        words
+    }
+}
+
 const REV_HINTS: [Hint; 6] = [
     &[Gesture("REVERB ▸", ReverbType::NAMES[0])],
     &[Gesture("REVERB ▸", ReverbType::NAMES[1])],

@@ -58,6 +58,8 @@ impl Write for Line {
 pub enum Subject {
     Name(ProjectName),
     File(ProjectId),
+    /// SYSTEM, the settings' file (#197).
+    System,
 }
 
 impl fmt::Display for Subject {
@@ -65,6 +67,7 @@ impl fmt::Display for Subject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Subject::Name(n) => f.write_str(n.as_str()),
+            Subject::System => f.write_str("SYSTEM"),
             Subject::File(id) => {
                 let stem = id.stem();
                 f.write_str(core::str::from_utf8(&stem).unwrap_or("P???????"))

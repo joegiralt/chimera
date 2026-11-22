@@ -206,15 +206,17 @@ impl Owner {
         }
         let english = r.index == 0x0409;
         let reply: Option<&'static [u8]> = match (r.recipient, r.request) {
+            // The device, configuration and BOS by type alone, as
+            // usb-device answers them at any index (#943).
             (To::Device, Q::GET_DESCRIPTOR) => match r.descriptor_type_index() {
-                (2, 0) => Some(a.config),
+                (2, _) => Some(a.config),
                 _ if !self.stale => None,
-                (1, 0) => Some(a.device),
+                (1, _) => Some(a.device),
                 (3, 0) => Some(a.strings[0]),
                 (3, i @ 1..=3) if english => Some(a.strings[usize::from(i)]),
                 // The jack's name, as the class's `get_string`: any language.
                 (3, 4) => Some(a.strings[4]),
-                (0x0F, 0) => Some(&BOS),
+                (0x0F, _) => Some(&BOS),
                 _ => None,
             },
             _ if !self.stale => None,

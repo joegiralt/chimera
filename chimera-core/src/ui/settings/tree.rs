@@ -206,8 +206,9 @@ static PERSONALIZE: [Row; 6] = [
     crumb("ALGO PAGES", "ALGO", Leaf(&super::leaves::ALGO_PAGES_LEAF)),
 ];
 
-/// A row per DEMO page, by its short name.
-#[cfg(debug_assertions)]
+/// A row per DEMO page, by its short name: debug builds and tests, in
+/// any profile (#354).
+#[cfg(any(debug_assertions, feature = "test-support"))]
 static DEMO: [Row; super::leaves::DEMO_LEAVES.len()] = {
     use super::leaves::DEMO_LEAVES;
     let mut r = [row("", Leaf(&DEMO_LEAVES[0])); DEMO_LEAVES.len()];
@@ -223,7 +224,7 @@ static DIAGNOSTICS: &[Row] = &[
     crumb("AUDIO LOAD", "AUD LOAD", Leaf(&AUDIO_LOAD_LEAF)),
     crumb("TEST TONE", "TONE", Later(issue(295))),
     crumb("INPUT TEST", "INPUT", Later(issue(296))),
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "test-support"))]
     row("DEMO", List(&DEMO)),
 ];
 

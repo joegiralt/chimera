@@ -89,6 +89,15 @@ fn empty_and_blank_lines_give_nothing() {
     assert!(feed(&mut Console::new(), b"\n\r\n   \r\n\n").is_empty());
 }
 
+/// A tty that echoes sends the console's own answers back: they are not
+/// requests, or `ERR unknown command` and its echo loop forever (#315).
+#[test]
+fn an_echoed_answer_gives_nothing() {
+    let echoes = b"OK\nOK queued\nERR\nERR unknown command foo, try help\n  ok 5 more\nerr busy\n";
+    assert!(feed(&mut Console::new(), echoes).is_empty());
+    assert_eq!(feed(&mut Console::new(), b"OKAY\nERRS\n").len(), 2);
+}
+
 #[test]
 fn only_a_space_separates_words() {
     let got = feed(&mut Console::new(), b"\t\n");
