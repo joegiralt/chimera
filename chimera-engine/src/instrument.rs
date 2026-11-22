@@ -2350,13 +2350,43 @@ impl Instrument {
     }
 
     /// What this block may still clear (#306, ADR 0311): its room as the
-    /// bookings stand (bank 2's, behind `AdmitDoor`; one worst note-on with
-    /// the door closed, as before) less what it has cleared, within the
-    /// one worst note-on a block `clear_left` keeps.
+    /// bookings stand less what it has cleared, within the one worst
+    /// note-on a block `clear_left` keeps.
     fn clear_avail(&self) -> usize {
-        let room = Self::admission(|d| d.clear_room(self)).unwrap_or(SYM_CLEAR_BUDGET);
+        let room = self.clear_room();
         room.saturating_sub(SYM_CLEAR_BUDGET - self.clear_left)
             .min(self.clear_left)
+    }
+
+    /// The bytes this block may clear in all (#306, ADR 0311), asked at
+    /// each clear: what is left of the deadline (the audio share over
+    /// `AUDIO_BUDGET_PERCENT`) once the bookings and the reserve as they
+    /// stand, a note more (`SYM_CLEAR_NOTE_MARGIN`, up to the budget), and
+    /// ADR 0262's overhead for each Part with a voice booked and one more
+    /// are spent, at the clear's rate; at most one worst note-on. At a
+    /// full pool rev V clears 7,680 B a block, rev Y 4,344 B.
+    #[inline(never)]
+    #[optimize(size)]
+    fn clear_room(&self) -> usize {
+        let budget = self.alloc.budget();
+        let now = self.alloc.sounding_cost() + self.reserved();
+        let booked = now.max((now + SYM_CLEAR_NOTE_MARGIN).min(budget.as_cost()));
+        let parts = self
+            .alloc
+            .slots()
+            .iter()
+            .filter_map(|s| s.part())
+            .fold(crate::project::PartSet::EMPTY, |s, p| s.with(p))
+            .len();
+        let parts = (parts + 1).min(crate::hw::MAX_PARTS) as u32;
+        // A sample's cycles stay far under `u32::MAX / 100` at any clock.
+        let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
+        let used = booked
+            .0
+            .saturating_add(BLOCK_OVERHEAD.0 + PART_OVERHEAD.0 * parts);
+        let room = deadline.saturating_sub(used)
+            * (chimera_hal::BLOCK_SIZE as u32 / SYM_CLEAR_CYCLES_PER_BYTE);
+        (room as usize).min(SYM_CLEAR_BUDGET)
     }
 
     /// Each Part's kit bill as published, with each ringing hit's struck

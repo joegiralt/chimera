@@ -1105,21 +1105,15 @@ impl ModalEngine {
 /// MODAL's block (`ModalEngine::block`).
 pub type ModalRun = fn(&mut ModalEngine, &mut [f32; BLOCK_SIZE], &ModalParams, u32, &mut SymPool);
 
-/// A waiting Sympathetic note's clear done ahead (`SymPool::pre_clear`).
-pub type ModalPreClear = fn(&mut SymPool, Option<&mut ModalEngine>, VoiceIdx, usize) -> usize;
-
-/// MODAL's entry (ADR 0215): one call a voice a block, and the clear a
-/// waiting Sympathetic note does ahead (ADR 0311).
+/// MODAL's entry (ADR 0215): one call a voice a block.
 #[repr(C)]
 pub struct ModalDoor {
     pub render: ModalRun,
-    pub pre_clear: ModalPreClear,
 }
 
 impl ModalDoor {
     pub const DOOR: ModalDoor = ModalDoor {
         render: kern::render,
-        pre_clear: kern::pre_clear,
     };
 }
 
@@ -1146,39 +1140,7 @@ fn through<R>(f: impl FnOnce(&ModalDoor) -> R) -> Option<R> {
 /// Bank 2's: `bank2.x` links `*5modal4kern*`, and the models' loops only
 /// the block reaches.
 mod kern {
-    use super::{BLOCK_SIZE, Halo, ModalEngine, ModalParams, ModelSlot, SymPool};
-    use crate::voice_alloc::VoiceIdx;
-
-    /// `SymPool::pre_clear`'s work.
-    #[inline(never)]
-    pub(super) fn pre_clear(
-        pool: &mut SymPool,
-        engine: Option<&mut ModalEngine>,
-        voice: VoiceIdx,
-        max: usize,
-    ) -> usize {
-        let promise = pool.alloc.promise_of(voice);
-        let mut left = max;
-        let set = match engine.map(|e| &mut e.model) {
-            Some(ModelSlot::Sympathetic(m)) => {
-                let (main, set) = match &m.halo {
-                    Halo::Full(l) => (true, Some(l.slot())),
-                    Halo::Bare => (promise.is_none(), promise),
-                };
-                if main {
-                    left -= m.main.string.clear_some(left);
-                }
-                set
-            }
-            _ => promise,
-        };
-        if let Some(s) = set {
-            for st in pool.sets[s.index()].strings.iter_mut() {
-                left -= st.clear_some(left);
-            }
-        }
-        max - left
-    }
+    use super::{BLOCK_SIZE, ModalEngine, ModalParams, SymPool};
 
     #[inline(never)]
     pub(super) fn render(
@@ -1524,15 +1486,36 @@ impl SymPool {
     /// note, a block's room at a time (#306, ADR 0311): the main string
     /// where the note keeps it (`engine` idle), and the set it will ring,
     /// its own or the one promised, which no voice renders meanwhile.
-    /// What it cleared: bank 2's, behind `ModalDoor` (0 with it closed,
-    /// where MODAL is silent).
+    /// What it cleared. Out of line: bank 1's (the door table is full).
+    #[inline(never)]
+    #[optimize(size)]
     pub fn pre_clear(
         &mut self,
         engine: Option<&mut ModalEngine>,
         voice: VoiceIdx,
         max: usize,
     ) -> usize {
-        through(|d| (d.pre_clear)(self, engine, voice, max)).unwrap_or(0)
+        let promise = self.alloc.promise_of(voice);
+        let mut left = max;
+        let set = match engine.map(|e| &mut e.model) {
+            Some(ModelSlot::Sympathetic(m)) => {
+                let (main, set) = match &m.halo {
+                    Halo::Full(l) => (true, Some(l.slot())),
+                    Halo::Bare => (promise.is_none(), promise),
+                };
+                if main {
+                    left -= m.main.string.clear_some(left);
+                }
+                set
+            }
+            _ => promise,
+        };
+        if let Some(s) = set {
+            for st in self.sets[s.index()].strings.iter_mut() {
+                left -= st.clear_some(left);
+            }
+        }
+        max - left
     }
 
     /// The set `halo` rings, if any. It borrows the pool and the lease, so
