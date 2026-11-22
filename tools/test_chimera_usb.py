@@ -1478,9 +1478,11 @@ class Update(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn("OK updated 0.2.0 02e440e2", out)
         put, dfu, status = self.sent("put /CHIMERA/SYSTEM/BANK2.BK2 "), self.sent("dfu-util"), self.sent("status")
-        self.assertEqual((len(put), len(dfu), len(status)), (1, 1, 1), self.events)
+        # One status before (unsaved changes?), one after the flash.
+        self.assertEqual((len(put), len(dfu), len(status)), (1, 1, 2), self.events)
+        self.assertLess(status[0], put[0])
         self.assertLess(put[0], dfu[0])
-        self.assertLess(dfu[0], status[0])
+        self.assertLess(dfu[0], status[1])
         self.assertEqual(u.data, self.bk2)
         self.assertEqual(self.sent("bank2"), [], "the boot installs it, not the console")
         self.assertEqual(backs, [tool.UPDATE_BOOT_WAIT_S], "the first boot installs before the console comes up")
@@ -1494,6 +1496,17 @@ class Update(unittest.TestCase):
             self.assertEqual(rc, 2, err)
             self.assertIn("flashed, but the unit's %s slot (%s) holds other code" % (name, addr), err)
             self.assertNotIn("OK updated", out)
+
+    def test_unsaved_changes_stop_the_update_before_anything(self):
+        # The flash restarts the unit (and an install after it would refuse
+        # them): `update` says so first, nothing staged or flashed.
+        answers = {b"status": self.status(self.open_line()).replace(b"protocol 1\n", b"protocol 1\nstate MODIFIED\n")}
+        with PutUnit(answers=answers) as u:
+            rc, out, err = self.update(u, self.package())
+        self.assertEqual(rc, 1, err)
+        self.assertIn("unsaved changes", err)
+        self.assertIn("nothing flashed", err)
+        self.assertEqual(self.sent("put ") + self.sent("to-dfu") + self.sent("dfu-util"), [], self.events)
 
     def test_a_plain_ok_stages_too(self):
         with PutUnit(answers={b"status": self.status(self.open_line())}) as u:

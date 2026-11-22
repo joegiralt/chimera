@@ -47,7 +47,7 @@ already on the card answers `OK PRESENT`, so a re-run is the retry). `ERR busy`
 (the unit's card work pending) is retried: 5 tries, 200 ms apart, doubling.
 Python 3 and its standard library only; Linux and macOS (no Windows).
 `update` checks the whole pair before it touches the unit, stops before
-the flash if the .bk2 can't go onto the card, waits up to 2 minutes
+the flash if the project has unsaved changes or the .bk2 can't go onto the card, waits up to 2 minutes
 for the unit to answer after the flash, and exits 0 only once
 `status` shows the pair's seal open (`OK updated <version>`);
 it needs dfu-util. An install that opens bank 2 restarts the unit (its USB
@@ -1217,6 +1217,15 @@ def stage(t: Target, env, pkg: Package):
         return rc
     conn = open_conn(t)
     try:
+        # The flash restarts the unit, and an install after it refuses
+        # unsaved changes: they stop the update first (firmware too old to
+        # say goes on).
+        try:
+            status, body = request(conn, "status")
+        except NoAnswer:
+            status, body = Status.ERR, b""
+        if status is Status.OK and b"state MODIFIED" in body.splitlines():
+            return fail("update: the project has unsaved changes: save it (or load another), then run update again; nothing flashed")
         status, body = retry_busy(lambda: put(conn, pkg.bk2, BANK2_REMOTE, show_progress))
     except PutRefused as e:
         return fail("\nupdate: %s: nothing flashed" % e)
