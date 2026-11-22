@@ -84,7 +84,10 @@ impl DesktopAudio {
         let device = host.default_output_device().expect("no output device");
         let config = stereo_48k(&device).unwrap_or_else(|| {
             let c = device.default_output_config().expect("no output config");
-            eprintln!("no 48 kHz stereo f32 output; using {} Hz (Modal pitch floor and delay range assume 48 kHz)", c.sample_rate().0);
+            eprintln!(
+                "no 48 kHz stereo f32 output; resampling 48 kHz to {} Hz",
+                c.sample_rate().0
+            );
             c
         });
         let sample_rate = config.sample_rate().0;
@@ -108,7 +111,11 @@ impl DesktopAudio {
         let audio = Arc::clone(&shared);
 
         let sources = SOURCE_TABLE.reader().expect("the source reader, once");
-        let mut engine = Engine::new(sample_rate, orbit, sources);
+        // The engine runs at the unit's rate whatever the device's (#239):
+        // MODAL's blocker, BODY and release, its pitch floor, the delays'
+        // ranges, all as the firmware hears them.
+        let mut engine = Engine::new(SAMPLE_RATE, orbit, sources);
+        let mut rate = Resample::new(SAMPLE_RATE, sample_rate);
         engine.streams = streams;
         let mut formant = formant;
         let mut block_pos = BLOCK_SIZE;
@@ -126,16 +133,20 @@ impl DesktopAudio {
                     let us = frames * 1_000_000 / u64::from(sample_rate);
                     engine.sources.set_period_us(us as u32);
                     for frame in data.chunks_mut(channels) {
-                        if block_pos >= BLOCK_SIZE {
-                            engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
-                            let inst = &*engine.inst;
-                            formant.publish(|v| inst.formant_views_into(v));
-                            block_pos = 0;
-                        }
-                        let ((l, r), clamped) = stereo_frame(engine.dac.out(), solo, block_pos);
-                        if clamped {
-                            audio.clamped.fetch_add(1, Ordering::Relaxed);
-                        }
+                        let (l, r) = rate.frame(|| {
+                            if block_pos >= BLOCK_SIZE {
+                                engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
+                                let inst = &*engine.inst;
+                                formant.publish(|v| inst.formant_views_into(v));
+                                block_pos = 0;
+                            }
+                            let (lr, clamped) = stereo_frame(engine.dac.out(), solo, block_pos);
+                            if clamped {
+                                audio.clamped.fetch_add(1, Ordering::Relaxed);
+                            }
+                            block_pos += 1;
+                            lr
+                        });
                         match frame {
                             [mono] => *mono = 0.5 * (l + r),
                             [fl, fr, rest @ ..] => {
@@ -144,7 +155,6 @@ impl DesktopAudio {
                             }
                             [] => {}
                         }
-                        block_pos += 1;
                     }
                 },
                 |err| eprintln!("audio error: {}", err),
@@ -529,8 +539,74 @@ fn flush_denormals() {
     }
 }
 
+/// The engine's frames at `from` Hz to the device's `to`: linear between
+/// neighbours, a frame late. At equal rates each frame passes untouched.
+struct Resample {
+    step: f64,
+    frac: f64,
+    /// The frames either side of the read, `None` before the first.
+    pair: Option<((f32, f32), (f32, f32))>,
+}
+
+impl Resample {
+    fn new(from: u32, to: u32) -> Self {
+        Self {
+            step: f64::from(from) / f64::from(to),
+            frac: 0.0,
+            pair: None,
+        }
+    }
+
+    /// The next device frame, `pull` giving the engine's next.
+    fn frame(&mut self, mut pull: impl FnMut() -> (f32, f32)) -> (f32, f32) {
+        if self.step == 1.0 {
+            return pull();
+        }
+        let (mut a, mut b) = self.pair.unwrap_or_else(|| (pull(), pull()));
+        while self.frac >= 1.0 {
+            self.frac -= 1.0;
+            (a, b) = (b, pull());
+        }
+        let t = self.frac as f32;
+        self.frac += self.step;
+        self.pair = Some((a, b));
+        (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// #239: at the unit's rate the frames pass as they are; to 44.1 kHz
+    /// a 1 kHz tone stays 1 kHz, its level kept.
+    #[test]
+    fn the_engine_rate_reaches_any_device_rate() {
+        let mut n = 0u32;
+        let mut same = Resample::new(48_000, 48_000);
+        for i in 0..100 {
+            let f = same.frame(|| {
+                n += 1;
+                (n as f32, -(n as f32))
+            });
+            assert_eq!(f, ((i + 1) as f32, -((i + 1) as f32)));
+        }
+        let mut r = Resample::new(48_000, 44_100);
+        let mut k = 0u32;
+        let tone = |k: u32| (core::f32::consts::TAU * 1000.0 * k as f32 / 48_000.0).sin();
+        let y: Vec<f32> = (0..44_100)
+            .map(|_| {
+                r.frame(|| {
+                    k += 1;
+                    (tone(k - 1), 0.0)
+                })
+                .0
+            })
+            .collect();
+        let ups = y.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
+        assert!((999..=1001).contains(&ups), "{ups} cycles a second");
+        let peak = y.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.99 && peak <= 1.0, "{peak}");
+    }
+
     /// A reader of a table of its own: the sim's is taken once.
     fn test_reader() -> chimera_core::source_table::AudioToken {
         let t = Box::leak(Box::new(chimera_core::source_table::SourceTable::new()));
