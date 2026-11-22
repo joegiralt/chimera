@@ -242,7 +242,7 @@ pub struct UiDoor {
     /// ADR 0203).
     machine_edit: fn(ParamAddr, f32, &mut dyn Block) -> EnvWrites,
     tape_note: fn(ParamAddr, &Sound) -> Option<&'static str>,
-    band_note: fn(ParamAddr, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
+    band_note: fn(Option<ParamAddr>, &Sound, crate::ui::view::SourceState) -> Option<&'static str>,
     tape_held: fn(&TapeEngineParams, crate::ui::held::TapeTurn) -> Option<NeedsRam>,
     /// TAPE cells' units where the engine has a law (`ui::walk`).
     tape_fmt: fn(
@@ -484,7 +484,7 @@ impl UiDoor {
     #[inline(always)]
     pub(crate) fn band_note(
         &self,
-        a: ParamAddr,
+        a: Option<ParamAddr>,
         s: &Sound,
         src: crate::ui::view::SourceState,
     ) -> Option<&'static str> {

@@ -333,10 +333,14 @@ fn knobs(b: BlockRef, writes: &[(ParamId, f32)]) -> u8 {
 /// it is dimmed (`tape_note`), or a streamed LOOP's XFADE past the 100 ms
 /// its loop head holds (`view::band_note`).
 pub(crate) fn band_note_in(
-    addr: ParamAddr,
+    addr: Option<ParamAddr>,
     sound: &Sound,
     src: SourceState,
 ) -> Option<&'static str> {
+    // SOURCE's own: WAVE on a source that isn't a wave table (#709).
+    let Some(addr) = addr else {
+        return matches!(src, SourceState::NotWaveTable).then_some(TURN_TO_A_WAVE);
+    };
     if let Some(n) = tape_note_in(addr, sound).or_else(|| crate::ui::notes::cell(addr, sound)) {
         return Some(n);
     }
@@ -369,6 +373,9 @@ pub(crate) fn band_note_in(
     let cap = u32::from(rate) * crate::stream::stage::XFADE_MAX_MS / 1_000;
     (asked > cap as f32).then_some(XFADE_CAPPED)
 }
+
+/// WAVE on a source that isn't a wave table: what to do (#709).
+pub const TURN_TO_A_WAVE: &str = "TURN SOURCE TO A WAVE TABLE";
 
 /// What `t` with `param` (MODEL or DIRECTION) at `code` can't play from a
 /// streamed source (`held::Held::why`).

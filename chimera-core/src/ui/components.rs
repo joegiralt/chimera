@@ -353,7 +353,7 @@ pub fn focus_band<D>(
 {
     focus_label(d, label, &gauge, size);
     let layout = layout(value_text, &gauge);
-    // A value too wide for the large numerals (`NOT A TRANSWAVE`) reads at
+    // A value too wide for the large numerals (`NEEDS A WAVE TABLE`) reads at
     // the status size, the whole row its own.
     let wide = layout == Layout::Small;
     match status {

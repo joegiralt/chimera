@@ -984,15 +984,16 @@ fn a_source_wave_cant_play_says_what_to_do() {
     use chimera_core::ui::draw::text_width;
     use chimera_core::ui::fmt::FmtBuf;
     use chimera_core::ui::theme::{CONTENT_W, FONT_LABEL, FONT_VALUE, LABEL_TRACKING};
-    use chimera_core::ui::view::{SourceState, View, source_note};
+    use chimera_core::ui::view::{SourceState, band_note};
     let mut band = FmtBuf::new();
-    SourceState::NotTranswave.text(&mut band);
+    SourceState::NotWaveTable.text(&mut band);
     assert_eq!(band.as_str(), "NEEDS A WAVE TABLE");
     let w = text_width(&FONT_VALUE, band.as_str(), LABEL_TRACKING);
     assert!(w <= CONTENT_W, "band {w}px over {CONTENT_W}");
-    let note = source_note(&View::Source(SourceState::NotTranswave)).expect("a hint");
+    let sound = chimera_core::preset::Sound::init(EngineType::Tape);
+    let note = band_note(None, &sound, SourceState::NotWaveTable).expect("a hint");
     assert!(note.contains("TURN SOURCE"), "{note}");
     let w = text_width(&FONT_LABEL, note, LABEL_TRACKING);
     assert!(w <= CONTENT_W, "hint {w}px over {CONTENT_W}");
-    assert_eq!(source_note(&View::Source(SourceState::None)), None);
+    assert_eq!(band_note(None, &sound, SourceState::None), None);
 }

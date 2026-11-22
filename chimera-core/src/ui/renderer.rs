@@ -28,7 +28,6 @@ use crate::ui::fmt::FmtBuf;
 use crate::ui::glyph::{
     BRAID_PARAMS, Braid, BraidPart, CompositeId, Cube, CubePart, FocusGlyph, Gauge, REVERB_PARAMS,
     RINGS_PARAMS, Reads, Rings, RingsPart, TAPE_GLYPH_PARAMS, Tail, VA_MIX_PARAMS, VaGlyph, VaMix,
-    va_mode,
 };
 use crate::ui::hint;
 use crate::ui::lfo_glyph::{self, LfoGauge};
@@ -1018,13 +1017,17 @@ impl Renderer {
                 .or_else(|| view::kit_or_voices_note(a, f.pads.kit, f.parts))
                 .or_else(|| view::ratio_note(a, sound))
         });
-        let note = view
-            .addr()
-            .and_then(|a| view::band_note(a, sound, f.ctx.src).or(view::delay_note(a, &f.ctx)))
+        // SOURCE has no address: its own state says what to do (#709).
+        let (at, src) = match view {
+            View::Source(s) => (None, Some(s)),
+            v => (v.addr(), v.addr().map(|_| f.ctx.src)),
+        };
+        let note = src
+            .and_then(|s| view::band_note(at, sound, s))
+            .or_else(|| at.and_then(|a| view::delay_note(a, &f.ctx)))
             .or(tuning.as_ref().map(|l| l.as_str()))
             .or(tonal.as_ref().map(|l| l.as_str()))
-            .or_else(|| view::clash_note(&view, &f.ctx))
-            .or_else(|| view::source_note(&view));
+            .or_else(|| view::clash_note(&view, &f.ctx));
         match (f.held.filter(|s| held_on(f, &view) == Some(s.held)), note) {
             (Some(s), _) => {
                 let why = crate::ui::held::reason(s.why);
@@ -1233,10 +1236,12 @@ impl Renderer {
             },
             Reads::Drum => f.ctx.pad.map_or(Gauge::None, Gauge::Drum),
             Reads::Va(VaGlyph::Blend) => {
-                let [mode, amount] = self.eased_set(f, [VA_MIX_PARAMS[0], VA_MIX_PARAMS[1]]);
+                // MODE as stored, as WAVE's reads it: a choice never rolls
+                // through the modes between.
+                let [amount] = self.eased_set(f, [VA_MIX_PARAMS[1]]);
                 Gauge::Blend {
                     value: amount,
-                    mode: va_mode(mode),
+                    mode: f.parts[f.active_part.index()].sound.params.va.mode,
                 }
             }
         });

@@ -94,3 +94,27 @@ fn modes_glyph_switches_with_mode_not_through_the_ones_between() {
         ui.shown_gauge()
     );
 }
+
+/// BLEND's crossfader names its ends by MODE as stored: a MODE CC lands
+/// on its own names, never on the modes between (round 3 of #667's review).
+#[test]
+fn blends_ends_follow_mode_as_stored() {
+    use chimera_core::ui::animation::UiTick;
+    use chimera_core::ui::glyph::Gauge;
+    use chimera_hal::EncoderId;
+    let mut ui = va_ui(VaMode::Mix, 0.8, 0.5, 0.3);
+    // BLEND focused.
+    screen::feed(&mut ui, screen::Input::turn(EncoderId::D, 1));
+    screen::settle(&mut ui);
+    ui.project_mut()
+        .edit_part(PartId::ALL[0])
+        .sound
+        .params
+        .va
+        .mode = VaMode::LoopFm;
+    ui.update(UiTick::for_test());
+    match ui.shown_gauge() {
+        Some(Gauge::Blend { mode, .. }) => assert_eq!(mode, VaMode::LoopFm),
+        g => panic!("BLEND draws its crossfader, not {g:?}"),
+    }
+}
