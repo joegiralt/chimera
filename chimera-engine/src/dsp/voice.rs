@@ -724,14 +724,11 @@ impl Voice {
         &self,
         pool: &SymPool,
         note: MidiNote,
-        (params, mods): (&ParamSnapshot, &ModState),
+        params: &ParamSnapshot,
     ) -> usize {
         let adds = self.starts_now(params, pool) && params.pitch.steal == Steal::Glide;
-        // a PITCH route may move the note off its note-on pitch by the
-        // first block: its re-pluck is billed too (#233)
-        let routed = crate::dsp::engines::pitch_reach(mods) != 0.0;
         self.slot
-            .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate), routed)
+            .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
     }
 
     /// On a fading voice, or one sounding another engine or model, the note

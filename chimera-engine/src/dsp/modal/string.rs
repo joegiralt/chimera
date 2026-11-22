@@ -219,6 +219,34 @@ impl KsString {
         self.write_pos = len - 1;
     }
 
+    /// `excite` again at another period, on a line only `excite` has
+    /// written since its clear (a note's first block, before any sample):
+    /// the same line as a clear and an `excite` would leave, with no
+    /// second clear. Only the first fill's tail past the new loop (and
+    /// the ring's growth's copy of it) is zeroed, so the writes are about
+    /// a fill's, as the note-on's own (#233).
+    pub(super) fn refill(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
+        let old = self.delay;
+        // `clear`'s resets but the buffer's: nothing past `old` was written
+        self.write_pos = 0;
+        self.delay = MIN_LINE;
+        self.ring_len = MIN_LINE + 2;
+        self.dirty = self.ring_len;
+        self.frac.reset();
+        self.set_period(period, other, w);
+        let len = self.delay;
+        for i in 0..len {
+            self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
+        }
+        // the first fill's tail, and what the ring's growth carried of it
+        let end = old.max(self.ring_len);
+        if end > len {
+            self.buffer[len..end].fill(0.0);
+        }
+        // The oldest sample first.
+        self.write_pos = len - 1;
+    }
+
     /// Shapes the pluck `excite` wrote, in place, before the loop reads
     /// it: plucked at `beta` of the string (`comb`), then `passes`
     /// smoothing passes (`color_passes`), then its mean taken out.
@@ -801,7 +829,7 @@ impl StringVoice {
         if let Some(level) = self.adding.fresh_level() {
             let l = self.dispersed(freq, sample_rate);
             self.string.noise_state = self.seed;
-            self.string.excite(l, level);
+            self.string.refill(l, level);
         }
     }
 
@@ -1080,6 +1108,33 @@ mod tests {
             // A whole-sample comb: C7's middle is 5/18, not 1/4.
             let null = if len > 18 { 0.02 } else { 0.3 };
             assert!(last < null, "{len}: the middle's 2nd over 1st {last}");
+        }
+    }
+
+    /// #233: a re-pluck on a just-plucked line leaves the line, its ring
+    /// and its noise as one clear and pluck at the new period would, up or
+    /// down from the first.
+    #[test]
+    fn a_refill_is_a_clear_and_a_pluck() {
+        for (first, second) in [(60u8, 72u8), (60, 36), (31, 96), (96, 31)] {
+            let ens = Ensemble::new(0.0, 3.0, 48_000);
+            let pluck = |v: &mut StringVoice, note: u8| {
+                let f = (note_to_freq(note), 48_000);
+                v.pluck(f, None, 0.7, (0.0, (0.0, ens)), 0.3);
+            };
+            let mut a = voice();
+            pluck(&mut a, first);
+            a.repluck(note_to_freq(second), 48_000);
+            let mut b = voice();
+            pluck(&mut b, second);
+            let (la, lb) = (a.string.line(), b.string.line());
+            assert_eq!(la.1, lb.1, "{first} → {second}: the dirty extent");
+            assert!(la.0[..] == lb.0[..], "{first} → {second}: the line");
+            assert_eq!(a.string.noise_state, b.string.noise_state);
+            assert_eq!(
+                (a.string.delay, a.string.ring_len, a.string.write_pos),
+                (b.string.delay, b.string.ring_len, b.string.write_pos)
+            );
         }
     }
 
