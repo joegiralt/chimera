@@ -373,6 +373,8 @@ check-door-placed elf:
     # So are 0.4's tester cells' words (ADR 0292), PRT's meters (ADR 0293)
     # and the reverb's duck (ADR 0295).
     grep -E ' [tT] .*(ui::notes::|part_peaks::kern::|ui::part_meter::|rev::duck::)' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "tester work outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So is batch E's SYMP pacing and DRUM bills (ADR 0320).
+    grep -E ' [tT] .*Instrument>::(clear_avail_in|admit_sym_in|strike_ready_in|follows_in|ringing_kits_in)$' <<< "$syms" | awk '{ n++; a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "sym_admit outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "sym_admit: nothing linked" > "/dev/stderr"; exit bad || !n }'
     # So is the compressor's KEY (ADR 0303).
     grep -E ' [tT] .*comp_key::kern::' <<< "$syms" | awk '{ n++; a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "comp KEY outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "comp KEY: nothing linked" > "/dev/stderr"; exit bad || !n }'
     # So is the delay's tempo sync, engine and UI (ADR 0302).

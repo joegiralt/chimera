@@ -1,6 +1,6 @@
 # 0320. The door table grows to 0x180; the fixed tables after it move 0x80 on
 
-- **Status:** Accepted (2026-11-22)
+- **Status:** Accepted (2026-11-22); supersedes in part ADRs 0175, 0194, 0208, 0217, 0276 and 0283 where they quote a fixed table's slot (the board's, UI's, bench's, ORBIT's pages', MIDI UI's or ed's address, or `DOOR_ADDR + 0x100` to `+ 0x400`): the slots are this ADR's table now
 - **Deciders:** owner (grow the table now, 2026-11-22), firmware (bug batch E)
 
 ## Context
@@ -30,7 +30,7 @@ Moving them behind a door failed to link. The door's table (`Bank2Door`) sits at
   - `ringing_kits` (each Part's kit bill with its ringing hits' runs);
   - `follows` (each hit's live-follow bill).
 
-  Their bodies live in `instrument::admission`, which `bank2.x` already globs into bank 2. These are `#[inline(always)]` into them, so none of them has a bank-1 copy:
+  Their bodies live in `instrument::sym_admit`. `bank2.x` links that module into an S4 group beside `ed`'s, so S0-S3, already under ADR 0251's 8 KB warning, keeps its room. These are `#[inline(always)]` into them, so none of them has a bank-1 copy:
   - `Voice::sym_pre_clear`, `SymPool::pre_clear` and `KsString::clear_some`;
   - `Voice::sym_strike_adds`;
   - `Voice::drum_runs` and `DrumEngine::runs`;

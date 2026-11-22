@@ -34,9 +34,6 @@ fn off(ch: u8, note: u8) -> NoteEvent {
 use common::InstRig as Rig;
 
 impl Rig {
-    /// Rev V's budget, Part 1 capped by its MAX VOICES (`part`, `cap`):
-    /// a note past the cap steals its own. A Part's cap, not a starved budget: the clear
-    /// room is a real chip's (ADR 0311).
     /// A budget with room for one voice of Part 1's Sound beside the bus
     /// and two Parts' knobs: a note of any Part steals.
     fn starved(shared: &AudioShared) -> Self {
@@ -52,6 +49,9 @@ impl Rig {
         ))
     }
 
+    /// Rev V's budget, Part 1 capped by its MAX VOICES (`part`, `cap`):
+    /// a note past the cap steals its own. A Part's cap, not a starved
+    /// budget: the clear room is a real chip's (ADR 0311).
     fn capped() -> Self {
         Self::with_budget(SampleBudget::for_cpu(chimera_core::hw::CPU_HZ_REV_V))
     }

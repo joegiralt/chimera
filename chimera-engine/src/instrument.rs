@@ -55,6 +55,7 @@ use crate::voice_alloc::{Allocator, Steal, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 mod admission;
+mod sym_admit;
 pub use admission::AdmitDoor;
 use chimera_theory::{Note, snap};
 
@@ -2050,13 +2051,14 @@ impl Instrument {
         }
         // A pending strike on its sounding voice (ADR 0311) is judged in
         // bank 2 (`AdmitDoor::strike_ready`): one that can't start fades
-        // out and waits as a note. Closed, it strikes unpaced.
+        // out and waits as a note. Closed, it takes `admit`'s one worst
+        // note-on a block, and waits on it as the note it then is.
         let strike = w.plays == Plays::Strike;
         let ready = if strike {
-            Self::admission(|d| d.strike_ready(self, vi, params, note, (w.vel, w.source)))
-                .unwrap_or(true)
+            Self::admission(|d| d.strike_ready(self, vi, params, note, w))
+                .unwrap_or_else(|| self.admit(vi, params, note))
         } else {
-            self.admit(v, params, note)
+            self.admit(vi, params, note)
         };
         if !ready {
             return false;
@@ -2240,13 +2242,24 @@ impl Instrument {
     /// but Sympathetic may; Sympathetic if no note waits on the clear
     /// budget before it and its clear fits what the block has left, which
     /// it then takes. One that doesn't fit starts the queue.
-    fn admit(&mut self, v: usize, params: &ParamSnapshot, note: MidiNote) -> bool {
+    fn admit(&mut self, vi: VoiceIdx, params: &ParamSnapshot, note: MidiNote) -> bool {
         if SlotKind::of(params) != SYMPATHETIC {
             return true;
         }
-        // Bank 2's (`AdmitDoor::admit_sym`); closed, unpaced, as before
-        // #306 (MODAL is silent then anyway).
-        Self::admission(|d| d.admit_sym(self, v, params, note)).unwrap_or(true)
+        // Bank 2's (`AdmitDoor::admit_sym`); closed, one worst note-on a
+        // block (`clear_left`), as before #306.
+        match Self::admission(|d| d.admit_sym(self, vi, params, note)) {
+            Some(ok) => ok,
+            None => {
+                let bytes = self.voices[vi.index()].sym_note_on_clear(&self.sym, note, params);
+                if self.clear_backlog || bytes > self.clear_left {
+                    self.clear_backlog = true;
+                    return false;
+                }
+                self.clear_left -= bytes;
+                true
+            }
+        }
     }
 
     /// A patch edit changes its voices' cost; fade voices out if that went

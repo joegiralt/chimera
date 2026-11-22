@@ -173,8 +173,9 @@ fn door_check_refuses_garbage() {
 fn a_bank2_sealed_for_another_door_layout_is_stale_both_ways() {
     let layout = |board: usize| {
         let (mut bin, mut bk2) = fake();
-        // The board's table: its first word at its slot after the door.
-        let at = 256 + 256 + board;
+        // The board's table: its first word at its slot after the door,
+        // which sits at offset 0x100 (`door_off`, the header's length).
+        let at = 0x100 + board;
         bk2[at..at + 4].copy_from_slice(&0xB0A2_D000u32.to_le_bytes());
         let seal = bank2::seal_images(&mut bin, 100, &mut bk2, 256, "v").unwrap();
         (bin, bk2, seal)
