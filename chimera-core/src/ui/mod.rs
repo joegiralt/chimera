@@ -789,8 +789,13 @@ impl UiState {
 
     /// Bank 2 closed at boot, after the project's note: the reverb, TAPE
     /// and the rest of bank 2 play nothing, so the boot says so in
-    /// ABOUT's words (`NEEDS UPDATE`, `SLOT IN USE`, #544).
+    /// ABOUT's words (`NEEDS UPDATE`, `SLOT IN USE`, #544), unless a
+    /// boot toast is up already (a load's error, SWEEP STOPPED): it keeps
+    /// its place, and ABOUT still says it.
     pub fn note_bank2(&mut self) {
+        if self.toast.text().is_some() {
+            return;
+        }
         if let Some(s) = self.bank2.filter(|s| !s.is_open()) {
             self.show_boot_fault(s.label());
         }

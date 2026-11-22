@@ -403,24 +403,35 @@ fn a_waiting_ui_never_holds_back_the_spare_slot() {
     }
 }
 
-/// #569: the streams at the bench's heaviest load (eight at 24 kHz and
-/// 1.2×) while a UI waits on the bus throughout and takes a turn every
-/// `UI_TURN_MS`, each holding the card 40 ms (a cluster's write, slow
-/// card): no stream runs dry.
-#[test]
-fn the_ui_s_turns_leave_every_stream_on_time() {
+/// Blocks in `ms`: `BLOCK_SIZE` (64) frames at 48 kHz, 4/3 ms a block.
+fn blocks_in(ms: u32) -> u32 {
+    const _: () = assert!(chimera_hal::BLOCK_SIZE == 64);
+    ms * 3 / 4
+}
+
+/// Empties over 20,000 blocks at the bench's heaviest load (eight streams
+/// at 24 kHz and 1.2×) with a UI waiting on the bus throughout: it waits
+/// `UI_TURN_MS` while the streams are served, then holds the card `hold_ms`.
+fn empties_with_ui_turns(hold_ms: u32) -> u32 {
     use chimera_hal::card_bus::UI_TURN_MS;
-    // 128 frames at 48 kHz a block: 8 / 3 ms.
-    let every = UI_TURN_MS.get() * 3 / 8;
-    let hold = 40 * 3 / 8;
     let mut r = Rig::new(beds8());
     r.card.ui_waiting = true;
-    r.card.turns = Some((every, hold));
+    r.card.turns = Some((blocks_in(UI_TURN_MS.get() + hold_ms), blocks_in(hold_ms)));
     r.arm(24_000, 1_200, 8, Listen::Off);
     r.run(20_000);
     let rep = r.bench.report();
-    assert_eq!((rep.empties, rep.order_errors), (0, 0));
-    assert_eq!(rep.check_errors, [0; 8]);
+    assert_eq!((rep.order_errors, rep.check_errors), (0, [0; 8]));
+    rep.empties
+}
+
+/// #569: a UI turn of 40 ms (a cluster's write on a slow card), and even
+/// of 100 ms, leaves every stream on time; the ring's spare slot runs out
+/// near a 200 ms hold, the breaking point this pins.
+#[test]
+fn the_ui_s_turns_leave_every_stream_on_time() {
+    assert_eq!(empties_with_ui_turns(40), 0);
+    assert_eq!(empties_with_ui_turns(100), 0);
+    assert!(empties_with_ui_turns(200) > 0, "the spare slot's limit");
 }
 
 #[test]

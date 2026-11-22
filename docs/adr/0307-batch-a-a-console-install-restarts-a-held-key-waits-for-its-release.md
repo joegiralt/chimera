@@ -15,7 +15,7 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 
 ### A console install that opens the door restarts the unit (#1064)
 - `Bank2Answer::restarts` (exhaustive over the answers): only `Open` restarts. Which restart an answer ends in is one pure table, `console::restart_after(dfu, sweep, install, sent)`: `dfu` first, then `sweep`'s request, each only once its answer is out; an install that opened the door even if its answer stalled, as its USB needs the boot either way. `Usb::service` maps it to its typed tokens (`Restart::Bank2(Bank2Opened)`), drains the answer and returns; the UI loop syncs SYSTEM, as before any console restart, and resets. The boot it restarts into judges bank 2 open and lays USB out whole.
-- Before anything is read or written, `console::install_guard(pending, unsaved)` refuses: card work pending is `ERR bank2: busy`, a Modified project `ERR bank2: unsaved changes, save first` (`Bank2Refusal::Unsaved`, `sweep`'s words: its restart would lose them too). The tool prints the refusal and exits 1.
+- Before anything is read or written, `console::install_guard(pending, unsaved)` refuses: card work pending is `ERR bank2: busy`, a Modified project `ERR bank2: unsaved changes, save first` (`Bank2Refusal::Unsaved`, `sweep`'s words: its restart would lose them too). The tool prints the refusal and exits 1; `update` reads `status` before staging anything and stops on `state MODIFIED` (the flash restarts the unit too), so it never leaves a unit flashed with bank 2 closed for want of a save.
 - The answer's words are unchanged. `chimera-usb.py` waits after any `OK bank2 open` for the unit to answer `status` again (`RESTART_WAIT_S`, 60 s; the post-flash wait's own loop, by USB id and serial), says `restarting` on stderr, and `update` reads its final `status` from that answer.
 
 ### A switch down at its first read waits for its release (#1000)
@@ -26,10 +26,10 @@ Batch A's fixes are mostly local. Four decide behaviour later work has to keep:
 
 ### A UI that waited `UI_TURN_MS` takes the card's next turn (#569, owner 2026-11-21)
 - Streams still beat a waiting UI (edf, ADR's stream scheduler), but only for `UI_TURN_MS` (**100 ms**, `card_bus::UI_TURN_MS`): a UI hold still spinning then asks a turn (`CardBus::ask_turn`). The card IRQ's next `take_or_want` parks (`Wanted`, so the UI's give pends it again); between fills `next` gives the bus and pends itself instead of keeping it. The UI's take ends the turn; a UI that gives up at its `take` deadline cancels it and pends the IRQ. Under a saturated load UI card work runs slower and never fails `Busy` for want of a turn.
-- Stream admission is not capped. The ring's spare slot covers a turn: the bench model (`stream_bench_test::the_ui_s_turns_leave_every_stream_on_time`) at eight streams, 24 kHz, 1.2×, a UI waiting throughout and a 40 ms card hold every 100 ms, has no empties.
+- Stream admission is not capped. The ring's spare slot covers a turn: in the bench model (`stream_bench_test::the_ui_s_turns_leave_every_stream_on_time`; 64-frame blocks, 4/3 ms each) at eight streams, 24 kHz, 1.2×, with a UI waiting throughout that waits `UI_TURN_MS` and then holds the card, a 40 ms hold and a 100 ms hold leave no empties; a 200 ms hold runs the spare slot dry, the breaking point the test pins.
 
 ### Bank 2 closed says so at boot (#544, #547, owner 2026-11-21)
-- After the project's note, `UiState::note_bank2` toasts ABOUT's word for a closed bank 2 (`Bank2Status::label`: `NEEDS UPDATE`, or `SLOT IN USE`) for a boot fault's time. While closed, the reverb send's hint reads `REVERB ▸ NEEDS UPDATE` instead of the TYPE (`view::closed_words`). Existing strings only.
+- After the project's note, `UiState::note_bank2` toasts ABOUT's word for a closed bank 2 (`Bank2Status::label`: `NEEDS UPDATE`, or `SLOT IN USE`) for a boot fault's time, unless a boot toast is up already (a load's error, SWEEP STOPPED): that one keeps its place, and ABOUT still says it. While closed, the reverb send's hint reads `REVERB ▸ NEEDS UPDATE` instead of the TYPE (`view::closed_words`). Existing strings only.
 
 ### Tests reach DEMO in any profile (#354)
 - DEMO's rows are `cfg(any(debug_assertions, feature = "test-support"))`. No firmware enables `test-support`, so a release unit still has no DEMO row.

@@ -445,8 +445,8 @@ impl Held {
         let _ = BUS.give();
         match BUS.take_or_want(now_ms()) {
             Took::Taken => Some(self),
-            // The UI's turn, asked since `next` looked (#569): no fault.
-            Took::Wanted if BUS.turn_asked() => None,
+            // Not the UI's turn either: `next` looked, and thread mode
+            // can't ask one while this handler runs.
             Took::Wanted => {
                 STATS.faults.fetch_add(1, Ordering::Relaxed);
                 None

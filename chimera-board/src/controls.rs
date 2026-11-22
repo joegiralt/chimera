@@ -81,6 +81,8 @@ static mut ENC_DEBOUNCE: [u8; NUM_ENCODERS] = [0; NUM_ENCODERS];
 static mut DEBOUNCE: [Debounce; NUM_SWITCHES] = [Debounce::new(); NUM_SWITCHES];
 /// The switches down at the first tick, waiting for their release (#1000).
 static mut START: StartHold = StartHold::NONE;
+// One bit a switch.
+const _: () = assert!(NUM_SWITCHES <= 32);
 static ISR_TICK: AtomicU32 = AtomicU32::new(0);
 static ENC_LAST_EDGE: [AtomicU32; NUM_ENCODERS] = [const { AtomicU32::new(0) }; NUM_ENCODERS];
 /// The console's hand: switches it holds, one bit each in `LATCHES`'

@@ -709,6 +709,18 @@ fn a_closed_bank_2_toasts_at_boot() {
     let mut ui = UiState::new();
     ui.note_bank2();
     assert_eq!(ui.step_toast(0), ToastStep::Idle, "no bank 2 in the build");
+    // A boot toast already up (a load's error, SWEEP STOPPED) keeps its
+    // place: bank 2's word never hides it (ABOUT still says it).
+    let mut ui = UiState::new();
+    ui.set_bank2(Bank2Status::Stale {
+        have: Version::new("0.2.0"),
+    });
+    ui.show_boot_fault("SWEEP STOPPED");
+    ui.note_bank2();
+    assert_eq!(
+        ui.step_toast(0),
+        ToastStep::Show(chimera_core::project::Line::new("SWEEP STOPPED"))
+    );
 }
 
 #[test]
