@@ -1012,7 +1012,7 @@ fn loaded() -> Stage {
     s.until_idle(50);
     // As many ALGO voices as leave the Sympathetic note one (a Part's
     // first-voice terms and a margin in the spare one), at most seven.
-    let bill = |p: &chimera_core::instrument::PartAudio| Voice::cost(&*p.params, &*p.mod_state).0;
+    let bill = |p: &chimera_core::instrument::PartAudio| Voice::cost(&p.params, &p.mod_state).0;
     let room = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0
         - FxBus::COST.0
         - chimera_core::budget::CONTROL_RESERVE.0
