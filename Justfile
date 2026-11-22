@@ -522,9 +522,9 @@ release version *flags:
     PY
     (cd "$out" && sha256sum CHIMERA.BIN CHIMERA.BK2 NRPN.json factory-v1.zip > SHA256SUMS)
     # Nothing private ships: exactly these assets, and none is a private
-    # file (the stock bootloader backup, the bootloader, a dev chimera.bin or .bk2).
+    # file (the bootloader, a dev chimera.bin or .bk2).
     [ "$(ls "$out" | LC_ALL=C sort | tr '\n' ' ')" = "CHIMERA.BIN CHIMERA.BK2 NRPN.json SHA256SUMS factory-v1.zip " ] || { echo "unexpected assets in $out" >&2; exit 1; }
-    for p in preenfm3-bootloader-backup.bin bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
+    for p in bootloader.bin chimera.bin chimera.bk2 target/chimera.bin target/chimera.bk2; do
         [ -f "$p" ] || continue
         h=$(sha256sum "$p" | cut -d' ' -f1)
         if grep -q "$h" "$out/SHA256SUMS"; then echo "asset is $p: refusing" >&2; exit 1; fi
