@@ -676,11 +676,13 @@ pub(super) struct StringVoice {
     adding: f32,
     /// Its length, samples: a glide's target line; 0, the line in use.
     adding_len: usize,
+    /// The fresh pluck's level, for `repluck`.
+    struck: f32,
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
     string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
-    adding_len,
+    adding_len, struck,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -709,6 +711,7 @@ impl StringVoice {
             addr_of_mut!((*p).passes).write(1);
             addr_of_mut!((*p).adding).write(0.0);
             addr_of_mut!((*p).adding_len).write(0);
+            addr_of_mut!((*p).struck).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -749,6 +752,7 @@ impl StringVoice {
         self.structure = structure.unwrap_or(0.0);
         let l = self.dispersed(freq, sample_rate);
         self.string.excite(l, amplitude);
+        self.struck = amplitude;
         self.disp.reset();
         self.body.reset();
         self.body_mix = Body::mix(body);
@@ -756,6 +760,13 @@ impl StringVoice {
         self.ens_mix = ens_mix;
         self.passes = color_passes(color) as u8;
         (self.adding, self.adding_len) = (0.0, 0);
+    }
+
+    /// The fresh pluck again at `freq`, before `shape`: a note's first
+    /// block found its pitch routed off the note-on's (#233).
+    pub(super) fn repluck(&mut self, freq: f32, sample_rate: u32) {
+        let l = self.dispersed(freq, sample_rate);
+        self.string.excite(l, self.struck);
     }
 
     /// A re-strike of the sounding note, or a glide's strike of a new one

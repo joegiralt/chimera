@@ -170,3 +170,35 @@ fn a_route_to_pitch_retunes_every_modal_model() {
         assert!((routed - flat).abs() > bin, "{mode:?}: {flat} Hz unmoved");
     }
 }
+
+/// #233: a note-on route into PITCH plucks the string at the routed
+/// length, as the same stored offset does: about as much fundamental in
+/// the first periods (it read 2.2× when plucked at the unrouted length).
+#[test]
+fn a_routed_pitch_plucks_at_the_routed_length() {
+    use chimera_core::dsp::modal::ResonatorMode;
+    use chimera_core::mod_path::ModDestRegistry;
+    use chimera_core::modulation::{MAX_MOD_SOURCES, ModSource, amount_scale};
+    let mut reg = ModDestRegistry::new();
+    reg.add(PITCH, *b"PITCH\0\0\0").unwrap();
+    let mut up = ModState::from_registry(&reg, MAX_MOD_SOURCES);
+    up.set_amount(ModSource::Vel.index(), 0, 127);
+    let st = amount_scale(127) * Velocity::DEFAULT.unit() * 24.0;
+    let f = note_to_freq(60) * 2f32.powf(st / 12.0);
+    for mode in [ResonatorMode::String, ResonatorMode::Sympathetic] {
+        let mut p = init_params(EngineType::Modal);
+        p.modal.mode = mode;
+        let first = |x: &[f32]| goertzel(&x[..2048], f, SR);
+        let routed = first(&render(&p, &up, 40));
+        let mut stored = p.clone();
+        stored.pitch.pitch = st;
+        let stored = first(&render(&stored, &ModState::new(), 40));
+        // The two plucks are different noise (the routed one's second
+        // draw), so they agree only to within the noise's spread.
+        let r = routed / stored;
+        assert!(
+            (0.55..1.8).contains(&r),
+            "{mode:?}: routed/stored fundamental {r}"
+        );
+    }
+}
