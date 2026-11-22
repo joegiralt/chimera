@@ -60,7 +60,7 @@ The DRUM bill (ADR 0269, 0274, 0287) is worked out from the kit as last publishe
 ## Consequences
 - **Sound:** none changes. Bills move admission only, and every golden is bit-identical.
 - **Voices:** a pad edit under ringing hits books up to 195 a sample a hit in the publish's block (CLEAN), and 80 while the glide runs. A full pool refuses new hits for that window rather than overrunning. A kit republished on a cheaper filter keeps its ringing hits' bills until they end.
-- **Flash:** the DRUM fold (`ringing_kits`, `DrumEngine::runs`, `follow_state`) and SYMP's pacing (`SymPool::pre_clear`, `KsString::clear_some`, `Instrument::clear_room`) sit in bank 1, out of line and built for size. `follow` shrank 112 B. Measured by `just check`'s builds on a clean tree after merging origin/0.4 e963edbc: bank 1 is +912 to +1,032 B over origin/0.4's lines in every set (ORBIT 908,528 → 909,440; default 894,416 → 895,352). Bank 2 is unchanged (ORBIT 634,016). Each bank-1 line is set to its measure.
+- **Flash:** the DRUM fold (`ringing_kits`, `DrumEngine::runs`, `follow_state`) and SYMP's pacing (`SymPool::pre_clear`, `KsString::clear_some`, `Instrument::clear_room`) sit in bank 1, out of line and built for size. `follow` shrank 112 B. Measured by `just check`'s builds on a clean tree after merging origin/0.4 e963edbc: bank 1 is +1,024 to +1,144 B over origin/0.4's lines in every set (ORBIT 908,528 → 909,552; default 894,416 → 895,464). Bank 2 is unchanged (ORBIT 634,016). Each bank-1 line is set to its measure.
 - **Latency:** at full load a worst SYMP note-on starts up to four blocks late (5.3 ms on rev V with six Parts). A light pool, or a typical note-on, starts at once, as before.
 
 ## Sources
