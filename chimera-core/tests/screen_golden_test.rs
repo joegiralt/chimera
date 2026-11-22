@@ -302,6 +302,11 @@ const GOLDENS: &[(&str, u64)] = &[
     // mixer_sends, mixer_out_p2 re-recorded: the sends are the Sound's OUT block (ADR 0123).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_sends", 0x35e09ae3385236bb),
+    // New for ADR 0317: the chorus's FLANGER comb and PHASER dips.
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_chorus_flanger", 0x33383f6d9103f5e3),
+    #[cfg(not(feature = "master-tape"))]
+    ("mixer_fx_chorus_phaser", 0x47ff4cf7a23b2628),
     // Re-recorded: TYPE in front (ADR 0202).
     #[cfg(not(feature = "master-tape"))]
     ("mixer_fx_delay", 0x0858ddab18f1090a),
@@ -366,6 +371,11 @@ const GOLDENS: &[(&str, u64)] = &[
     ("mixer_sends", 0x4f5f9daa56c5aea5),
     // DLY's branch hides REV's label it ran into (TAPE Task 15). With master-tape
     // the delay pages, GRAIN's among them (#749), map seven nodes with MTP (#756).
+    // ADR 0317's chorus pages, with MTP on the map.
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_chorus_flanger", 0x8b1e5cf528c06911),
+    #[cfg(feature = "master-tape")]
+    ("mixer_fx_chorus_phaser", 0x2a8403b6b0d1bc92),
     #[cfg(feature = "master-tape")]
     ("mixer_fx_delay", 0x5b21af63949b68dc),
     #[cfg(feature = "master-tape")]
