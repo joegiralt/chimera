@@ -225,6 +225,7 @@ impl KsString {
     /// second clear. Only the first fill's tail past the new loop (and
     /// the ring's growth's copy of it) is zeroed, so the writes are about
     /// a fill's, as the note-on's own (#233).
+    #[inline(always)]
     pub(super) fn refill(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
         let old = self.delay;
         // `clear`'s resets but the buffer's: nothing past `old` was written

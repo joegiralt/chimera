@@ -1250,22 +1250,14 @@ impl Voice {
         // pass-through (#180), never a step. Steady, no buffer, as ever.
         let bypass_in = vca.bits == 0 && was.bits != 0;
         let mut gain = (vca.bits != 0 || bypass_in).then_some([0.0f32; BLOCK_SIZE]);
-        let base = if bypass_in {
-            BaseRamp {
-                from: base.from,
-                to: 0.0,
-            }
-        } else {
-            base
+        // BASE ramps on into the pass-through's unity, the routes' share
+        // ramping out below
+        let base = BaseRamp {
+            to: if bypass_in { 1.0 } else { base.to },
+            ..base
         };
         if let Some(g) = gain.as_mut().filter(|_| !base.is_zero()) {
             vca_start(g, base);
-        }
-        if let Some(g) = gain.as_mut().filter(|_| bypass_in) {
-            let step = step_of((0.0, 1.0), BLOCK_SIZE);
-            for (i, g) in g.iter_mut().enumerate() {
-                *g += at(0.0, step, i);
-            }
         }
         // A route deleted or moved to another source ramps out from the
         // last block's amount, as a turned one does.
@@ -1553,18 +1545,18 @@ impl Voice {
                 }
                 Some(gain) => {
                     let amp = |v: Velocity| 1.0 - m.out.vca_vel + m.out.vca_vel * v.unit();
-                    let (was, vel) = (amp(self.vca_velocity), amp(self.last_velocity));
+                    // into the pass-through, AMP's VEL ramps out with the
+                    // routes, to the unrouted path's OUT LEVEL alone
+                    let vel_to = if bypass_in {
+                        1.0
+                    } else {
+                        amp(self.last_velocity)
+                    };
+                    let (was, vel) = (amp(self.vca_velocity), vel_to);
                     self.vca_velocity = self.last_velocity;
                     let k = volume * vel;
                     #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                    if bypass_in {
-                        // into the pass-through: AMP's VEL ramps out with the
-                        // routes, to the unrouted path's OUT LEVEL alone
-                        let sv = step_of((vel, 1.0), BLOCK_SIZE);
-                        for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
-                            *sample *= at(v.0, dv, i) * at(vel, sv, i) * g.max(0.0).min(1.0);
-                        }
-                    } else if was != vel {
+                    if was != vel {
                         // A re-strike or steal of a sounding voice at another
                         // velocity: AMP's VEL ramps with OUT LEVEL, one ramp,
                         // never a step (#483); a multiply a sample fewer than
