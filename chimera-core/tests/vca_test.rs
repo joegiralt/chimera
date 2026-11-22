@@ -533,3 +533,71 @@ fn a_vca_amount_turn_ramps_across_the_block() {
         );
     }
 }
+
+/// The ratio to the unrouted note just before a matrix change at block
+/// 70, at the next block's first loud sample, and a block on.
+fn across_a_change(p: &ParamSnapshot, from: &ModState, to: &ModState, vel: u8) -> [f32; 3] {
+    let plain = render(p, &ModState::new(), 90, 90, vel);
+    let mut v = Rig::new(SR);
+    v.note_on(MidiNote::new(60).unwrap(), Velocity::new(vel).unwrap(), p);
+    let mut out = Vec::new();
+    let mut b = [0.0f32; BLOCK_SIZE];
+    let turn = 70;
+    for i in 0..72 {
+        v.render(&mut b, p, if i < turn { from } else { to });
+        out.extend_from_slice(&b);
+    }
+    let ratio = |i: usize| out[i] / plain[i];
+    let loud = |i: &usize| plain[*i].abs() > 1e-3;
+    let s = turn * BLOCK_SIZE;
+    let before = (s - BLOCK_SIZE..s)
+        .filter(loud)
+        .map(ratio)
+        .next_back()
+        .unwrap();
+    let first = (s..s + 8).filter(loud).map(ratio).next().unwrap();
+    let after = (s + BLOCK_SIZE..s + 2 * BLOCK_SIZE)
+        .filter(loud)
+        .map(ratio)
+        .next_back()
+        .unwrap();
+    [before, first, after]
+}
+
+/// #180: a VCA route deleted, moved to another source, or the last one
+/// removed ramps out over a block from the last block's, never a step.
+#[test]
+fn a_vca_route_deleted_moved_or_last_removed_ramps_out() {
+    let mut p = init(EngineType::Algo);
+    (p.lfos[0].rate, p.lfos[0].shape) = (0.01, 3); // a held square
+    let keep = (ModSource::Env2, CUTOFF, 0);
+    let cases = [
+        (
+            "deleted",
+            mods(&[
+                (ModSource::Env2, VCA, 127),
+                (ModSource::Lfo1, VCA, 30),
+                keep,
+            ]),
+            mods(&[(ModSource::Lfo1, VCA, 30), keep]),
+        ),
+        (
+            "moved",
+            mods(&[(ModSource::Lfo1, VCA, 127), keep]),
+            mods(&[(ModSource::Env2, VCA, 50), keep]),
+        ),
+        (
+            "last removed",
+            mods(&[(ModSource::Env2, VCA, 60), keep]),
+            mods(&[keep]),
+        ),
+    ];
+    for (what, from, to) in cases {
+        let [before, first, after] = across_a_change(&p, &from, &to, 100);
+        assert!((before - after).abs() > 0.1, "{what}: {before} → {after}");
+        assert!(
+            (first - before).abs() < 0.2 * (before - after).abs(),
+            "{what}: the block opens at {first}, from {before} toward {after}"
+        );
+    }
+}

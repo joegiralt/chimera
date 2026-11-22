@@ -724,11 +724,14 @@ impl Voice {
         &self,
         pool: &SymPool,
         note: MidiNote,
-        params: &ParamSnapshot,
+        (params, mods): (&ParamSnapshot, &ModState),
     ) -> usize {
         let adds = self.starts_now(params, pool) && params.pitch.steal == Steal::Glide;
+        // a PITCH route may move the note off its note-on pitch by the
+        // first block: its re-pluck is billed too (#233)
+        let routed = crate::dsp::engines::pitch_reach(mods) != 0.0;
         self.slot
-            .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate))
+            .sym_note_on_clear(pool, self.id, (note, adds, self.sample_rate), routed)
     }
 
     /// On a fading voice, or one sounding another engine or model, the note
@@ -1245,10 +1248,31 @@ impl Voice {
             from: base_from.map_or(to, |b| b.0),
             to,
         };
-        let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
+        // A block whose last route went (deleted, or the matrix cleared):
+        // the routes ramp out from the last block's into the engine's own
+        // pass-through (#180), never a step. Steady, no buffer, as ever.
+        let bypass_in = vca.bits == 0 && was.bits != 0;
+        let mut gain = (vca.bits != 0 || bypass_in).then_some([0.0f32; BLOCK_SIZE]);
+        let base = if bypass_in {
+            BaseRamp {
+                from: base.from,
+                to: 0.0,
+            }
+        } else {
+            base
+        };
         if let Some(g) = gain.as_mut().filter(|_| !base.is_zero()) {
             vca_start(g, base);
         }
+        if let Some(g) = gain.as_mut().filter(|_| bypass_in) {
+            let step = step_of((0.0, 1.0), BLOCK_SIZE);
+            for (i, g) in g.iter_mut().enumerate() {
+                *g += at(0.0, step, i);
+            }
+        }
+        // A route deleted or moved to another source ramps out from the
+        // last block's amount, as a turned one does.
+        let heard = |s: usize| vca.has(s) || was.has(s);
         // The last block's sources; on a retrigger, the new note's VEL and NOTE.
         let mut v = self.mod_values;
         let retrigger = core::mem::take(&mut self.retrigger);
@@ -1280,7 +1304,7 @@ impl Voice {
             let i = ModSource::of_env(*s).index();
             let feed = gain
                 .as_mut()
-                .filter(|_| vca.has(i))
+                .filter(|_| heard(i))
                 .map(|g| (g, (was.scale(i), vca.scale(i))));
             mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
@@ -1313,7 +1337,7 @@ impl Voice {
         };
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
-            if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
+            if let Some(gain) = gain.as_mut().filter(|_| heard(s))
                 && ModSource::ALL[s].env_slot().is_none()
             {
                 let (a, last) = (vca.scale(s), self.mod_values[s]);
@@ -1536,7 +1560,14 @@ impl Voice {
                     self.vca_velocity = self.last_velocity;
                     let k = volume * vel;
                     #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too
-                    if was != vel {
+                    if bypass_in {
+                        // into the pass-through: AMP's VEL ramps out with the
+                        // routes, to the unrouted path's OUT LEVEL alone
+                        let sv = step_of((vel, 1.0), BLOCK_SIZE);
+                        for (i, (sample, g)) in output.iter_mut().zip(gain).enumerate() {
+                            *sample *= at(v.0, dv, i) * at(vel, sv, i) * g.max(0.0).min(1.0);
+                        }
+                    } else if was != vel {
                         // A re-strike or steal of a sounding voice at another
                         // velocity: AMP's VEL ramps with OUT LEVEL, one ramp,
                         // never a step (#483); a multiply a sample fewer than
