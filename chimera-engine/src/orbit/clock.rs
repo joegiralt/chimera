@@ -408,7 +408,7 @@ impl MidiClock {
             }
         }
         let beats = self.run_ticks / AVERAGE as u32;
-        if self.run_ticks % AVERAGE as u32 == 0 && beats.is_power_of_two() {
+        if self.run_ticks.is_multiple_of(AVERAGE as u32) && beats.is_power_of_two() {
             let span = now.saturating_sub(self.run_from);
             let n = u64::from(self.run_ticks);
             self.held = ((span * AVERAGE as u64 + n / 2) / n).min(u32::MAX as u64) as u32;
