@@ -172,6 +172,10 @@ pub(super) fn word(w: W) -> &'static str {
     super::pick(&WORDS, w as u8)
 }
 
+/// A layer edit refused: another map job waits for the card (CARD BUSY).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui) struct Busy;
+
 impl Layers {
     /// Part `i`'s layer.
     pub fn layer(&self, i: usize) -> &MidiMap {
@@ -180,12 +184,18 @@ impl Layers {
 
     /// Row `i` of Part `p`'s layer, `was`, made `to` here and, by the next
     /// card work, in the map; an edit of the row waiting takes it on.
-    /// `false`: another job waits, nothing changed.
+    /// `Err(Busy)`: another job waits, nothing changed.
     /// Inlined: MIDI MAP's keys and the editor's (`ed_cue`) call it, in
     /// two bank-2 groups.
     #[cfg(feature = "midi-map")]
     #[inline(always)]
-    pub(in crate::ui) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
+    pub(in crate::ui) fn edit(
+        &mut self,
+        p: PartId,
+        i: usize,
+        was: Binding,
+        to: Binding,
+    ) -> Result<(), Busy> {
         let first = match self.job {
             None => was,
             // The same row: the whole binding, as two rows may share a
@@ -195,13 +205,13 @@ impl Layers {
             {
                 first
             }
-            Some(_) => return false,
+            Some(_) => return Err(Busy),
         };
         self.job = Some(CtlJob::Edit(p, first, to));
         if let Some(l) = self.layers.get_mut(p.index()) {
             l.set(i, to);
         }
-        true
+        Ok(())
     }
 
     /// The maps listed, `None` before a listing. Inlined, as `edit`.

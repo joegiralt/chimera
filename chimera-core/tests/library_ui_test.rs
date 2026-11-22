@@ -114,13 +114,17 @@ struct Rig {
     link: LoadLink,
 }
 
+/// Bank 2's door open, as the unit plays it, for every test here: under
+/// `bank2` the cell is the process's, and a closed one beside an open one
+/// made these flip (#1060 item 6). The closed door's own tests are
+/// `kit_library_closed_test`.
+fn open_door() {
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+}
+
 impl Rig {
     fn new() -> Rig {
-        // Open, as the unit plays it: under `bank2` the door cell is the
-        // process's, and a closed one in a test beside an open one made
-        // these flip (#1060 item 6). The closed door's own tests are
-        // `kit_library_closed_test`.
-        chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+        open_door();
         let mut st = Counted {
             inner: MemStore::new(1),
             reads: 0,
@@ -410,6 +414,7 @@ fn menu_cancels_library_naming_back_to_the_browser() {
 
 #[test]
 fn save_to_library_row_in_settings_part() {
+    open_door();
     let mut ui = UiState::new();
     screen::to_leaf(&mut ui, &["PART"]);
     for _ in 0..5 {
@@ -1345,7 +1350,7 @@ fn ed_part_during_a_library_load_is_swallowed_as_its_key_is() {
     let at = r.ui.location();
     let mut q = chimera_core::console::EdState::new();
     q.follow(PartId::ALL[1]);
-    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    open_door();
     chimera_core::bank2::ed_apply(&mut q, &mut r.ui);
     assert_eq!(r.ui.active_part, P1);
     assert_eq!(r.ui.location(), at);

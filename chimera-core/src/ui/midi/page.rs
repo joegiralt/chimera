@@ -499,7 +499,7 @@ impl UiState {
             // A layer row: in the map on the card, by the next card work.
             // Refused while another job waits: said, as a save's is (#903).
             Some(k) => {
-                if self.cc.ui().ctl.edit(p, k, e, n) {
+                if self.cc.ui().ctl.edit(p, k, e, n).is_ok() {
                     self.cc.reset_part(p);
                 } else {
                     self.error(crate::project::Line::new(

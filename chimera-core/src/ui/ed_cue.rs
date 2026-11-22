@@ -304,10 +304,12 @@ pub(crate) fn layer_edit(
 ) -> bool {
     let took = ui.cc.ui().ctl.edit(p, i.index(), was, to);
     match took {
-        true => ui.cc.reset_part(p),
-        false => ui.error(Line::new(chimera_hal::store::StoreError::Busy.message())),
+        Ok(()) => ui.cc.reset_part(p),
+        Err(super::midi::layer::Busy) => {
+            ui.error(Line::new(chimera_hal::store::StoreError::Busy.message()))
+        }
     }
-    took
+    took.is_ok()
 }
 
 /// MIDI MAP's card job `j` (`ctl_ask`): a save, a rename, a row's drop.
