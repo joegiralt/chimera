@@ -515,13 +515,13 @@ fn a_vca_amount_turn_ramps_across_the_block() {
         let before = (s - BLOCK_SIZE..s)
             .filter(|&i| loud(i))
             .map(ratio)
-            .last()
+            .next_back()
             .unwrap();
         let first = (s..s + 8).filter(|&i| loud(i)).map(ratio).next().unwrap();
         let after = (s + BLOCK_SIZE..s + 2 * BLOCK_SIZE)
             .filter(|&i| loud(i))
             .map(ratio)
-            .last()
+            .next_back()
             .unwrap();
         assert!(
             after < 0.6 * before,
