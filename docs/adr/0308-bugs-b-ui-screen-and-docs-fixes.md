@@ -59,9 +59,14 @@ without a reason, and the batch's bank-2 code moved its budget lines.
 - **PART's LIVE SNAP row is ORBIT's alone (#323).** Without ORBIT no
   harmony reaches `live_note`, so the row did nothing. What the page should
   draw is an enhancement, filed apart.
-- **Budgets.** Bank 2's lines rise by the code above, measured:
-  default and bank2-gate +1056 B, orbit +960 B. #709's words ride
-  `band_note`'s door (SOURCE asks with no address), so they live in bank 2.
+- **Budgets.** Measured on the batch merged onto 0.4 after #1070 (whose
+  own lines were its measures), every line set to its measure. Bank 1:
+  orbit −56 B, default −632 B, bank2-gate −648 B, bench-orbit −112 B (the
+  composites' `eased_set` out of line for every size outweighs the new
+  door calls). Bank 2: orbit +704 B, default and bank2-gate +768 B, the
+  stage bars and the lanes in `ui::notes`. #709's words ride
+  `band_note`'s door (SOURCE asks with no address), so they live in
+  bank 2.
 
 ## Alternatives considered
 - #1068: forcing a full redraw on every program change; the key is cheaper
