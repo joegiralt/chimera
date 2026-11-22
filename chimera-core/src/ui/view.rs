@@ -548,7 +548,7 @@ impl SourceState {
                 buf.write_str("ERROR")
             }
             SourceState::Absent(Absence::StreamsFull) => buf.write_str("FULL"),
-            SourceState::Absent(Absence::Fragmented) => buf.write_str("SPLIT"),
+            SourceState::Absent(Absence::Fragmented) => buf.write_str("FRAG"),
             SourceState::Absent(Absence::NeedsRam(r)) => {
                 buf.write_str(crate::ui::source_cell::refusal_cell(r))
             }

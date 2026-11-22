@@ -1398,7 +1398,7 @@ fn fragmented_words_fit_and_promise_no_copy() {
     let mut cell = chimera_core::ui::fmt::FmtBuf::new();
     chimera_core::ui::view::SourceState::Absent(chimera_core::project::Absence::Fragmented)
         .cell(&mut cell);
-    assert!(!cell.as_str().contains("COPY"), "{}", cell.as_str());
+    assert_eq!(cell.as_str(), "FRAG");
     let w = text_width(&FONT_VALUE, cell.as_str(), 0);
     assert!(w <= CELL_COL_W, "cell {w}px over {CELL_COL_W}");
 }
