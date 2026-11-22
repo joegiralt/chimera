@@ -1,12 +1,5 @@
 # Third-party files
 
-- `preenfm3-bootloader-backup.bin`
-  - **What it is:** a backup dump of the stock PreenFM3 bootloader, the first 128 KB of flash, kept so the board can be restored.
-  - **Licence:** GPLv3.
-  - **Copyright:** Xavier Hosxe.
-  - **Source:** https://github.com/Ixox/preenfm3
-  - **Distribution:** it isn't part of Chimera's MIT-licensed code, and it's distributed under the GPLv3 terms, together with that source link.
-  - **Status:** kept for now by the owner's choice (#94).
 - `chimera-engine/src/dsp/modal/` (`mod.rs`, `rings.rs`, `dispersion.rs`, `chords.rs`): see ADR 0032 for the Rings and stmlib (MIT) notice. `chords.rs` holds Rings' chord table (`dsp/part.cc`).
 - Host-only crates (`chimera-desktop`, never linked into the firmware), used by the TAPE importer (TAPE spec § 6):
   - `hound` 3.5 (WAV reading): Apache-2.0. https://github.com/ruuda/hound
