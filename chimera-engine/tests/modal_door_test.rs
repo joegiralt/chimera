@@ -272,7 +272,9 @@ fn hashes() -> Vec<(String, u64, u64)> {
 
 /// Taken on main before the move (bc20ae7c; the six "alone" rows on
 /// 5ec76841, where the first 60 match too), bank 1's own path: the DAC's
-/// hash and Part 1's bus's.
+/// hash and Part 1's bus's. The four rows whose note-on PITCH is bent
+/// (STRING's and SYMP's "moving bent" and "pitch alone") re-taken when the
+/// routed pitch re-plucks at its length (#233, ADR 0310).
 const BEFORE: &[(&str, u64, u64)] = &[
     ("String init", 0x2945be550b3e07b5, 0x552b36dadf56e7ca),
     ("Modal init", 0x8b5eefc284bee8d5, 0xa4ee49337f312386),
@@ -387,7 +389,7 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ),
     ("res M48 bright", 0x53c50acf6c337071, 0x0f2ad3729a1d1d6e),
     ("String moving", 0x402a7255058060bd, 0x5cadee53687eb150),
-    ("String moving bent", 0x92694f1b40fb1335, 0xb785afa916dad2e7),
+    ("String moving bent", 0xde313011665c6729, 0x1666978ccfabc890),
     ("String long", 0x92a98d981b6c5bdd, 0xc696ce8a284a471b),
     ("String high", 0x377459bbf7ffe955, 0xca3b387165bd73d3),
     ("Bowed moving", 0x2097f24de0efa479, 0xb422150fc049bcd8),
@@ -397,8 +399,8 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ("Sympathetic moving", 0x15e2a492843f5c89, 0x1d3bd9c7aa682ff2),
     (
         "Sympathetic moving bent",
-        0x994d88d2f28edf19,
-        0x5665ff83c1d2e9b0,
+        0xd2e7df54dbd19851,
+        0x5c5ba9a546637af5,
     ),
     ("Sympathetic long", 0x2de8c24df4eecc49, 0x9d6d167e4a0669d0),
     ("Sympathetic high", 0xae5539d74b0b3875, 0xd16f7d128abe9d8c),
@@ -409,15 +411,15 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ),
     (
         "Sympathetic pitch alone",
-        0xbc4dd0ee0c7e3eb1,
-        0xc98d4625076fa0ea,
+        0xcd469a3b325fff05,
+        0xf854ccbf9bc59b7c,
     ),
     (
         "String structure alone",
         0xe664e574592131ed,
         0xc9a18268a06ed11e,
     ),
-    ("String pitch alone", 0x5ae620719e2de6dd, 0x02ca17684b2c3d36),
+    ("String pitch alone", 0x7c5b7f995521ba61, 0xf2538bcf71a86761),
     (
         "Bowed structure alone",
         0x7e5effbe95300b81,
