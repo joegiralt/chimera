@@ -207,6 +207,7 @@ impl KsString {
     /// before the new loop's length widens its extent: the clear writes
     /// `clear_bytes`, and the old note's samples past the new loop are
     /// never read back, even by a pitch drop that lengthens it.
+    #[inline(always)]
     pub(super) fn excite(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
         self.clear();
         self.set_period(period, other, w);
@@ -672,17 +673,44 @@ pub(super) struct StringVoice {
     ens_mix: f32,
     /// COLOR's smoothing passes, latched at note-on.
     passes: u8,
-    /// A re-strike's pluck level, for `shape` to add; 0 after a fresh pluck.
-    adding: f32,
+    /// The pluck `shape` finishes: a re-strike's to add, or the fresh one's
+    /// level for `repluck`.
+    adding: Pending,
     /// Its length, samples: a glide's target line; 0, the line in use.
     adding_len: usize,
-    /// The fresh pluck's level, for `repluck`.
-    struck: f32,
+}
+
+/// A pluck's level waiting for `shape`, in one float, so the voice keeps
+/// its size (#233): a fresh pluck's as `−level`, a re-strike's as
+/// `+level`, none as `+0`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Pending(f32);
+
+impl Pending {
+    const NONE: Self = Self(0.0);
+
+    fn fresh(level: f32) -> Self {
+        Self(-level)
+    }
+
+    fn restrike(level: f32) -> Self {
+        Self(level)
+    }
+
+    /// A fresh pluck's level (`−0` is a fresh pluck at 0).
+    fn fresh_level(self) -> Option<f32> {
+        self.0.is_sign_negative().then_some(-self.0)
+    }
+
+    /// A re-strike's level, to add.
+    fn restrike_level(self) -> Option<f32> {
+        (self.0 > 0.0).then_some(self.0)
+    }
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
     string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
-    adding_len, struck,
+    adding_len,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -709,9 +737,8 @@ impl StringVoice {
             addr_of_mut!((*p).ens).write(Ensemble::default());
             addr_of_mut!((*p).ens_mix).write(0.0);
             addr_of_mut!((*p).passes).write(1);
-            addr_of_mut!((*p).adding).write(0.0);
+            addr_of_mut!((*p).adding).write(Pending::NONE);
             addr_of_mut!((*p).adding_len).write(0);
-            addr_of_mut!((*p).struck).write(0.0);
             slot.assume_init_mut()
         }
     }
@@ -740,6 +767,7 @@ impl StringVoice {
     /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
     /// no chain (`None`, SYMP's main string); BODY, the ensemble at its
     /// MIX, and COLOR's passes, latched.
+    #[inline(never)]
     pub(super) fn pluck(
         &mut self,
         (freq, sample_rate): (f32, u32),
@@ -752,21 +780,23 @@ impl StringVoice {
         self.structure = structure.unwrap_or(0.0);
         let l = self.dispersed(freq, sample_rate);
         self.string.excite(l, amplitude);
-        self.struck = amplitude;
         self.disp.reset();
         self.body.reset();
         self.body_mix = Body::mix(body);
         self.ens = ens;
         self.ens_mix = ens_mix;
         self.passes = color_passes(color) as u8;
-        (self.adding, self.adding_len) = (0.0, 0);
+        (self.adding, self.adding_len) = (Pending::fresh(amplitude), 0);
     }
 
     /// The fresh pluck again at `freq`, before `shape`: a note's first
     /// block found its pitch routed off the note-on's (#233).
+    #[inline(always)]
     pub(super) fn repluck(&mut self, freq: f32, sample_rate: u32) {
-        let l = self.dispersed(freq, sample_rate);
-        self.string.excite(l, self.struck);
+        if let Some(level) = self.adding.fresh_level() {
+            let l = self.dispersed(freq, sample_rate);
+            self.string.excite(l, level);
+        }
     }
 
     /// A re-strike of the sounding note, or a glide's strike of a new one
@@ -775,7 +805,7 @@ impl StringVoice {
     /// chain and the ensemble run on.
     pub(super) fn restrike(&mut self, amplitude: f32, color: f32, line: Option<usize>) {
         self.passes = color_passes(color) as u8;
-        self.adding = amplitude;
+        self.adding = Pending::restrike(amplitude);
         self.adding_len = line.unwrap_or(0);
     }
 
@@ -795,12 +825,12 @@ impl StringVoice {
     /// (`KsString::shape`), or adds a re-strike's (`KsString::add_pluck`).
     pub(super) fn shape(&mut self, pos: f32) {
         let beta = super::params::beta(pos, super::params::END);
-        let amplitude = core::mem::take(&mut self.adding);
+        let pending = core::mem::replace(&mut self.adding, Pending::NONE);
         let len = match core::mem::take(&mut self.adding_len) {
             0 => self.string.delay,
             n => n,
         };
-        if amplitude > 0.0 {
+        if let Some(amplitude) = pending.restrike_level() {
             self.string
                 .add_pluck(beta, self.passes.into(), amplitude, len);
         } else {

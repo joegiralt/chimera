@@ -62,18 +62,18 @@ pub fn period_ratios(c: usize) -> [f32; 7] {
 /// `floor(period − 0.5) <= MAX_STRING_DELAY − 2`.
 pub(super) const FITS: f32 = (MAX_STRING_DELAY - 2) as f32 + 1.5;
 
-/// `period` raised by octaves (halved) until its line fits. f32 spans
-/// 256 octaves: a period none of them fits (infinite, NaN) folds to half
-/// the longest line (#236).
+/// `period` raised by octaves (halved) until its line fits. A finite
+/// period fits within f32's 254 octaves; one that never would (infinite,
+/// NaN) folds to half the longest line (#236).
 pub fn fold(period: f32) -> f32 {
+    if !period.is_finite() {
+        return FITS * 0.5;
+    }
     let mut p = period;
-    for _ in 0..256 {
-        if p < FITS {
-            return p;
-        }
+    while p >= FITS {
         p *= 0.5;
     }
-    FITS * 0.5
+    p
 }
 
 #[cfg(test)]

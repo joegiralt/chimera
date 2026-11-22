@@ -11,7 +11,7 @@ The 0.4 bug sweep's batch D (sound and DSP) found five defects with a clear faul
 - **Halo fold (#236):** `chords::fold` halves at most 256 times (f32's octaves). A period no octave fits folds to `FITS / 2`.
 - **VCA amounts (#180):** a VCA route's amount ramps across the block from the last block's `VcaRoutes` (the voice already keeps it), for ENV sources in `Envelope::add_ramped` (its amount is now `(from, to)`) and for the others in the voice. A fresh note starts on its own. An unchanged amount takes the old arithmetic, bit for bit.
 - **SYNC entry (#670):** at the MODE duck's swap into SYNC (its gain is 0 there), OSC 2's phase is set to `φ1 · inc2 / inc1` at the block's end: where the master's sync would have put it.
-- **Routed pluck (#233):** a fresh STRING or SYMP pluck keeps its level (`StringVoice::struck`). On the note's first block, if the voice's pitch ratio is not the one the strike used, the string is plucked again at the routed length before `shape`. `Voice` grows 8 B (6,728 → 6,736).
+- **Routed pluck (#233):** a fresh STRING or SYMP pluck keeps its level for `shape` in the float a re-strike's level already used (`string::Pending`: `−level` fresh, `+level` re-strike, `+0` none), so `Voice` keeps its 6,728 B. On the note's first block, if the voice's pitch ratio is not the one the strike used, the string is plucked again at the routed length before `shape`, in bank 2's block.
 - **Simulator rate (#239):** the desktop's engine always runs at `SAMPLE_RATE`. A device at another rate gets linear interpolation, one frame late; at 48 kHz frames pass untouched. The firmware is unchanged.
 
 ## Alternatives considered
