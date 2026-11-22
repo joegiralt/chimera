@@ -554,9 +554,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     let _card_irq = start_card(&mut cp.NVIC, &clocks, clk.cpu_hz, card_side);
     let mut card = Card::new();
     // No card or a card fault shows at the project's boot; a SYSTEM
-    // file that can't be read still applies the defaults silently:
-    // private issue #197
-    let (mut sync, mut settings, _) = SystemSync::boot(&mut card, store);
+    // file that can't be read, after it.
+    let (mut sync, mut settings, system) = SystemSync::boot(&mut card, store);
     // A staged bank 2 this build can open, installed behind DON'T POWER
     // OFF before the project, which may play from it.
     #[cfg_attr(not(feature = "bank2"), allow(unused_mut))]
@@ -617,7 +616,9 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     // count: it varies from boot to boot, so a file deleted and put again
     // is another generation (#455, ADR 0312).
     chimera_core::storage::Generation::seed_fresh(cortex_m::peripheral::DWT::cycle_count());
+    ui.show_system_note(system);
     ui.note_sweep(&swept);
+    ui.note_bank2();
     // The splash again in the card's theme; it stays up until PART 1.
     // The Yellow Sign ignores INVERT (`splash_palette`).
     display.set_palette(chimera_core::ui::theme_settings::splash_palette(&theme));
@@ -827,6 +828,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
                 usb::Restart::Dfu(asked) => dfu::enter(&marker, dfu::DfuFrom::Console(asked)),
                 // The boot it restarts into sweeps, the arena's gap free.
                 usb::Restart::Sweep(_) => marker.reset(),
+                // The door's USB layout is a boot's (#1064).
+                usb::Restart::Bank2(_) => marker.reset(),
             }
         }
         // `bank2 install` held the screen: everything redraws below.

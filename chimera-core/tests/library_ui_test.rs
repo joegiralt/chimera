@@ -417,7 +417,7 @@ fn save_to_library_row_in_settings_part() {
     open_door();
     let mut ui = UiState::new();
     screen::to_leaf(&mut ui, &["PART"]);
-    for _ in 0..5 {
+    for _ in 0..chimera_core::ui::settings::SAVE_TO_LIB_ROW {
         feed(&mut ui, Input::press(ButtonId::Plus));
     }
     feed(&mut ui, Input::press(ButtonId::Edit));
@@ -822,7 +822,7 @@ fn a_save_from_settings_drops_the_page_and_lists_on_entry() {
     r.open_library();
     r.work();
     screen::to_leaf(&mut r.ui, &["PART"]);
-    for _ in 0..5 {
+    for _ in 0..chimera_core::ui::settings::SAVE_TO_LIB_ROW {
         r.press(ButtonId::Plus);
     }
     r.press(ButtonId::Edit);

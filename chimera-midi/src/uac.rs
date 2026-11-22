@@ -46,7 +46,8 @@ pub struct Counts {
     pub short: u32,
     /// Drops back to `TARGET` from past `HIGH`.
     pub resyncs: u32,
-    /// Armed packets a frame ended without, aimed again (`aim`).
+    /// Armed packets a frame ended without, aimed again (`reaim`): not
+    /// those already held for the next frame.
     pub reaimed: u32,
 }
 
@@ -193,6 +194,8 @@ pub const SODDFRM: u32 = 1 << 29;
 pub const SEVNFRM: u32 = 1 << 28;
 pub const SNAK: u32 = 1 << 27;
 pub const CNAK: u32 = 1 << 26;
+/// EONUM: the parity an isochronous IN's packet waits for, odd set.
+pub const EONUM: u32 = 1 << 16;
 
 /// DIEPCTL holds a packet the core has not sent.
 #[inline(always)]
@@ -217,4 +220,15 @@ pub fn frame(dsts: u32) -> u16 {
 pub fn aim(diepctl: u32, now: u16) -> u32 {
     let keep = diepctl & !(EPENA | EPDIS | SODDFRM | SEVNFRM | SNAK | CNAK);
     keep | if now & 1 == 0 { SODDFRM } else { SEVNFRM }
+}
+
+/// `aim`'s write for an armed packet a frame ended without, or `None` if
+/// it already waits for the next frame's parity: the incomplete interrupt
+/// is any isochronous IN's, so with both streams running most are the
+/// other's (#943).
+#[inline(always)]
+pub fn reaim(diepctl: u32, now: u16) -> Option<u32> {
+    let held_odd = diepctl & EONUM != 0;
+    let next_odd = now & 1 == 0;
+    (held_odd != next_odd).then(|| aim(diepctl, now))
 }

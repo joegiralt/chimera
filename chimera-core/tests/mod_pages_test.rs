@@ -83,8 +83,8 @@ fn slider_cells_read_in_units() {
     assert_eq!(text(&ENVELOPE, 2, 0.55), "55%");
     assert_eq!(
         text(&ENVELOPE, 4, 0.0),
-        "0.0 ms",
-        "the integer formatter pads"
+        "0.001 ms",
+        "HOLD's bottom in three places, never 0.0 ms (#159)"
     );
     assert_eq!(text(&ENV_3, 3, 0.5), "LIN");
     assert_eq!(text(&ENV_3, 3, 0.8), "EXP 60");

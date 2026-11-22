@@ -29,7 +29,8 @@ impl HoldGate {
         }
     }
 
-    /// One result per frame; in a stalled frame a hold of the new press wins over the old release.
+    /// One result per frame; in a stalled frame the old press's release
+    /// wins, and the new press's hold fires the frame after (#289).
     /// `muted`: the press under way yields nothing (MIX + MENU). Applied after
     /// a press in `e` resets the gate, before its release or hold is decided.
     pub fn step(&mut self, e: Edges, now: Ms, muted: bool) -> Option<Press> {
@@ -49,7 +50,8 @@ impl HoldGate {
         if let (false, Some(r)) = (e.down, e.released_at) {
             out = self.release(r);
         }
-        if e.down
+        if out.is_none()
+            && e.down
             && !self.fired
             && !self.muted
             && self.down_at.is_some_and(|d| now.since(d) >= HOLD_MS)
@@ -148,25 +150,40 @@ impl HoldGates {
     /// MENU, SEQ and B1–B5 are muted while MIX is down (MIX + SEQ learns,
     /// MIX + B*n* is a mute in ORBIT), SEQ too by a turn while it is
     /// down (`SeqHold::Turned`), and B1–B5 while EDIT is: EDIT + B*n*
-    /// is no ring key. MIX is read as a level at frame end, so a chord
-    /// inside one frame is not muted. The B gates run everywhere, so they are in step
-    /// when ORBIT opens.
+    /// is no ring key. MIX is down at frame end, or was through the key's
+    /// press inside the frame (`chorded`, #289). The B gates run
+    /// everywhere, so they are in step when ORBIT opens.
     pub fn step(&mut self, c: &impl Controls, seq: SeqHold) -> Presses {
         let now = c.now_ms();
-        let mix = c.edges(ButtonId::Mix).down;
+        let m = c.edges(ButtonId::Mix);
+        let mix = |e: Edges| m.down || chorded(m, e);
         let edit = c.edges(ButtonId::Edit).down;
         let mut ring = [None; RINGS];
         for ((g, out), &b) in self.rings.iter_mut().zip(&mut ring).zip(&PART_BUTTONS) {
-            *out = g.step(c.edges(b), now, mix || edit);
+            let e = c.edges(b);
+            *out = g.step(e, now, mix(e) || edit);
         }
-        let chord = mix || PART_BUTTONS.iter().any(|&b| c.edges(b).down);
+        let chord = m.down || PART_BUTTONS.iter().any(|&b| c.edges(b).down);
+        let (menu, seq_e) = (c.edges(ButtonId::Menu), c.edges(ButtonId::Seq));
         Presses {
             edit: c.edges(ButtonId::Edit).pressed_at.is_some() && !chord,
-            menu: self.menu.step(c.edges(ButtonId::Menu), now, mix),
+            menu: self.menu.step(menu, now, mix(menu)),
             seq: self
                 .seq
-                .step(c.edges(ButtonId::Seq), now, mix || seq == SeqHold::Turned),
+                .step(seq_e, now, mix(seq_e) || seq == SeqHold::Turned),
             ring,
         }
+    }
+}
+
+/// MIX down at the press in `e` and let go after it inside this frame,
+/// pressed in it or held from before: a chord the level at frame end
+/// misses (#289).
+fn chorded(mix: Edges, e: Edges) -> bool {
+    match (mix.pressed_at, mix.released_at, e.pressed_at) {
+        (down, Some(up), Some(p)) => {
+            down.is_none_or(|d| p.signed_since(d) >= 0) && up.signed_since(p) >= 0
+        }
+        (_, None, _) | (_, _, None) => false,
     }
 }

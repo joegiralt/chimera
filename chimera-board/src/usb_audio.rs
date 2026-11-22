@@ -331,10 +331,15 @@ pub(crate) mod door {
             // nothing finer than the frame and its parity.
             unsafe {
                 let v = p.read_volatile();
+                // Its own frame ended (#973): aimed at the next frame, by
+                // parity only if it holds the other one (#943), and the
+                // pacer's frame moved on either way.
                 if uac::armed(v) && s.pacer.late(uac::missed(at, flags & SOF != 0)) {
-                    p.write_volatile(uac::aim(v, at));
+                    if let Some(w) = uac::reaim(v, at) {
+                        p.write_volatile(w);
+                        s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
+                    }
                     s.pacer.reaim(at.wrapping_add(1), &mut s.counts);
-                    s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
                 }
             }
         }

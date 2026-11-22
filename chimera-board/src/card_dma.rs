@@ -282,12 +282,11 @@ impl CardDoor {
 
 /// A stuck transfer asked to abort; true if one was.
 fn unstick(now: Ms) -> bool {
-    let stuck = BUS.stuck(now);
-    if stuck {
-        BUS.ask_abort();
+    let asked = BUS.stuck(now).is_some_and(|h| BUS.ask_abort(h));
+    if asked {
         pend();
     }
-    stuck
+    asked
 }
 
 /// A card is mounted and not faulted.
@@ -446,6 +445,8 @@ impl Held {
         let _ = BUS.give();
         match BUS.take_or_want(now_ms()) {
             Took::Taken => Some(self),
+            // Not the UI's turn either: `next` looked, and thread mode
+            // can't ask one while this handler runs.
             Took::Wanted => {
                 STATS.faults.fetch_add(1, Ordering::Relaxed);
                 None
@@ -1549,6 +1550,14 @@ impl IrqState {
     /// The bus kept for the next read while any stream wants a fill it
     /// can read (a waiting UI gets it only then: `serve_step`).
     fn next(&mut self, h: Held) {
+        // The UI waited `UI_TURN_MS`: the bus is its now. The pended entry
+        // finds the turn and stores its want, so the UI's give wakes the
+        // wants again (#569).
+        if BUS.turn_asked() {
+            give(h, &self.line);
+            pend();
+            return;
+        }
         match self.work() {
             Work::Nothing => give(h, &self.line),
             work => match h.keep() {
@@ -1759,7 +1768,10 @@ mod bench {
     /// The burst just started: an abort asked, or CR1 without SSI.
     pub(super) fn strike(fault: Option<Inject>, h: &Held) {
         match fault {
-            Some(Inject::Abort) => BUS.ask_abort(),
+            Some(Inject::Abort) => {
+                // The handler's own hold: nothing renews it under this.
+                let _ = BUS.held().is_some_and(|h| BUS.ask_abort(h));
+            }
             // SAFETY: CR1's bits as RM0433 lays them; the one write that
             // drops SSI, made only here, armed only by `card dma inject
             // modf`. The bus is this handler's (`Held`).

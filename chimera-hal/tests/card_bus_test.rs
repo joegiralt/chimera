@@ -45,11 +45,11 @@ fn take_or_want_takes_a_free_bus() {
 fn stream_stuck_after_watchdog() {
     let b = CardBus::new();
     assert!(b.try_take(Taker::Stream, Ms(100)));
-    assert!(!b.stuck(Ms(300)));
-    assert!(b.stuck(Ms(301)));
+    assert!(b.stuck(Ms(300)).is_none());
+    assert!(b.stuck(Ms(301)).is_some());
     b.give();
     assert!(b.try_take(Taker::Ui, Ms(100)));
-    assert!(!b.stuck(Ms(10_000)));
+    assert!(b.stuck(Ms(10_000)).is_none());
 }
 
 /// M2 (#761): a slow card within the SD spec waits up to 100 ms (Nac)
@@ -64,11 +64,14 @@ fn a_slow_read_renewed_each_burst_is_never_stuck() {
         let at = block * 90;
         b.renew(Ms(at));
         for t in at..at + 90 {
-            assert!(!b.stuck(Ms(t)), "stuck at {t} ms");
+            assert!(b.stuck(Ms(t)).is_none(), "stuck at {t} ms");
         }
     }
-    assert!(!b.stuck(Ms(720 + 200)));
-    assert!(b.stuck(Ms(720 + 201)), "a stalled burst is caught");
+    assert!(b.stuck(Ms(720 + 200)).is_none());
+    assert!(
+        b.stuck(Ms(720 + 201)).is_some(),
+        "a stalled burst is caught"
+    );
 }
 
 /// Only a `Stream` hold is renewed: the UI's is never stamped.
@@ -81,29 +84,30 @@ fn renew_leaves_another_owners_bus_alone() {
     b.renew(Ms(500));
     b.give();
     assert_eq!(b.take_or_want(Ms(1_000)), Took::Taken);
-    assert!(!b.stuck(Ms(1_200)));
+    assert!(b.stuck(Ms(1_200)).is_none());
 }
 
 #[test]
 fn a_take_stamped_after_the_clock_read_is_not_stuck() {
     let b = CardBus::new();
     assert!(b.try_take(Taker::Stream, Ms(1_002)));
-    assert!(!b.stuck(Ms(1_000)));
+    assert!(b.stuck(Ms(1_000)).is_none());
     b.give();
     assert!(b.try_take(Taker::Stream, Ms(1)));
-    assert!(!b.stuck(Ms(u32::MAX - 1)));
+    assert!(b.stuck(Ms(u32::MAX - 1)).is_none());
     b.give();
     assert!(b.try_take(Taker::Stream, Ms(u32::MAX - 1)));
-    assert!(!b.stuck(Ms(u32::MAX - 3)));
-    assert!(b.stuck(Ms(200)));
-    assert!(!b.stuck(Ms(198)));
+    assert!(b.stuck(Ms(u32::MAX - 3)).is_none());
+    assert!(b.stuck(Ms(200)).is_some());
+    assert!(b.stuck(Ms(198)).is_none());
 }
 
 #[test]
 fn abort_asked_is_taken_once() {
     let b = CardBus::new();
     assert!(!b.take_abort());
-    b.ask_abort();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    assert!(b.ask_abort(b.held().unwrap()));
     assert!(b.take_abort());
     assert!(!b.take_abort());
 }
@@ -207,9 +211,80 @@ fn answering_a_held_quiet_again_keeps_its_stamp() {
 #[test]
 fn a_stream_take_drops_a_stale_abort() {
     let b = CardBus::new();
-    b.ask_abort();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    let h = b.held().unwrap();
+    b.give();
+    assert!(!b.ask_abort(h), "given back since");
     assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
     assert!(!b.take_abort());
-    b.ask_abort();
+    assert!(b.ask_abort(b.held().unwrap()));
     assert!(b.take_abort());
+}
+
+/// #766: the watchdog's abort carries the hold it judged; the IRQ drops
+/// one whose hold isn't its transfer's (a give and retake between the
+/// judge and the ask), or that a burst renewed since.
+#[test]
+fn a_stale_abort_never_stops_a_fresh_transfer() {
+    let b = CardBus::new();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    let judged = b.stuck(Ms(201)).expect("stuck");
+    b.give();
+    assert_eq!(b.take_or_want(Ms(202)), Took::Taken);
+    assert!(!b.ask_abort(judged), "the next transfer's: not asked");
+    assert!(!b.take_abort());
+    // Asked, then the hold moves before the IRQ reads it: dropped there.
+    let judged = b.stuck(Ms(500)).expect("stuck");
+    assert!(b.ask_abort(judged));
+    b.renew(Ms(501));
+    assert!(!b.take_abort(), "renewed since");
+    let judged = b.stuck(Ms(800)).expect("stuck");
+    assert!(b.ask_abort(judged));
+    b.give();
+    assert_eq!(b.take_or_want(Ms(801)), Took::Taken);
+    assert!(!b.take_abort(), "re-taken since");
+    let judged = b.stuck(Ms(1_100)).expect("stuck");
+    assert!(b.ask_abort(judged));
+    assert!(b.take_abort(), "its own transfer's");
+}
+
+/// From thread context an ask re-reads the hold: one already renewed or
+/// re-taken since the judge is not asked at all, so the asker may judge
+/// again (#766's review).
+#[test]
+fn an_ask_on_a_hold_already_moved_is_not_made() {
+    let b = CardBus::new();
+    assert_eq!(b.take_or_want(Ms(0)), Took::Taken);
+    let judged = b.stuck(Ms(201)).expect("stuck");
+    b.renew(Ms(202));
+    assert!(!b.ask_abort(judged));
+    assert!(!b.take_abort());
+    assert!(b.ask_abort(b.held().unwrap()));
+    assert!(b.take_abort());
+}
+
+/// #569: a UI that has waited `UI_TURN_MS` asks a turn; the card IRQ then
+/// parks (`Wanted`) instead of taking the bus, the UI takes it, and its
+/// give wakes the IRQ. Taking ends the turn; a UI that gives up cancels it.
+#[test]
+fn a_ui_turn_parks_the_streams_until_the_ui_has_had_the_bus() {
+    use chimera_hal::card_bus::{UI_TURN_MS, Wake};
+    assert_eq!(UI_TURN_MS.get(), 100);
+    let b = CardBus::new();
+    assert!(!b.turn_asked());
+    b.ask_turn();
+    assert!(b.turn_asked());
+    assert_eq!(b.take_or_want(Ms(0)), Took::Wanted, "the streams wait");
+    assert!(b.try_take(Taker::Ui, Ms(1)));
+    assert!(!b.turn_asked(), "the turn is the UI's take");
+    assert_eq!(b.give(), Wake::Pend, "its give wakes the IRQ");
+    assert_eq!(b.take_or_want(Ms(2)), Took::Taken);
+    b.give();
+    b.ask_turn();
+    b.cancel_turn();
+    assert_eq!(
+        b.take_or_want(Ms(3)),
+        Took::Taken,
+        "cancelled: the streams go on"
+    );
 }

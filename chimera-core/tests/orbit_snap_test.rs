@@ -16,15 +16,12 @@ use chimera_core::orbit::ring::Harmony;
 use chimera_core::part::{Held, LiveSnap, PartParams};
 use chimera_core::project::{NEW_PARTS, PartId, Project};
 use chimera_core::storage::encode_block;
-use chimera_core::ui::UiState;
-use chimera_core::ui::settings::leaves::{LIVE_SNAP_LEAF, OnePage};
-use chimera_hal::{BLOCK_SIZE, ButtonId, EncoderId};
+use chimera_hal::BLOCK_SIZE;
 use chimera_theory::{Chord, Key, Note, PitchClass, Quality, Scale, SnapTo, snap};
 use common::inst_rig::InstRig;
 use common::orbit::OrbitRig;
 use common::sweep::{BPS, Bench, CLICK_RATIO, Patch, Tape, control_diff_ratio, gone_from};
 use common::{SR, fundamental_hz};
-use screen::{Input, feed, tap, to_leaf};
 
 const P1: PartId = PartId::ALL[0];
 const P2: PartId = PartId::ALL[1];
@@ -410,8 +407,13 @@ fn retune_glides_without_a_click() {
 
 /// B3, then SETTINGS › PART › LIVE SNAP: SNAP and HELD edit Part 3's, and
 /// the leaf is one page.
+#[cfg(feature = "orbit")]
 #[test]
 fn live_snap_leaf_edits_the_active_part() {
+    use chimera_core::ui::UiState;
+    use chimera_core::ui::settings::leaves::{LIVE_SNAP_LEAF, OnePage};
+    use chimera_hal::{ButtonId, EncoderId};
+    use screen::{Input, feed, tap, to_leaf};
     let _: &OnePage = &LIVE_SNAP_LEAF;
     let def = LIVE_SNAP_LEAF.def();
     assert_eq!(def.id, 85);
