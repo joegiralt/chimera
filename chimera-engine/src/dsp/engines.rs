@@ -315,13 +315,20 @@ impl EngineSlot {
         pool: &SymPool,
         voice: VoiceIdx,
         (note, glide, sample_rate): (MidiNote, bool, u32),
+        routed: bool,
     ) -> usize {
+        // a fresh note a PITCH route moves re-plucks on its first block
+        let repluck = if routed {
+            crate::dsp::modal::REPLUCK_BYTES
+        } else {
+            0
+        };
         match self {
             Self::Modal(m) => m
                 .strike_clear(note.get(), glide, sample_rate, pool)
-                .unwrap_or_else(|| pool.note_on_clear(Some(m), voice)),
+                .unwrap_or_else(|| pool.note_on_clear(Some(m), voice) + repluck),
             Self::Algo(_) | Self::Tape(_) | Self::Va(_) | Self::Drum(_) => {
-                pool.note_on_clear(None, voice)
+                pool.note_on_clear(None, voice) + repluck
             }
         }
     }
