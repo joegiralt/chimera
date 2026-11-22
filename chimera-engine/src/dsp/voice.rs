@@ -342,12 +342,14 @@ impl Voice {
     }
 
     /// `glide_extra` of a DRUM hit: the filter's glide at the costliest of
-    /// the Sound's kind and its kit's pads'.
+    /// its kit's pads' kinds, the Sound's own (masked once a kit is read)
+    /// only before the first publish, as `drum_cost` (#962).
     pub fn drum_glide_extra(p: &ParamSnapshot, mods: &ModState, g: Gliding, kit: KitBill) -> Cost {
         let glide = kit
             .shapes()
             .map(|(f, _)| f.kind().glide_cost())
-            .fold(p.filter.kind().glide_cost(), Cost::max);
+            .max()
+            .unwrap_or(p.filter.kind().glide_cost());
         Self::glide_with(p, mods, g, glide)
     }
 
@@ -792,6 +794,15 @@ impl Voice {
         match &self.slot {
             EngineSlot::Drum(d) if self.active => d.hit(),
             _ => None,
+        }
+    }
+
+    /// What its DRUM hit's live follow adds its next block on `part`
+    /// (`DrumEngine::follow_bill`, #962); 0 for any other slot.
+    pub fn drum_follow_extra(&self, part: crate::project::PartId) -> Cost {
+        match &self.slot {
+            EngineSlot::Drum(d) if self.active => d.follow_bill(part),
+            _ => Cost::ZERO,
         }
     }
 

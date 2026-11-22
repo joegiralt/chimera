@@ -12,7 +12,7 @@ use crate::dsp::knobs::coeff;
 use crate::dsp::lfo::{Lfo, LfoParams};
 use crate::dsp::modal::ModalEngine;
 use crate::dsp::modulator::env_a::{ACoefs, EnvA, Stage};
-use crate::hw::BLOCK_SIZE;
+use crate::hw::{BLOCK_SIZE, Cost};
 use crate::params::{EnvParams, ParamSnapshot};
 use crate::project::PartId;
 
@@ -193,6 +193,21 @@ crate::in_place::field_list!(DrumEngine => DrumEngine { hit, kernel, pan, amp, m
 
 // A hit plays in a voice slot, which MODAL's engine sizes.
 const _: () = assert!(size_of::<DrumEngine>() <= size_of::<ModalEngine>());
+
+/// A gliding block of `follow`, a hit: its body, `Places::ease` over 20
+/// places, `set_places` and both envelopes' `AmpEnv::coefs`, each
+/// instruction once (`ACoefs::new`'s 341 twice), on the filter-probes ELF
+/// at eb8ae2a9: ~1,923 instructions and 18 divides, ceil5(1,923 × 1.606 +
+/// 12 × 18) / 64 = 51.6: 55. A static upper bound; unit read owed (ADR
+/// 0311, #1026).
+pub const FOLLOW_GLIDE_COST: Cost = Cost(55);
+
+/// A publish's block on top: `KitView::sound_if_newer`'s 70-byte read,
+/// `PadSound::from_bytes`, the default pad and both `PadSound::places`,
+/// each instruction once, the loops at 70 bytes: ~2,716 instructions and
+/// 48 divides, ceil5(2,716 × 1.606 + 12 × 48) / 64 = 77.2: 80. Static;
+/// unit read owed (ADR 0311, #1026).
+pub const FOLLOW_DECODE_COST: Cost = Cost(80);
 
 impl DrumEngine {
     /// Idle: no hit.
@@ -387,6 +402,24 @@ impl DrumEngine {
     /// The hit sounding, if one is.
     pub fn hit(&self) -> Option<DrumHit> {
         self.hit
+    }
+
+    /// What `follow` adds the hit's next block on `part` (#962): a publish
+    /// it hasn't seen decodes its pad and starts a glide, and a glide
+    /// steps its filter (`FilterKind::glide_cost`) and rebuilds its
+    /// envelopes' coefficients. Nothing else follows: 0.
+    pub fn follow_bill(&self, part: PartId) -> Cost {
+        let Some(hit) = &self.hit else {
+            return Cost::ZERO;
+        };
+        let glide = FOLLOW_GLIDE_COST + hit.params().sound().filter().kind().glide_cost();
+        if KIT_VIEW.seq(part) != self.follow.seen {
+            FOLLOW_DECODE_COST + glide
+        } else if self.follow.glide.is_some() {
+            glide
+        } else {
+            Cost::ZERO
+        }
     }
 
     /// What the hit sounding bills its next block (ADR 0287): its

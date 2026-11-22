@@ -2231,8 +2231,15 @@ impl Instrument {
         #[cfg(feature = "probe")]
         let t0 = crate::probe::now();
         // Each kit's bill read once: the Part's bill, its glide and its
-        // hits' all from the same kit.
-        let kits: [KitBill; MAX_PARTS] = PartId::ALL.map(|p| KIT_VIEW.bill(p));
+        // hits' all from the same kit, with each ringing hit's struck
+        // sound, whose filter it runs whatever the kit says now (#977).
+        let mut kits: [KitBill; MAX_PARTS] = PartId::ALL.map(|p| KIT_VIEW.bill(p));
+        for (v, p) in self.voices.iter().zip(&self.sounding) {
+            if let (Some(h), Some(p)) = (v.drum_hit(), p) {
+                let k = &mut kits[p.index()];
+                *k = k.with_sound(h.params().sound());
+            }
+        }
         // Only a Part with a gliding knob pays the glide scans (ADR 0117).
         let glides: [Cost; MAX_PARTS] = core::array::from_fn(|p| {
             let g = self.knobs[p].0.gliding();
@@ -2296,7 +2303,10 @@ impl Instrument {
                     Some(b) => HitKernel::Sounding(b),
                     None => HitKernel::Ended,
                 });
-                self.alloc.recost_with_glide(vi, own + held + k, glides[p]);
+                // A hit's live follow (#962), as a knob's glide: admission's.
+                let follow = self.voices[v].drum_follow_extra(q);
+                self.alloc
+                    .recost_with_glide(vi, own + held + k, glides[p] + follow);
             }
         }
         // Only the bus, the reverb's extra, the knobs' reads and the LFO

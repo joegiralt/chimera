@@ -638,8 +638,8 @@ static ROUTING: [RoutingRow; ROUTING_ROWS] = [
     ("SWITCH", |p| modal(p, ResonatorMode::String), switch_storm),
     // The FX slot's bills (FX plan Task 1): SOFT RT − SOFT and FOLD RT −
     // FOLD are each type's ramp plus a route (1 DEST − 1 OP); FOLD TAP −
-    // FOLD is the ramp, `TAP_FOLD_COST` and a capture. 1 DEST, not 1 OP,
-    // is their base: `matrix` drops the Part's default routes.
+    // FOLD is the ramp, `TAP_FOLD_COST` and a capture. Every row runs
+    // without the Part's routes (`Rig::time`), so 1 OP is their base too.
     ("FOLD HALF", |p| fx(p, FxType::Fold, 0.5), STILL),
     ("SOFT RT", |p| staged(p, FxType::Soft), STILL),
     ("FOLD RT", |p| staged(p, FxType::Fold), STILL),

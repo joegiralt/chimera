@@ -443,6 +443,70 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
     );
 }
 
+/// Pad 5 on LADDER struck, then the kit republished with it on CLEAN: the
+/// hit keeps the KIND it was struck on (`PadSound::live_target`), so it
+/// keeps LADDER's bill for the rest of its ring, never CLEAN's (#977).
+#[test]
+fn a_ringing_hit_bills_the_filter_it_runs() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let ladder = pad5_on(FilterKind::Ladder);
+    let mut r = drum_rig(&mut w, &ladder);
+    r.note_on_vel(0, key(pad(5)), 127);
+    r.render(1);
+    let struck = booked(&r, key(pad(5)));
+    w.publish(PartId::ALL[0], &Kit::DEFAULT);
+    r.render(2);
+    assert!(sounding(&r).contains(&pad(5)), "pad 5 still rings");
+    assert_eq!(booked(&r, key(pad(5))), struck);
+}
+
+/// Pad 5 ringing when a publish moves its CUTOFF: the hit follows (ADR
+/// 0269), so its block decodes the pad and starts the glide, and the
+/// glide steps the filter and rebuilds the envelopes. Each is booked
+/// beside the hit, as a knob's glide (#962).
+#[test]
+fn a_followed_publish_books_its_hits_decode_and_glide() {
+    use chimera_core::dsp::Hz;
+    use chimera_core::dsp::drum::engine::{FOLLOW_DECODE_COST, FOLLOW_GLIDE_COST};
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, &Kit::DEFAULT);
+    r.note_on_vel(0, key(pad(5)), 127);
+    r.render(2);
+    let rest = booked(&r, key(pad(5)));
+    let mut kit = Kit::DEFAULT;
+    let f = kit.pad_mut(pad(5)).sound_mut().filter_mut();
+    f.set_cutoff(Hz::new(f.cutoff().get() / 4.0));
+    w.publish(PartId::ALL[0], &kit);
+    let glide = FOLLOW_GLIDE_COST + FilterKind::Svf.glide_cost();
+    r.render(1);
+    assert_eq!(booked(&r, key(pad(5))), rest + FOLLOW_DECODE_COST + glide);
+    r.render(1);
+    assert!(sounding(&r).contains(&pad(5)), "pad 5 still rings");
+    assert_eq!(booked(&r, key(pad(5))), rest + glide);
+}
+
+/// A kit of DIRTY pads under a CLEAN Sound: the pads mask the Sound's
+/// filter, so a knob glide bills DIRTY's step (0), not CLEAN's (#962),
+/// as `drum_cost` bills the pads' shapes alone.
+#[test]
+fn a_kits_glide_bills_its_pads_not_the_masked_sound() {
+    use chimera_core::dsp::knobs::Gliding;
+    let mut kit = Kit::DEFAULT;
+    for n in 1..=12 {
+        kit.pad_mut(pad(n))
+            .sound_mut()
+            .filter_mut()
+            .set_kind(FilterKind::Dirty);
+    }
+    let g = Gliding {
+        filter: true,
+        fx: false,
+    };
+    let p = drum_init();
+    let extra = Voice::drum_glide_extra(&p, &ModState::new(), g, kit_bill(&kit));
+    assert_eq!(extra, Cost::ZERO);
+}
+
 /// The MIDI key INIT DRUM's pad `p` answers to.
 fn key(p: PadId) -> u8 {
     p.index() as u8
