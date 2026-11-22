@@ -8,7 +8,7 @@
 //! come to, the chart's feedback loops; ALGO PAGES' operator-first
 //! chains (ADR 0300). The compressor's KEY (ADR 0303): what each choice
 //! listens to, on MST's status line. The chorus's FLANGER and PHASER
-//! glyphs (ADR 0317, `chorus`).
+//! glyphs (ADR 0323, `chorus`).
 
 pub mod chorus;
 
@@ -99,8 +99,8 @@ pub enum Ask<'a> {
         sources: &'a [f32; MAX_MOD_SOURCES],
         out: &'a mut Option<f32>,
     },
-    /// `chorus::draw`: FLANGER's comb or PHASER's dips in the braid's box,
-    /// `drew` set; the braid's modes leave it false (ADR 0317).
+    /// `chorus::draw`: FLANGER's moiré or PHASER's ray gun in the braid's box,
+    /// `drew` set; the braid's modes leave it false (ADR 0323).
     Chorus {
         on: &'a mut dyn Paint,
         braid: &'a crate::ui::glyph::Braid,

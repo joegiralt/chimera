@@ -1,16 +1,16 @@
-//! The chorus's FLANGER and PHASER glyphs (ADR 0317): what each does to
-//! the spectrum, in the braid's box. FLANGER a comb, many narrow notches
-//! evenly spaced that slide together; PHASER a few wide dips that glide.
-//! RATE is how fast they travel, DEPTH how far, MIX how deep they cut (0
-//! flat). Bank 2's, through `UiDoor`'s `notes` (`Ask::Chorus`); closed,
-//! bank 1 draws the braid. Chorus I, II and I+II keep the braid.
+//! The chorus's FLANGER and PHASER glyphs (ADR 0323), objects in the
+//! braid's box: FLANGER a moiré, a fixed back comb of bars and a front
+//! comb sliding and stretching over it, bright where their bars line up;
+//! PHASER a blocky ray gun firing pulses along its beam. Bank 2's, through
+//! `UiDoor`'s `notes` (`Ask::Chorus`); closed, bank 1 draws the braid.
+//! Chorus I, II and I+II keep the braid.
 
 use crate::dsp::chorus::ChorusMode;
 use crate::dsp::fast_sin;
 use crate::ui::glyph::{Braid, BraidPart, wrap};
 use crate::ui::tape_strip::Paint;
 use crate::ui::theme;
-use core::f32::consts::PI;
+use core::f64::consts::TAU;
 use embedded_graphics::pixelcolor::Rgb565;
 
 /// What a chorus MODE draws.
@@ -18,10 +18,10 @@ use embedded_graphics::pixelcolor::Rgb565;
 pub enum Picture {
     /// The voices twisting round the dry line (bank 1's).
     Braid,
-    /// FLANGER's comb.
-    Comb,
-    /// PHASER's dips.
-    Dips,
+    /// FLANGER's two combs.
+    Moire,
+    /// PHASER's ray gun.
+    RayGun,
 }
 
 /// `m`'s picture.
@@ -30,100 +30,108 @@ pub const fn picture(m: ChorusMode) -> Picture {
         ChorusMode::Off | ChorusMode::JunoI | ChorusMode::JunoII | ChorusMode::JunoBoth => {
             Picture::Braid
         }
-        ChorusMode::Flanger => Picture::Comb,
-        ChorusMode::Phaser => Picture::Dips,
+        ChorusMode::Flanger => Picture::Moire,
+        ChorusMode::Phaser => Picture::RayGun,
     }
 }
 
-/// The box's columns, 2 px inside it as the braid's strands.
+/// The box's columns, 2 px inside it as the braid's strands, and its top.
 const X0: i32 = theme::BRAID_X + 2;
 const W: i32 = theme::BRAID_W - 4;
-/// The flat response's row and the floor a full cut reaches.
-const TOP: i32 = theme::BRAID_Y + 8;
-const FLOOR: i32 = theme::BRAID_Y + theme::BRAID_H - 6;
+const Y0: i32 = theme::BRAID_Y;
+/// MODE's dot, under the picture at the left, in the box.
+pub const MODE_DOT: (i32, i32) = (2, 51);
 
-/// The comb's notches across the box, and how many spacings the full
-/// DEPTH slides them each way.
-const NOTCHES: f32 = 6.0;
-const COMB_SWEEP: f32 = 1.5;
-/// The comb's spacing, px.
-const SP: f32 = W as f32 / NOTCHES;
-/// The first dip's place at rest (of the width), how far the full DEPTH
-/// moves it (of that), the dips' spacing and width (of that place).
-const DIP_AT: f32 = 0.22;
-const DIP_SWEEP: f32 = 0.6;
-const DIP_GAP: f32 = 1.6;
-const DIP_W: f32 = 0.6;
-const DIPS: usize = 3;
+/// The back comb's pitch and every bar's width, px; the bars' rows.
+const BACK_PITCH: i32 = 5;
+const BAR_W: i32 = 2;
+const BACK_ROWS: (i32, i32) = (4, 46);
+const FRONT_ROWS: (i32, i32) = (9, 41);
+/// How far the full DEPTH stretches the front comb's pitch.
+const STRETCH: f32 = 0.18;
+/// The front comb's slide, px a radian of the clock.
+const SLIDE: f64 = 3.0;
 
-/// The sweep's phase at the braid's `frame`, radians in 0..τ: RATE sets
-/// its speed as it does the braid's twist; the comb travels at half of
-/// it (its crest never faster than the braid's), the dips glide at 0.35. In f64, so it stays smooth however long the
-/// clock has run.
-pub fn sweep(b: &Braid) -> f32 {
-    let per_frame = 0.05 + 0.45 * b.rate as f64;
-    let speed = match picture(b.mode) {
-        Picture::Braid | Picture::Comb => 0.5,
-        Picture::Dips => 0.35,
-    };
-    wrap(b.frame as f64 * per_frame * speed, core::f64::consts::TAU)
+/// The gun's muzzle line and its left, px in the box.
+const GUN_CY: i32 = 22;
+const GUN_X: i32 = 3;
+/// Pulses on the beam at once, fired twice a turn of the clock.
+const PULSES: usize = 4;
+
+/// The clock's phase at the braid's `frame`, radians, unwrapped: RATE
+/// sets its speed as it does the braid's twist (0.05 to 0.5 a frame).
+fn clock(b: &Braid) -> f64 {
+    b.frame as f64 * (0.05 + 0.45 * b.rate as f64)
 }
 
-/// Where the sweep has them, -1..=1 of the full DEPTH's travel.
-fn shift(b: &Braid) -> f32 {
-    b.depth * fast_sin(sweep(b))
+/// The front comb's pitch now, px: the back's, stretched up to ±18 % by
+/// DEPTH as the clock turns at half speed. In f64 until wrapped, so it
+/// stays smooth however long the clock has run.
+pub fn pitch(b: &Braid) -> f32 {
+    let s = fast_sin(wrap(clock(b) * 0.5, TAU));
+    BACK_PITCH as f32 * (1.0 + STRETCH * b.depth * s)
 }
 
-/// The leading notch's (the comb's third, the first dip) column at sweep
-/// `s`, px from the box's left.
-fn lead_at(p: Picture, s: f32) -> f32 {
-    match p {
-        Picture::Comb => (2.5 + COMB_SWEEP * s) * SP,
-        Picture::Braid | Picture::Dips => DIP_AT * (1.0 + DIP_SWEEP * s) * W as f32,
-    }
+/// The front comb's first bar, px from the box's left, 0..pitch: it
+/// slides right as the clock turns, a share of its own pitch, so a
+/// stretch moves it smoothly too.
+fn slide(b: &Braid) -> f32 {
+    let bars = wrap(clock(b) * SLIDE / BACK_PITCH as f64, 1.0).min(1.0);
+    bars * pitch(b)
 }
 
-/// The leading notch's column now, px from the box's left: the RATE bead
-/// rides it.
-pub fn lead(b: &Braid) -> f32 {
-    lead_at(picture(b.mode), shift(b))
+/// The gun's parts at DEPTH `k`, each `(x, y, w, h)` in the box: a skinny
+/// pistol at 0, a wide boxy blaster at 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gun {
+    pub body: (i32, i32, i32, i32),
+    pub grip: (i32, i32, i32, i32),
+    /// The trigger guard's notch under the body's front.
+    pub guard: (i32, i32, i32, i32),
+    pub nozzle: (i32, i32, i32, i32),
+    /// The beam's band, from the nozzle to the box's right.
+    pub beam: (i32, i32, i32, i32),
 }
 
-/// How deep column `x` (from the box's left) is cut, 0..=1, before MIX.
-/// The comb's notch is `(1 − sin πd)²` at `d` spacings off its centre,
-/// measured from the column's nearest edge, so a notch between columns
-/// still reaches the floor as it slides. A dip is `1/(1 + q²)²`, `q` its
-/// widths off its centre; they combine as filters do, `1 − Π(1 − cut)`.
-fn cut(p: Picture, s: f32, x: i32) -> f32 {
-    match p {
-        Picture::Braid => 0.0,
-        Picture::Comb => {
-            // Notch centres sit at half spacings, slid by the sweep.
-            let u = (x as f32 + 0.5) / SP - COMB_SWEEP * s;
-            let f = u - libm::floorf(u);
-            let px = ((f - 0.5).abs() * SP - 0.5).max(0.0);
-            let k = 1.0 - fast_sin(PI * px / SP);
-            k * k
-        }
-        Picture::Dips => {
-            let a = DIP_AT * (1.0 + DIP_SWEEP * s);
-            let u = (x as f32 + 0.5) / W as f32;
-            let mut pass = 1.0;
-            for i in 0..DIPS {
-                let q = (u - a * (1.0 + DIP_GAP * i as f32)) / (DIP_W * a);
-                let r = 1.0 / (1.0 + q * q);
-                pass *= 1.0 - r * r;
-            }
-            1.0 - pass
+impl Gun {
+    pub fn at(k: f32) -> Self {
+        let r = |v: f32| libm::roundf(v) as i32;
+        let (bh, bw) = (r(5.0 + 7.0 * k), r(17.0 + 5.0 * k));
+        let by = GUN_CY - bh / 2;
+        let noz = r(bh as f32 * (0.35 + 0.25 * k)).max(2);
+        let beam = r(1.0 + 5.0 * k).max(1);
+        let bx = GUN_X + bw + 4;
+        Self {
+            body: (GUN_X, by, bw, bh),
+            grip: (GUN_X + 3, by + bh, r(5.0 + 3.0 * k), r(13.0 - 2.0 * k)),
+            guard: (GUN_X + bw - 4, by + bh, 3, 3),
+            nozzle: (GUN_X + bw, GUN_CY - noz / 2, 4, noz),
+            beam: (bx, GUN_CY - beam / 2, W - 1 - bx, beam),
         }
     }
 }
 
-/// How far below the flat line column `x` (from the box's left) sits, px:
-/// MIX times the cut, the full cut reaching the floor.
-pub fn drop(b: &Braid, x: i32) -> i32 {
-    let depth = (FLOOR - TOP) as f32;
-    libm::roundf(b.mix * cut(picture(b.mode), shift(b), x) * depth) as i32
+/// Pulse `i`'s left along the beam, 0..its length: four evenly spaced,
+/// fired twice a turn of the clock.
+fn pulse(b: &Braid, i: usize) -> f32 {
+    let len = Gun::at(b.depth).beam.2 as f32;
+    let turns = wrap(clock(b) * 0.5, TAU) / core::f32::consts::TAU;
+    let u = 2.0 * turns + i as f32 / PULSES as f32;
+    (u - libm::floorf(u)) * len
+}
+
+/// Where the motion is now and the span it repeats over, px: the front
+/// comb's first bar and its pitch, or the gun's first pulse and the
+/// pulses' spacing. The braid's modes: none.
+pub fn travel(b: &Braid) -> (f32, f32) {
+    match picture(b.mode) {
+        Picture::Braid => (0.0, 1.0),
+        Picture::Moire => (slide(b), pitch(b)),
+        Picture::RayGun => {
+            let len = Gun::at(b.depth).beam.2 as f32;
+            (pulse(b, 0), len / PULSES as f32)
+        }
+    }
 }
 
 /// A radius-2 dot, as `draw::dot`'s.
@@ -133,51 +141,122 @@ fn dot(on: &mut dyn Paint, x: i32, y: i32, c: Rgb565) {
     on.rect(x - 1, y + 2, 3, 1, c);
 }
 
+/// A rect in the box's frame.
+fn rect(on: &mut dyn Paint, (x, y, w, h): (i32, i32, i32, i32), c: Rgb565) {
+    on.rect(X0 + x, Y0 + y, w, h, c);
+}
+
 /// `b`'s picture when it isn't the braid; false for the braid's modes.
-/// As the braid: the floor line the dry line's colour by MIX (INK2, MID
-/// or FAINT; INK with MIX in focus), the response in ACCENT 1 to 3 px by
-/// MIX. The focused param is marked as the braid marks it: MODE a dot at
-/// the left, RATE a bead riding the leading notch, DEPTH its sweep's
-/// bounds dotted in MID, MIX the floor in INK.
+/// MIX's level is the braid's (`mix × 3`, 0 to 2). The focused param is
+/// marked in INK, as the braid marks it: MODE a dot under the left.
 pub fn draw(on: &mut dyn Paint, b: &Braid) -> bool {
-    let p = picture(b.mode);
-    if p == Picture::Braid {
-        return false;
-    }
     let level = ((b.mix * 3.0) as usize).min(2);
-    let floor = match b.focus {
-        Some(BraidPart::Mix) => theme::INK,
-        _ => [theme::INK2, theme::MID, theme::FAINT][level],
+    match picture(b.mode) {
+        Picture::Braid => return false,
+        Picture::Moire => moire(on, b, level),
+        Picture::RayGun => ray_gun(on, b, level),
+    }
+    if b.focus == Some(BraidPart::Mode) {
+        dot(on, X0 + MODE_DOT.0, Y0 + MODE_DOT.1, theme::INK);
+    }
+    true
+}
+
+/// The back comb in MID (INK with MIX in focus: the comb the front is
+/// weighed against, as the braid's dry line); the front comb's bars in
+/// ACCENT, INK2 where they cover a back bar, solid at MIX's top level and
+/// every second or third row below it, none at MIX 0. RATE in focus lights
+/// the front comb, DEPTH the bands where the bars line up (the rest of
+/// the front FAINT).
+fn moire(on: &mut dyn Paint, b: &Braid, level: usize) {
+    let back = if b.focus == Some(BraidPart::Mix) {
+        theme::INK
+    } else {
+        theme::MID
     };
-    on.rect(X0, FLOOR, W, 1, floor);
+    let (t, bot) = BACK_ROWS;
+    for x in (0..W).step_by(BACK_PITCH as usize) {
+        rect(on, (x, t, BAR_W.min(W - x), bot - t), back);
+    }
+    if b.mix < 0.01 {
+        return;
+    }
+    let step = 3 - level as i32;
+    let (p, first) = (pitch(b), slide(b));
+    let (t, bot) = FRONT_ROWS;
+    let mut n = -1;
+    loop {
+        let left = libm::roundf(first + n as f32 * p) as i32;
+        if left >= W {
+            break;
+        }
+        for cx in (left..left + BAR_W).filter(|c| (0..W).contains(c)) {
+            let lined_up = cx % BACK_PITCH < BAR_W;
+            let c = match (b.focus, lined_up) {
+                (Some(BraidPart::Rate), _) | (Some(BraidPart::Depth), true) => theme::INK,
+                (Some(BraidPart::Depth), false) => theme::FAINT,
+                (_, true) => theme::INK2,
+                (_, false) => theme::ACCENT,
+            };
+            if step == 1 {
+                rect(on, (cx, t, 1, bot - t), c);
+            } else {
+                for y in (t..bot).step_by(step as usize) {
+                    rect(on, (cx, y, 1, 1), c);
+                }
+            }
+        }
+        n += 1;
+    }
+}
+
+/// The gun in ACCENT (its guard MID, a panel slot cut in it), at DEPTH's
+/// shape; the beam's band FAINT or MID by MIX and its pulses MID, ACCENT
+/// or INK2, none at MIX 0. RATE in focus lights the pulses, DEPTH the
+/// gun's outline, MIX the beam's band (drawn at MIX 0 too).
+fn ray_gun(on: &mut dyn Paint, b: &Braid, level: usize) {
+    let g = Gun::at(b.depth);
+    for part in [g.body, g.grip, g.nozzle] {
+        rect(on, part, theme::ACCENT);
+    }
+    rect(on, g.guard, theme::MID);
+    let (x, y, _, _) = g.body;
+    rect(on, (x + 2, y + 2, 3, 1), theme::BG);
     if b.focus == Some(BraidPart::Depth) {
-        for s in [-b.depth, b.depth] {
-            let x = X0 + libm::roundf(lead_at(p, s)) as i32;
-            for y in (TOP..FLOOR).step_by(4) {
-                on.rect(x, y, 1, 1, theme::MID);
+        for (x, y, w, h) in [g.body, g.grip, g.nozzle] {
+            for edge in [
+                (x, y, w, 1),
+                (x, y + h - 1, w, 1),
+                (x, y, 1, h),
+                (x + w - 1, y, 1, h),
+            ] {
+                rect(on, edge, theme::INK);
             }
         }
     }
-    let s = shift(b);
-    let y = |x: i32| TOP + libm::roundf(b.mix * cut(p, s, x) * (FLOOR - TOP) as f32) as i32;
-    let width = level as i32 + 1;
-    let mut prev = y(0);
-    for x in 1..W {
-        let next = y(x);
-        // Each stroke a row below the last, as `draw::thick_line`: the
-        // notches' walls stay one column, so they read sharp.
-        for k in 0..width {
-            on.line(X0 + x - 1, prev + k, X0 + x, next + k, theme::ACCENT);
-        }
-        prev = next;
+    let lit = b.mix >= 0.01;
+    let band = match b.focus {
+        Some(BraidPart::Mix) => Some(theme::INK),
+        _ if lit => Some([theme::FAINT, theme::FAINT, theme::MID][level]),
+        _ => None,
+    };
+    if let Some(c) = band {
+        rect(on, g.beam, c);
     }
-    match b.focus {
-        Some(BraidPart::Mode) => dot(on, X0 + 2, y(2), theme::INK),
-        Some(BraidPart::Rate) => {
-            let x = (libm::roundf(lead(b)) as i32).clamp(2, W - 3);
-            dot(on, X0 + x, y(x), theme::INK);
-        }
-        Some(BraidPart::Depth) | Some(BraidPart::Mix) | None => {}
+    if !lit {
+        return;
     }
-    true
+    let pc = match b.focus {
+        Some(BraidPart::Rate) => theme::INK,
+        _ => [theme::MID, theme::ACCENT, theme::INK2][level],
+    };
+    let (bx, by, len, bh) = g.beam;
+    let pw = libm::roundf(3.0 + 4.0 * b.depth) as i32;
+    for i in 0..PULSES {
+        let px = bx + libm::roundf(pulse(b, i)) as i32;
+        let w = pw.min(bx + len - px);
+        if w > 0 {
+            rect(on, (px, by - 1, w, bh + 2), pc);
+        }
+    }
 }

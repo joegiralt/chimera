@@ -121,14 +121,14 @@ fn closed_tape_ui_says_so_and_does_nothing() {
     let p = TapeEngineParams::default();
     assert_eq!(key(&Overview::EMPTY, TapeMachine::Walk, &p, Heads::NONE), 0);
 
-    // FLANGER and PHASER fall back to the braid closed (ADR 0317): its
-    // strands behind the line in FAINT, which their own glyphs never draw
-    // at MIX 0.5.
+    // FLANGER and PHASER fall back to the braid closed (ADR 0323): its
+    // strands behind the line in FAINT, which the moiré and the ray gun
+    // never draw unfocused at MIX 1.
     let faint = |mode| {
         use chimera_core::ui::glyph::{Braid, Gauge};
         let b = Braid {
             mode,
-            ..Braid::from_set([0.0, 0.5, 0.8, 0.5], None, 9)
+            ..Braid::from_set([0.0, 0.5, 0.8, 1.0], None, 9)
         };
         let mut fb = screen::Fb::new();
         chimera_core::ui::components::draw_gauge(&mut fb, Gauge::Braid(b));

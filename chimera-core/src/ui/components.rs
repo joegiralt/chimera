@@ -1123,18 +1123,9 @@ where
     use crate::dsp::fast_sin;
     use core::f32::consts::{FRAC_PI_2, TAU};
     const STEP: i32 = 4;
-    // FLANGER's comb and PHASER's dips are bank 2's (ADR 0317); closed,
+    // FLANGER's moiré and PHASER's ray gun are bank 2's (ADR 0323); closed,
     // the braid.
-    let mut drew = false;
-    let on = &mut crate::ui::tape_strip::On(d);
-    crate::bank2::ui_door(|u| {
-        u.notes(crate::ui::notes::Ask::Chorus {
-            on,
-            braid: b,
-            drew: &mut drew,
-        })
-    });
-    if drew {
+    if crate::bank2::chorus(&mut crate::ui::tape_strip::On(d), b) {
         return;
     }
     // Strands kept 2 px inside the box, so their thickness never leaves it.

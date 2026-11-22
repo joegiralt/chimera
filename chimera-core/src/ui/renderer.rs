@@ -1157,7 +1157,7 @@ impl Renderer {
                 let focus = id.params().iter().position(|&a| Some(a) == focused);
                 match id {
                     // MODE is a choice: read as stored, never through the
-                    // modes between on its way (ADR 0317).
+                    // modes between on its way (ADR 0323).
                     CompositeId::ChorusBraid => Gauge::Braid(Braid {
                         mode: ChorusMode::from_u8(f.fx.chorus.mode),
                         ..Braid::from_set(
