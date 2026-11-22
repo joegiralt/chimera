@@ -5,13 +5,23 @@ pub fn note_to_freq(note: u8) -> f32 {
 
 /// 1024-entry sine lookup table for fast DSP sin approximation.
 static SINE_LUT: [f32; 1024] = {
+    use core::f64::consts::{FRAC_PI_2, PI, TAU};
     let mut table = [0.0f32; 1024];
     let mut i = 0;
     while i < 1024 {
         let t = i as f64 / 1024.0;
-        let x = t * 2.0 * core::f64::consts::PI;
-        // Taylor series with enough terms for <0.001% error
-        let x = x - (core::f64::consts::TAU * ((x / core::f64::consts::TAU + 0.5) as i64 as f64));
+        let x = t * TAU;
+        // Onto ±π, then folded onto ±π/2 (sin(π − x) = sin x), where the
+        // series to x¹¹ is exact to f32: its x¹³ term there is 3.5e-7,
+        // where at π it was 4.6e-4 (#352).
+        let x = x - (TAU * ((x / TAU + 0.5) as i64 as f64));
+        let x = if x > FRAC_PI_2 {
+            PI - x
+        } else if x < -FRAC_PI_2 {
+            -PI - x
+        } else {
+            x
+        };
         let x2 = x * x;
         let x3 = x2 * x;
         let x5 = x3 * x2;
@@ -382,3 +392,21 @@ pub mod tape_engine;
 pub mod va;
 pub mod voice;
 pub mod voice_fx;
+
+#[cfg(test)]
+mod sine_lut_tests {
+    /// #352: the table folded onto a quarter turn before its series is
+    /// exact to f32 (the x¹³ term at ¼ turn is 3.5e-7), so `fast_sin_turns`
+    /// errs only by its interpolation, (2π/1024)²/8 = 4.7e-6.
+    #[test]
+    fn fast_sin_turns_errs_only_by_its_interpolation() {
+        let worst = (0..65_536)
+            .map(|i| {
+                let t = i as f32 / 65_536.0;
+                (super::fast_sin_turns(t) - libm::sin(core::f64::consts::TAU * t as f64) as f32)
+                    .abs()
+            })
+            .fold(0.0f32, f32::max);
+        assert!(worst < 6e-6, "worst {worst}");
+    }
+}
