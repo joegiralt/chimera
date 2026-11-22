@@ -17,7 +17,7 @@ without a reason, and the batch's bank-2 code moved its budget lines.
 - **HOLD under 0.1 ms reads three places (#159).** `0.001 ms` and up, never
   `0.0 ms`; any time law whose value is above 0 and under 0.095 ms does the
   same. No µ: the fonts are ASCII.
-- **A fragmented source reads `FRAGMENTED · SILENT`, its cell `SPLIT`
+- **A fragmented source reads `FRAGMENTED · SILENT`, its cell `FRAG`
   (#643).** True, inside the band, and no copy promised: `put` will not
   replace a sealed file (ADR 0106).
 - **A browser row's cost stops 3 px clear of the widest tag (#640).**
@@ -43,8 +43,14 @@ without a reason, and the batch's bank-2 code moved its budget lines.
   LOOPFM ignores, leaves it.
 - **Tap and hold (#289).** In a frame stalled past `HOLD_MS` across a
   release and a re-press, the release's tap wins and the new press's hold
-  fires the frame after. A key pressed while MIX went down and up inside
-  one frame (`chorded`) is muted, as a held MIX mutes it.
+  fires the frame after. A key pressed while MIX was down, MIX let go
+  after it inside the same frame (`chorded`, MIX pressed in that frame or
+  held from before), is muted, as a held MIX mutes it.
+- **WAVE on a source it can't play (#709, owner 2026-11-22):** the band
+  reads `NEEDS A WAVE TABLE` (178 px), the hint's place `TURN SOURCE TO A
+  WAVE TABLE`; the owner's `NEEDS A WAVE TABLE · TURN SOURCE` is 312 px.
+  The SOURCE list by machine and a playable source on a MODEL change are
+  0.5.0's enhancement.
 - **PART's LIVE SNAP row is ORBIT's alone (#323).** Without ORBIT no
   harmony reaches `live_note`, so the row did nothing. What the page should
   draw is an enhancement, filed apart.
