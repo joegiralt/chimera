@@ -1211,3 +1211,33 @@ fn a_cc_on_model_writes_its_machines_defaults() {
     odd(&mut untouched);
     assert!(deck(&untouched).0 != cc.0, "the defaults moved knobs");
 }
+
+/// #524: SCRUB's FINGER is the hand on POSITION: a jog stops the ramp a
+/// mapped CC had running, so the CC never fights the reel.
+#[test]
+fn a_jog_stops_a_position_ramp() {
+    use chimera_core::dsp::tape_engine::{TapeEngineParams, TapeMachine};
+    use chimera_core::ui::block_registry::TAPE_DECK;
+    const POSITION: ParamAddr = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::POSITION);
+    let mut s = Sound::plain_init(EngineType::Tape);
+    s.params.tape.machine = TapeMachine::Scrub;
+    s.params.tape.position = 0.0;
+    let mut b = Bench::new(s);
+    b.map(P1, 40, POSITION);
+    b.go_to_page(TAPE_DECK.id);
+    b.pass(&[(40, 0)]);
+    b.passes(40);
+    b.pass(&[(40, 127)]);
+    let ramping = b.stored(P1, POSITION);
+    assert!(ramping < 1.0, "the ramp is under way: {ramping}");
+    // B is FINGER on SCRUB's DECK: a detent back, then let go.
+    b.pass_with(
+        vec![],
+        Some(Input::turn(EncoderId::B, -1)),
+        PASS_MS,
+        PASS_BLOCKS,
+    );
+    b.passes(400);
+    let rest = b.stored(P1, POSITION);
+    assert!(rest < 0.9, "the reel stands where the jog left it: {rest}");
+}

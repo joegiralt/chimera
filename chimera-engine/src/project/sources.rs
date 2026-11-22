@@ -50,6 +50,11 @@ impl SourceSet {
         self.0 & s.bit() != 0
     }
 
+    #[optimize(size)]
+    pub const fn count(self) -> u8 {
+        self.0.count_ones() as u8
+    }
+
     /// Its sources, in id order.
     #[optimize(size)]
     pub fn iter(self) -> impl Iterator<Item = SourceId> {
@@ -67,8 +72,11 @@ pub const SOURCE_HEAD: usize = 16;
 /// SOURCE cell says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Absence {
-    /// On the card, but it didn't fit, or its file is damaged.
+    /// On the card, but its file is damaged or names another source.
     Missing,
+    /// On the card, but the load had no room left for it, whole or as
+    /// heads (#765): `POOL FULL`.
+    NoRoom,
     /// No file for it in `/CHIMERA/TAPES`.
     NotOnCard,
     /// The card faulted reading it, or before its turn came.
