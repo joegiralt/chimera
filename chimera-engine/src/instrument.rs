@@ -897,13 +897,13 @@ pub const PART_OVERHEAD: Cost = Cost(230);
 /// a full pool still clears about 8 KB a block on rev V with six Parts:
 /// a worst note-on in four blocks.
 pub fn sym_clear_room(budget: SampleBudget, booked: Cost, parts: usize) -> usize {
-    let deadline = u64::from(budget.as_cost().0) * 100 / u64::from(crate::hw::AUDIO_BUDGET_PERCENT);
-    let used = u64::from(booked.0)
-        + u64::from(BLOCK_OVERHEAD.0)
-        + u64::from(PART_OVERHEAD.0) * parts as u64;
-    let room =
-        deadline.saturating_sub(used) * BLOCK_SIZE as u64 / u64::from(SYM_CLEAR_CYCLES_PER_BYTE);
-    room.min(SYM_CLEAR_BUDGET as u64) as usize
+    // A sample's cycles stay far under `u32::MAX / 100` at any clock.
+    let deadline = budget.as_cost().0 * 100 / crate::hw::AUDIO_BUDGET_PERCENT;
+    let used = booked
+        .0
+        .saturating_add(BLOCK_OVERHEAD.0 + PART_OVERHEAD.0 * parts as u32);
+    let room = deadline.saturating_sub(used) * (BLOCK_SIZE as u32 / SYM_CLEAR_CYCLES_PER_BYTE);
+    (room as usize).min(SYM_CLEAR_BUDGET)
 }
 
 crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });

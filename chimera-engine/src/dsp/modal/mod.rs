@@ -1486,7 +1486,9 @@ impl SymPool {
     /// note, a block's room at a time (#306, ADR 0311): the main string
     /// where the note keeps it (`engine` idle), and the set it will ring,
     /// its own or the one promised, which no voice renders meanwhile.
-    /// What it cleared.
+    /// What it cleared. Out of line: bank 1's.
+    #[inline(never)]
+    #[optimize(size)]
     pub fn pre_clear(
         &mut self,
         engine: Option<&mut ModalEngine>,
