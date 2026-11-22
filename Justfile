@@ -19,7 +19,8 @@ target_dir := env_var_or_default("CARGO_TARGET_DIR", "target")
 desktop:
     cargo run -p chimera-desktop --bin chimera-desktop
 
-# The browser editor against the simulator: the sim, and its console on ws://127.0.0.1:7342
+# The browser editor (chimera-releases' editor/) against the simulator: the
+# sim, and its console on ws://127.0.0.1:7342
 editor-sim:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -30,31 +31,45 @@ editor-sim:
     trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
     cargo run -p chimera-desktop --bin chimera-desktop
 
-# The editor's protocol end to end, against a running `just editor-sim` (the simulator has no headless mode)
-editor-e2e:
-    node editor/e2e/sim.mjs
+# The editor kit (ADR 0320): what chimera-releases' editor builds and tests
+# against, into target/editor-kit/<version>/ for its editor/kit/<version>/.
+# The unit's protocol text (`ed describe` of every engine, MIXER, SETTINGS,
+# MAP and ORBIT; each engine's INIT panels; the engines; a Part refusal),
+# held current by chimera-core's fixture tests first (`BLESS=1` rewrites
+# them), and screen.wasm (`editor-screen`); KIT stamps the version and the
+# commit. `just editor-kit 0.4`
+editor-kit version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo test -q -p chimera-core --test console_ed_test --test console_ed_engines_test --test console_ed_map_test --test console_ed_mixer_test --test console_ed_orbit_test --test console_ed_settings_test -- fixture
+    out=target/editor-kit/{{version}}
+    rm -rf "$out"
+    mkdir -p "$out/fixtures"
+    cp chimera-core/tests/fixtures/editor/*.txt "$out/fixtures/"
+    just editor-screen "$out/screen.wasm"
+    rev=$(git rev-parse --short=9 HEAD)
+    if ! git diff --quiet HEAD; then rev="$rev-dirty"; fi
+    printf 'chimera %s\nfirmware %s\n' "{{version}}" "$rev" > "$out/KIT"
+    echo "editor kit: $out"
 
-# The browser editor's Elm tests, then elm-review (the site's gate, editor/review)
-# and elm-format. Elm itself is pinned in editor/package.json (0.19.1).
-editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test --compiler node_modules/.bin/elm && npx elm-review --compiler node_modules/.bin/elm && npx elm-format --validate src tests review/src >/dev/null && node public/ports.check.js && node public/theme.check.js
-
-# The browser editor, optimised, into editor/dist/
-editor-build: editor-screen
-    cd editor && npm install --no-audit --no-fund --silent && mkdir -p dist/glyphs && npx elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
-
-# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32 into editor/public/screen.wasm.
-# Stripped, then wasm-opt'd if there is one whose sha256 is the pinned
-# release binary's (`just editor-wasm-opt`'s, else one on PATH; optional: it
-# trims ~17%, ~2% gzipped; any other is not run); each size printed, then
-# checked from node (screen.check.js, which prints the paint cost). Its own
-# target dir (target-wasm): the host's builds aren't touched.
-editor-screen:
+# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
+# into `out`. Stripped, then wasm-opt'd if there is one whose sha256 is the
+# pinned release binary's (`just editor-wasm-opt`'s, else one on PATH;
+# optional: it trims ~17%, ~2% gzipped; any other is not run); each size
+# printed, and checked for build paths. Its own target dir (target-wasm): the
+# host's builds aren't touched.
+editor-screen out="target/editor-kit/screen.wasm":
     #!/usr/bin/env bash
     set -euo pipefail
     export CARGO_TARGET_DIR=target-wasm
-    cargo build -q -p chimera-screen --target wasm32-unknown-unknown --profile wasm
-    out=editor/public/screen.wasm
+    # Public (the editor kit): panics carry no file, line or column, and no
+    # local path is left in it (check-bin-paths below).
+    T=wasm32-unknown-unknown
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    flags="['-Zlocation-detail=none','--remap-path-prefix=$HOME=/build/hm','--remap-path-prefix=$cargo_home=/build/cargo','--remap-path-prefix=$PWD=/build/chimera']"
+    cargo build -q -p chimera-screen --target $T --profile wasm --config "target.$T.rustflags=$flags"
+    out="{{out}}"
+    mkdir -p "$(dirname "$out")"
     cp target-wasm/wasm32-unknown-unknown/wasm/chimera_screen.wasm "$out"
     size() { echo "screen.wasm $1: $(stat -c %s "$out") bytes, $(gzip -9c "$out" | wc -c) gzipped"; }
     size built
@@ -79,7 +94,7 @@ editor-screen:
     else
         echo "screen.wasm: no pinned wasm-opt (optional; just editor-wasm-opt fetches it)"
     fi
-    node editor/public/screen.check.js
+    just check-bin-paths "$out"
 
 # binaryen's wasm-opt for editor-screen, pinned, into tools/binaryen/ (gitignored):
 # the release's static binary alone, its tarball's sha256 and its own checked.
@@ -98,11 +113,6 @@ editor-wasm-opt:
     echo "f661d2bb96cfc3e399dd3513c1efb674c820bb5a5a70edf0b4e5a029065c45c2  $tmp/binaryen-$v/bin/wasm-opt" | sha256sum -c --quiet
     mv "$tmp/binaryen-$v/bin/wasm-opt" "$dir/wasm-opt"
     "$dir/wasm-opt" --version
-
-# The UI component gallery (every component, every state, DAY and NIGHT, and
-# the JITTER probe), into editor/gallery/
-editor-gallery:
-    cd editor && npm install --no-audit --no-fund --silent && mkdir -p gallery/glyphs && npx elm make src/Gallery.elm --optimize --output=gallery/gallery.js && cp public/gallery.html gallery/index.html && cp public/style.css public/theme.js gallery/ && cp public/glyphs/*.png gallery/glyphs/
 
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
@@ -582,8 +592,6 @@ build:
 # folds into code, and bank 1 is measured as the commit would build (#874).
 check $CHIMERA_STAMP_CLEAN="1":
     python3 -m unittest discover -s tools -p 'test_*.py'
-    # The editor's Elm tests: its Part count is pinned to the unit's (UnitTest).
-    just editor-test
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     # The editor's glyph renderer against the console's `ed` and the sim's frame.

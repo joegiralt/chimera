@@ -359,7 +359,7 @@ fn writes_editor_schema_fixture() {
     let mut f = Fake::new();
     let text = all_pages(&mut f).join("");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/algo-schema.txt");
+        .join("tests/fixtures/editor/algo-schema.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &text).unwrap();
@@ -1577,13 +1577,14 @@ fn a_key_and_ed_part_in_one_frame_land_once() {
 }
 
 /// The unit's refusal of a Part it hasn't, for the editor's tests to pin
-/// its Part count against (`editor/tests/UnitTest.elm`).
+/// its Part count against (its `UnitTest`, in chimera-releases, through
+/// the editor kit).
 #[test]
 fn writes_editor_part_fixture() {
     let mut f = Fake::new();
     let text = ask(&mut f, "ed part 0\n");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/part-refusal.txt");
+        .join("tests/fixtures/editor/part-refusal.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::write(&path, &text).unwrap();
     }

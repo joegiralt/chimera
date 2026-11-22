@@ -627,7 +627,7 @@ fn a_pad_icon_is_its_machines() {
 }
 
 /// screen.js names engines by their place in the wasm's list: the
-/// firmware's `PLAYABLE`, which `editor/tests/fixtures/engines.txt` holds
+/// firmware's `PLAYABLE`, which `chimera-core/tests/fixtures/editor/engines.txt` holds
 /// (chimera-core's `writes_editor_engines_fixture`).
 #[test]
 fn engine_names_are_the_fixtures() {
@@ -635,7 +635,7 @@ fn engine_names_are_the_fixtures() {
     // built; read on this thread between calls.
     let names =
         unsafe { core::slice::from_raw_parts(abi::engines_ptr(), abi::engines_len() as usize) };
-    let fixture = include_str!("../../editor/tests/fixtures/engines.txt");
+    let fixture = include_str!("../../chimera-core/tests/fixtures/editor/engines.txt");
     assert_eq!(str::from_utf8(names).unwrap(), fixture.trim_end());
 }
 
