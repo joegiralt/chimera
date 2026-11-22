@@ -35,7 +35,7 @@ fn closing_bank_two_releases_tape_and_leaves_algo_playing() {
     let mut gate = LoadGate::new();
     let mut block = |rig: &mut InstRig, src: &mut OneSource| {
         let view: GateView<'_> = src.view();
-        gate.before_block(&link, &mut rig.inst, &rig.shared);
+        gate.before_block(&link, &mut rig.inst, &rig.shared, None);
         rig.inst.render_with(
             &mut rig.fx,
             &mut rig.dac,
@@ -117,7 +117,7 @@ fn an_algo_note_stealing_a_fading_tape_voice_still_sounds() {
     let mut gate = LoadGate::new();
     let mut block = |rig: &mut InstRig, src: &mut OneSource| {
         let view: GateView<'_> = src.view();
-        gate.before_block(&link, &mut rig.inst, &rig.shared);
+        gate.before_block(&link, &mut rig.inst, &rig.shared, None);
         rig.inst.render_with(
             &mut rig.fx,
             &mut rig.dac,
@@ -161,4 +161,55 @@ fn an_algo_note_stealing_a_fading_tape_voice_still_sounds() {
         rig.inst.part_bus(1).iter().any(|x| x.abs() > 1e-4),
         "the stolen voice's ALGO note plays"
     );
+}
+
+/// ORBIT playing when bank 2's door is about to close for a write: the
+/// gate stops it while its code is still there, every note it holds let go
+/// and the transport down, and says quiet only then; shut, nothing starts;
+/// opened again, it waits stopped (nothing stale resumes) until B6 (#784).
+#[test]
+fn closing_bank_two_stops_orbit_and_lets_its_notes_go() {
+    use common::orbit::OrbitRig;
+    let held = |rig: &OrbitRig| {
+        rig.inst()
+            .allocator()
+            .slots()
+            .iter()
+            .filter(|s| s.held())
+            .count()
+    };
+    let mut rig = OrbitRig::on_init();
+    rig.play(true);
+    let mut b = 0;
+    while rig.runner_pending().iter().all(Option::is_none) {
+        rig.block();
+        b += 1;
+        assert!(b < 4_000, "ORBIT holds a note");
+    }
+    assert!(rig.view().running);
+    assert!(held(&rig) > 0);
+
+    rig.link().shut_tape();
+    let mut waited = 0;
+    while !rig.link().tape_quiet() {
+        rig.block();
+        waited += 1;
+        assert!(waited < 16, "the audio says quiet");
+    }
+    assert!(
+        rig.runner_pending().iter().all(Option::is_none),
+        "its offs sent"
+    );
+    assert_eq!(held(&rig), 0, "no ORBIT note held");
+    assert!(!rig.view().running);
+    rig.run(400);
+    assert_eq!(held(&rig), 0, "shut stays shut");
+
+    rig.link().open_tape();
+    rig.run(400);
+    assert!(!rig.view().running, "nothing stale resumes");
+    assert_eq!(held(&rig), 0);
+    rig.play(true);
+    rig.run(4);
+    assert!(rig.view().running, "B6 plays again");
 }

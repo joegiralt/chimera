@@ -38,12 +38,12 @@ fn boot<S: Store>(
     store: &mut S,
 ) -> (SystemSync, SystemSettings) {
     // No card or a card fault shows at the project's boot; a SYSTEM
-    // file that can't be read still applies the defaults silently:
-    // private issue #197
-    let (sync, settings, _) = SystemSync::boot(card, store);
+    // file that can't be read, after it.
+    let (sync, settings, system) = SystemSync::boot(card, store);
     ui.set_theme(settings.theme);
     ui.set_midi(settings.midi);
     ui.boot_project(card, store, settings.last_project);
+    ui.show_system_note(system);
     (sync, settings)
 }
 

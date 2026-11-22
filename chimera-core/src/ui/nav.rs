@@ -658,21 +658,27 @@ fn ops_chain(formant: bool) -> Option<&'static ChainDef2> {
     out
 }
 
-/// A Part's page chain: its engine's, picked per Sound.
+/// A Part's page chain: its engine's, picked per Sound. Its number is
+/// the header and map keys' (`UiState::loc_tag`, #1068).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum PartChain {
-    Algo,
+    Algo = 0,
     /// ALGO with a FORMANT page: an operator is a formant or noise band.
-    AlgoFormant,
+    AlgoFormant = 1,
     /// ALGO, OSC opening on the operators' own pages (ADR 0300).
-    AlgoOps,
+    AlgoOps = 2,
     /// `AlgoOps` with a FORMANT page.
-    AlgoOpsFormant,
-    Modal,
-    Tape,
-    Va,
-    Drum,
+    AlgoOpsFormant = 3,
+    Modal = 4,
+    Tape = 5,
+    Va = 6,
+    Drum = 7,
 }
+
+// `loc_tag`'s Part places, `64 + 8 × chain + Part`, stay apart and in a
+// byte: chains under 8, Parts at most 8.
+const _: () = assert!((PartChain::Drum as usize) < 8 && crate::hw::MAX_PARTS <= 8);
 
 impl PartChain {
     pub fn of(sound: &Sound) -> PartChain {

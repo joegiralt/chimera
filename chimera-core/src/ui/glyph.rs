@@ -52,6 +52,10 @@ pub enum Gauge {
     Tail(Tail),
     /// A VA oscillator's scope: `va_wave_trace` of its WAVE and SHAPE.
     VaWave(Morph),
+    /// A VA oscillator's scope under LOOPFM (ADR 0162, #667): its looped
+    /// wave at its own `b0` (`lbfm::target_b0` of BLEND and its WAVE),
+    /// `va_loop_trace`.
+    VaLoop(LoopB0),
     /// OSC 1 MODE OSC 2: `va_mix_trace`.
     VaMix(VaMix),
     /// A crossfader at the set AMOUNT, its ends named by MODE
@@ -228,6 +232,33 @@ pub fn va_wave_trace<const N: usize>(m: Morph, half: i32) -> [i32; N] {
     let last = (N - 1).max(1) as f32;
     scaled(
         core::array::from_fn(|i| wave_at(i as f32 / last, m, MIN_INC).0),
+        0.0,
+        half,
+    )
+}
+
+/// A LOOPFM oscillator's `b0`: `target_b0`'s, in −0.95..=0 (the paper's
+/// negative root; 0 never loops).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoopB0(f32);
+
+impl LoopB0 {
+    /// `b0` held to −0.95..=0.
+    pub fn new(b0: f32) -> Self {
+        Self(clampf(b0, -0.95, 0.0))
+    }
+
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// One period of a LOOPFM oscillator (`lbfm`) at `b0` across `N`
+/// points, as `va_wave_trace` draws the others.
+pub fn va_loop_trace<const N: usize>(b0: LoopB0, half: i32) -> [i32; N] {
+    let last = (N - 1).max(1) as f32;
+    scaled(
+        core::array::from_fn(|i| lbfm(i as f32 / last, b0.get())),
         0.0,
         half,
     )
@@ -559,10 +590,18 @@ pub struct Tail {
 }
 
 impl Tail {
-    /// From `REVERB_PARAMS`' set values (normalized) under TYPE `t`, the
-    /// focused one's index in them, and the UI clock's `frame` (20 fps).
+    /// From `REVERB_PARAMS`' set values (normalized) under TYPE `t` and
+    /// SYNC `sync` at the reverb's `clock` (its tempo and its synced
+    /// time's fold: the lengths it plays, #366), the focused one's index
+    /// in them, and the UI clock's `frame` (20 fps).
     #[inline(never)]
-    pub fn from_set(t: ReverbType, set: [f32; 11], focus: Option<usize>, frame: u32) -> Self {
+    pub fn from_set(
+        t: ReverbType,
+        set: [f32; 11],
+        (sync, clock): (RevSync, (Tempo, FoldState)),
+        focus: Option<usize>,
+        frame: u32,
+    ) -> Self {
         let p = ReverbParams {
             kind: t,
             size: set[0],
@@ -575,13 +614,13 @@ impl Tail {
             diffuse: set[7],
             predelay: set[8],
             shape: set[9],
-            sync: RevSync::Off,
+            sync,
             role: crate::dsp::reverb::WASH_ROLE,
             density: set[10],
             ..ReverbParams::DEFAULT
         };
-        // Unsynced: the set values alone, at the default tempo.
-        let k = knobs(&p, Tempo::DEFAULT, &mut FoldState(0));
+        let (tempo, mut fold) = clock;
+        let k = knobs(&p, tempo, &mut fold);
         let span = tail_span_ms(t);
         let n = TAIL_COLS as f32;
         let edge = clampf(k.length_ms / span * n, 0.0, n) as u8;
@@ -822,6 +861,7 @@ impl Gauge {
             | Gauge::Staff { .. }
             | Gauge::Wave(_)
             | Gauge::VaWave(_)
+            | Gauge::VaLoop(_)
             | Gauge::VaMix(_)
             | Gauge::Blend { .. }
             | Gauge::Tape(_)
@@ -840,6 +880,7 @@ impl Gauge {
         let m = |m: &Morph| q(m.wave.get()) | q(m.shape.get()) << 10;
         match self {
             Gauge::VaWave(o) => m(o),
+            Gauge::VaLoop(b0) => q(-b0.get()),
             Gauge::VaMix(v) => (m(&v.osc[0]) ^ m(&v.osc[1]).rotate_left(11) ^ q(v.amount) << 22)
                 .wrapping_add(v.mode as u32),
             Gauge::Blend { mode, .. } => *mode as u32,

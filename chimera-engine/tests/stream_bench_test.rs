@@ -166,12 +166,20 @@ struct FakeCard {
     /// A UI waits on the bus all the while: wants are served as `pick`
     /// hands them out, and the UI has the bus whenever it doesn't.
     ui_waiting: bool,
+    /// The UI's turns (#569): every `.0` blocks the card serves nothing
+    /// for `.1` blocks.
+    turns: Option<(u32, u32)>,
     claimed: Vec<(usize, u32)>,
 }
 
 impl FakeCard {
     fn serve(&mut self, beds: Beds, bench: &BenchStreams, now: AudioBlocks) {
         if self.stall.contains(&now.get()) {
+            return;
+        }
+        if let Some((every, len)) = self.turns
+            && now.get() % every < len
+        {
             return;
         }
         if self.ui_waiting {
@@ -252,6 +260,7 @@ impl Rig {
                 skip: None,
                 stall: 0..0,
                 ui_waiting: false,
+                turns: None,
                 claimed: Vec::new(),
             },
             now: AudioBlocks::new(1_000),
@@ -392,6 +401,37 @@ fn a_waiting_ui_never_holds_back_the_spare_slot() {
         let rep = r.bench.report();
         assert_eq!((rep.empties, rep.order_errors), (0, 0), "stall from {from}");
     }
+}
+
+/// Blocks in `ms`: `BLOCK_SIZE` (64) frames at 48 kHz, 4/3 ms a block.
+fn blocks_in(ms: u32) -> u32 {
+    const _: () = assert!(chimera_hal::BLOCK_SIZE == 64);
+    ms * 3 / 4
+}
+
+/// Empties over 20,000 blocks at the bench's heaviest load (eight streams
+/// at 24 kHz and 1.2×) with a UI waiting on the bus throughout: it waits
+/// `UI_TURN_MS` while the streams are served, then holds the card `hold_ms`.
+fn empties_with_ui_turns(hold_ms: u32) -> u32 {
+    use chimera_hal::card_bus::UI_TURN_MS;
+    let mut r = Rig::new(beds8());
+    r.card.ui_waiting = true;
+    r.card.turns = Some((blocks_in(UI_TURN_MS.get() + hold_ms), blocks_in(hold_ms)));
+    r.arm(24_000, 1_200, 8, Listen::Off);
+    r.run(20_000);
+    let rep = r.bench.report();
+    assert_eq!((rep.order_errors, rep.check_errors), (0, [0; 8]));
+    rep.empties
+}
+
+/// #569: a UI turn of 40 ms (a cluster's write on a slow card), and even
+/// of 100 ms, leaves every stream on time; the ring's spare slot runs out
+/// near a 200 ms hold, the breaking point this pins.
+#[test]
+fn the_ui_s_turns_leave_every_stream_on_time() {
+    assert_eq!(empties_with_ui_turns(40), 0);
+    assert_eq!(empties_with_ui_turns(100), 0);
+    assert!(empties_with_ui_turns(200) > 0, "the spare slot's limit");
 }
 
 #[test]

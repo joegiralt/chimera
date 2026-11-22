@@ -222,7 +222,10 @@ fn fmt_law(buf: &mut FmtBuf, v: f32, law: crate::dsp::modulator::law::Law) {
         _ => {
             let s = law.range().map_or(0.0, |r| r.at(v));
             let ms = s * 1000.0;
-            if round(ms * 10.0) < 100 {
+            // HOLD's bottom reaches 0.001 ms (#159).
+            if ms > 0.0 && round(ms * 100.0) < 10 {
+                fixed(buf, ms, 3, " ms");
+            } else if round(ms * 10.0) < 100 {
                 fixed(buf, ms, 1, " ms");
             } else if round(ms) < 1000 {
                 let _ = write!(buf, "{} ms", round(ms));
@@ -241,7 +244,24 @@ pub(crate) fn discrete(val: f32, max: u8) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{FmtBuf, fixed};
+    use super::{FmtBuf, fixed, fmt_val};
+    use crate::dsp::modulator::EnvSpeed;
+    use crate::dsp::modulator::law::Law;
+    use crate::ui::page::ValFmt;
+
+    /// #159: HOLD's bottom quarter reads a time, never `0.0 ms`, at every
+    /// speed.
+    #[test]
+    fn hold_never_reads_zero() {
+        for s in [EnvSpeed::Fast, EnvSpeed::Med, EnvSpeed::Slow] {
+            for i in 0..=32 {
+                let mut b = FmtBuf::new();
+                fmt_val(&mut b, i as f32 / 128.0, ValFmt::Law(Law::Hold(s)));
+                let n: f32 = b.as_str().split(' ').next().unwrap().parse().unwrap();
+                assert!(n > 0.0, "{s:?} {i}: {}", b.as_str());
+            }
+        }
+    }
 
     /// Out-of-range values saturate, never overflow: +-inf print the
     /// `i32` ends, NaN prints 0.

@@ -443,6 +443,230 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
     );
 }
 
+/// Pad 5 on LADDER struck, then the kit republished with it on CLEAN: the
+/// hit keeps the KIND it was struck on (`PadSound::live_target`), so it
+/// keeps LADDER's bill for the rest of its ring, never CLEAN's (#977).
+#[test]
+fn a_ringing_hit_bills_the_filter_it_runs() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let ladder = pad5_on(FilterKind::Ladder);
+    let mut r = drum_rig(&mut w, &ladder);
+    r.note_on_vel(0, key(pad(5)), 127);
+    r.render(1);
+    let struck = booked(&r, key(pad(5)));
+    w.publish(PartId::ALL[0], &Kit::DEFAULT);
+    r.render(2);
+    assert!(sounding(&r).contains(&pad(5)), "pad 5 still rings");
+    assert_eq!(booked(&r, key(pad(5))), struck);
+}
+
+/// Pad 5 ringing when a publish moves its CUTOFF: the hit follows (ADR
+/// 0269), so its block decodes the pad and starts the glide, and the
+/// glide steps the filter and rebuilds the envelopes. Each is booked
+/// beside the hit, as a knob's glide (#962).
+#[test]
+fn a_followed_publish_books_its_hits_decode_and_glide() {
+    use chimera_core::dsp::Hz;
+    use chimera_core::dsp::drum::engine::{FOLLOW_DECODE_COST, FOLLOW_GLIDE_COST};
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, &Kit::DEFAULT);
+    r.note_on_vel(0, key(pad(5)), 127);
+    r.render(2);
+    let rest = booked(&r, key(pad(5)));
+    let mut kit = Kit::DEFAULT;
+    let f = kit.pad_mut(pad(5)).sound_mut().filter_mut();
+    f.set_cutoff(Hz::new(f.cutoff().get() / 4.0));
+    w.publish(PartId::ALL[0], &kit);
+    let glide = FOLLOW_GLIDE_COST + FilterKind::Svf.glide_cost();
+    assert_eq!(gliding(FilterKind::Svf), glide);
+    r.render(1);
+    assert_eq!(booked(&r, key(pad(5))), rest + FOLLOW_DECODE_COST + glide);
+    r.render(1);
+    assert!(sounding(&r).contains(&pad(5)), "pad 5 still rings");
+    assert_eq!(booked(&r, key(pad(5))), rest + glide);
+}
+
+/// `FollowState::Gliding`'s bill on a hit of `kind`.
+fn gliding(kind: FilterKind) -> Cost {
+    chimera_core::dsp::drum::engine::FollowState::Gliding(kind).cost()
+}
+
+/// The CYMBAL (pad 10) ringing through a CUTOFF edit: once its glide
+/// lands, its follow books nothing more (#962).
+#[test]
+fn a_landed_glide_books_nothing() {
+    use chimera_core::dsp::Hz;
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, &Kit::DEFAULT);
+    r.note_on_vel(0, key(pad(10)), 127);
+    r.render(2);
+    let rest = booked(&r, key(pad(10)));
+    let mut kit = Kit::DEFAULT;
+    let f = kit.pad_mut(pad(10)).sound_mut().filter_mut();
+    f.set_cutoff(Hz::new(f.cutoff().get() / 2.0));
+    w.publish(PartId::ALL[0], &kit);
+    r.render(2);
+    assert_eq!(booked(&r, key(pad(10))), rest + gliding(FilterKind::Svf));
+    let mut blocks = 0;
+    while booked(&r, key(pad(10))) != rest && blocks < 400 {
+        r.render(1);
+        blocks += 1;
+    }
+    assert!(sounding(&r).contains(&pad(10)), "the CYMBAL still rings");
+    assert_eq!(
+        booked(&r, key(pad(10))),
+        rest,
+        "landed after {blocks} blocks"
+    );
+    r.render(4);
+    assert_eq!(booked(&r, key(pad(10))), rest);
+}
+
+/// `Kit::DEFAULT` with pad `n`'s sound edited by `f`.
+fn pad_with(n: u8, f: impl FnOnce(&mut PadSound)) -> Kit {
+    let mut kit = Kit::DEFAULT;
+    f(kit.pad_mut(pad(n)).sound_mut());
+    kit
+}
+
+/// A route on a pad: `src` into `dest` at `a`, in route `i`.
+fn route(s: &mut PadSound, i: usize, src: RouteSource, dest: RouteDest, a: i8) {
+    let r = PadRoute::new(src, dest, Amount::new(a).unwrap());
+    s.routes_mut().set(RouteId::ALL[i], r);
+}
+
+/// Pad `n` struck on `struck`, then republished as `then`: what its slot
+/// books less its follow (`VoiceSlot::glide`) as struck, two blocks into
+/// the glide, and once the glide has landed.
+fn rebooked(n: u8, struck: &Kit, then: &Kit) -> [Cost; 3] {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, struck);
+    let k = key(pad(n));
+    let own = |r: &common::InstRig| {
+        let s = &r.inst.allocator().slots()[slot_for(r, k).expect("a slot for the key")];
+        Cost(s.cost().0 - s.glide().0)
+    };
+    r.note_on_vel(0, k, 127);
+    r.render(2);
+    let before = own(&r);
+    w.publish(PartId::ALL[0], then);
+    r.render(2);
+    let mid = own(&r);
+    for _ in 0..400 {
+        let v = slot_for(&r, k).expect("a slot for the key");
+        if r.inst.allocator().slots()[v].glide() == Cost::ZERO {
+            break;
+        }
+        r.render(1);
+    }
+    assert!(sounding(&r).contains(&pad(n)), "pad {n} still rings");
+    [before, mid, own(&r)]
+}
+
+/// A hit struck with a route runs its mods for its whole ring, whatever
+/// its pad's amounts become: it keeps `PAD_ROUTED_COST`, gliding and
+/// landed (#977).
+#[test]
+fn a_routed_hit_keeps_its_mods_bill_at_amount_zero() {
+    let at = |a| pad_with(10, |s| route(s, 0, RouteSource::Lfo, RouteDest::Volume, a));
+    assert_eq!(at(0).pad(pad(10)).sound().mods(), PadMods::None);
+    let [before, mid, landed] = rebooked(10, &at(-30), &at(0));
+    assert_eq!((mid, landed), (before, before));
+}
+
+/// A hit struck with its AMP envelope runs it to the end, its pad edited
+/// to OPEN or not (the AMP's shape is latched at the strike): it keeps
+/// `PAD_AMP_COST` (#977).
+#[test]
+fn an_amp_hit_keeps_its_amp_bill_when_opened() {
+    let shaped = pad_with(10, |s| *s.amp_mut().env_mut() = *PadSound::DEFAULT.env());
+    assert_eq!(shaped.pad(pad(10)).sound().mods(), PadMods::Amp);
+    let [before, mid, landed] = rebooked(10, &shaped, &Kit::DEFAULT);
+    assert_eq!((mid, landed), (before, before));
+}
+
+/// A LADDER hit with a CUTOFF route at 0 beside a VOLUME route (so its
+/// mods run), its pad republished on CLEAN with the CUTOFF route up: the
+/// hit's amounts glide up, so it runs LADDER's moving path, and books it
+/// (#977).
+#[test]
+fn a_hit_whose_filter_route_rises_books_its_moving_path() {
+    let at = |kind, a| {
+        pad_with(5, |s| {
+            s.filter_mut().set_kind(kind);
+            route(s, 0, RouteSource::Lfo, RouteDest::Volume, -30);
+            route(s, 1, RouteSource::ModEnv, RouteDest::Cutoff, a);
+        })
+    };
+    let [before, mid, _] = rebooked(5, &at(FilterKind::Ladder, 0), &at(FilterKind::Svf, 64));
+    assert_eq!(mid, before + FilterKind::Ladder.move_cost());
+}
+
+/// Eight Part 1 hits on a budget that admits all, then a note on the
+/// layered Parts (channel 16) steals their voices: each stolen voice
+/// still sounds Part 1's hit through its fade, so its follow reads Part
+/// 1's kit, unpublished since the strike: no follow billed (#962).
+#[test]
+fn a_stolen_hit_follows_its_own_parts_kit() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let budget = chimera_core::hw::SampleBudget::for_cpu(u32::MAX);
+    let mut r = common::drum::drum_rig(&mut w, budget, &Kit::DEFAULT, &Kit::DEFAULT);
+    // The other Parts' kits a publish off Part 1's, so reading theirs
+    // would see a publish.
+    let mut other = Kit::DEFAULT;
+    other
+        .pad_mut(pad(1))
+        .sound_mut()
+        .filter_mut()
+        .set_kind(FilterKind::Dirty);
+    for &p in &PartId::ALL[1..] {
+        w.publish(p, &other);
+        assert_ne!(KIT_VIEW.seq(p), KIT_VIEW.seq(PartId::ALL[0]), "{p:?}");
+    }
+    for n in 1..=7 {
+        r.note_on_vel(0, key(pad(n)), 127);
+    }
+    r.note_on_vel(0, key(pad(9)), 127);
+    r.render(1);
+    r.note_on_vel(15, 60, 100);
+    r.render(1);
+    // A block on, a note-on no Part hears recosts the voices as they
+    // stand: the stolen ones fading under the layered Parts' bookings.
+    r.note_on_vel(13, 62, 100);
+    let slots = r.inst.allocator().slots();
+    let stolen: Vec<usize> = (0..slots.len())
+        .filter(|&v| {
+            slots[v].part() != Some(PartId::ALL[0]) && r.inst.voice(v).drum_hit().is_some()
+        })
+        .collect();
+    assert!(!stolen.is_empty(), "a Part 1 hit stolen");
+    for v in stolen {
+        assert_eq!(slots[v].glide(), Cost::ZERO, "voice {v}");
+    }
+}
+
+/// A kit of DIRTY pads under a CLEAN Sound: the pads mask the Sound's
+/// filter, so a knob glide bills DIRTY's step (0), not CLEAN's (#962),
+/// as `drum_cost` bills the pads' shapes alone.
+#[test]
+fn a_kits_glide_bills_its_pads_not_the_masked_sound() {
+    use chimera_core::dsp::knobs::Gliding;
+    let mut kit = Kit::DEFAULT;
+    for n in 1..=12 {
+        kit.pad_mut(pad(n))
+            .sound_mut()
+            .filter_mut()
+            .set_kind(FilterKind::Dirty);
+    }
+    let g = Gliding {
+        filter: true,
+        fx: false,
+    };
+    let p = drum_init();
+    let extra = Voice::drum_glide_extra(&p, &ModState::new(), g, kit_bill(&kit));
+    assert_eq!(extra, Cost::ZERO);
+}
+
 /// The MIDI key INIT DRUM's pad `p` answers to.
 fn key(p: PadId) -> u8 {
     p.index() as u8

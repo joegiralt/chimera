@@ -54,9 +54,59 @@ pub struct AdmitDoor {
     ) -> Option<(VoiceIdx, Option<Paid>)>,
     refresh: fn(&mut Instrument, &AudioShared, &GateView<'_>, Option<&StreamStats>),
     loop_extra: fn(&Instrument, PartId, &AudioShared, &GateView<'_>, BillAt) -> Cost,
+    clear_avail: fn(&Instrument) -> usize,
+    admit_sym: fn(&mut Instrument, VoiceIdx, &crate::params::ParamSnapshot, MidiNote) -> bool,
+    strike_ready: StrikeReady,
+    ringing_kits: fn(&Instrument) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS],
+    follows: fn(&Instrument) -> [Cost; MAX_VOICES],
 }
 
+/// `AdmitDoor::strike_ready`'s entry.
+type StrikeReady =
+    fn(&mut Instrument, VoiceIdx, &crate::params::ParamSnapshot, MidiNote, super::Waiting) -> bool;
+
 impl AdmitDoor {
+    #[inline(always)]
+    pub(crate) fn clear_avail(&self, i: &Instrument) -> usize {
+        (self.clear_avail)(i)
+    }
+
+    #[inline(always)]
+    pub(crate) fn admit_sym(
+        &self,
+        i: &mut Instrument,
+        v: VoiceIdx,
+        params: &crate::params::ParamSnapshot,
+        note: MidiNote,
+    ) -> bool {
+        (self.admit_sym)(i, v, params, note)
+    }
+
+    #[inline(always)]
+    pub(crate) fn strike_ready(
+        &self,
+        i: &mut Instrument,
+        v: VoiceIdx,
+        params: &crate::params::ParamSnapshot,
+        note: MidiNote,
+        w: super::Waiting,
+    ) -> bool {
+        (self.strike_ready)(i, v, params, note, w)
+    }
+
+    #[inline(always)]
+    pub(crate) fn follows(&self, i: &Instrument) -> [Cost; MAX_VOICES] {
+        (self.follows)(i)
+    }
+
+    #[inline(always)]
+    pub(crate) fn ringing_kits(
+        &self,
+        i: &Instrument,
+    ) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS] {
+        (self.ringing_kits)(i)
+    }
+
     #[inline(always)]
     pub(crate) fn bill(
         &self,
@@ -113,6 +163,11 @@ impl Instrument {
         pick: Self::pick_streamed,
         refresh: Self::refresh_in,
         loop_extra: Self::loop_in,
+        clear_avail: Self::clear_avail_in,
+        admit_sym: Self::admit_sym_in,
+        strike_ready: Self::strike_ready_in,
+        ringing_kits: Self::ringing_kits_in,
+        follows: Self::follows_in,
     };
 
     /// What key `key`'s note `note` on Part `p`, reading `source`, asks of

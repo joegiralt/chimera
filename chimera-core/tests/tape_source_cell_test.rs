@@ -1472,6 +1472,23 @@ fn a_condemned_file_says_so() {
     assert!(w <= CELL_COL_W, "cell {w}px over {CELL_COL_W}");
 }
 
+/// #643: a fragmented file's words fit the band and its cell, and promise
+/// no copy: `put` won't replace a sealed file (ADR 0106).
+#[test]
+fn fragmented_words_fit_and_promise_no_copy() {
+    use chimera_core::ui::draw::text_width;
+    use chimera_core::ui::theme::{CELL_COL_W, CONTENT_W, FONT_VALUE, LABEL_TRACKING};
+    let band = text_width(&FONT_VALUE, FRAGMENTED, LABEL_TRACKING);
+    assert!(band <= CONTENT_W, "band {band}px over {CONTENT_W}");
+    assert!(!FRAGMENTED.contains("COPY"), "{FRAGMENTED}");
+    let mut cell = chimera_core::ui::fmt::FmtBuf::new();
+    chimera_core::ui::view::SourceState::Absent(chimera_core::project::Absence::Fragmented)
+        .cell(&mut cell);
+    assert_eq!(cell.as_str(), "FRAG");
+    let w = text_width(&FONT_VALUE, cell.as_str(), 0);
+    assert!(w <= CELL_COL_W, "cell {w}px over {CELL_COL_W}");
+}
+
 /// #598: with every stream row taken, a held source's heads can't go in
 /// beside it, so the re-stage waits (no card reads meanwhile); a row
 /// freed, they go in beside it.

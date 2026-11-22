@@ -212,3 +212,28 @@ fn ratio_ends_at_max() {
     }
     assert!(!p.set_enum_code(CompParams::KEY, KEYS as u8));
 }
+
+/// #1066: KEY's hint on the status line clears the curve's OUT label: three
+/// blank rows between the two over OUT's columns, for every choice.
+#[cfg(feature = "tape")]
+#[test]
+fn keys_hint_clears_the_out_label() {
+    let x0 = theme::VIZ_LEFT + 30 - 20;
+    let inked = |shot: &Fb, y: i32| (x0..x0 + 20).any(|x| shot.at(x, y) != theme::BG);
+    let mut ui = mst();
+    for turn in [1, 1, 1, 1, 1] {
+        feed(&mut ui, Input::turn(EncoderId::E, turn));
+        screen::settle(&mut ui);
+        let shot = screen::render_ui(&ui);
+        let key = ui.project().perf().fx.comp.key;
+        // The hint's last inked row, then OUT's first under it.
+        let rows: Vec<i32> = (theme::HEADER_BOTTOM..PLOT_TOP + 12)
+            .filter(|&y| inked(&shot, y))
+            .collect();
+        let gap = rows.windows(2).any(|w| w[1] > w[0] + 3);
+        if !gap {
+            shot.dump("comp_key_hint_out");
+        }
+        assert!(gap, "{key:?}: the hint runs into OUT, rows {rows:?}");
+    }
+}

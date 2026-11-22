@@ -15,21 +15,28 @@ use crate::comp_key::{CompKey, KEY_NAMES, KEYS};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams, Fdbk};
 use crate::dsp::algo::plan::OPS;
 use crate::dsp::algo::{kinds, tx};
+use crate::dsp::clampf;
 use crate::dsp::comp::CompParams;
+use crate::dsp::modulator::EnvType;
+use crate::dsp::modulator::law::speed_ranges;
 use crate::dsp::reverb::ReverbParams;
-use crate::modulation::{FixedCol, ModSource, VCA};
+use crate::modulation::{FixedCol, MAX_MOD_SOURCES, ModSource, VCA};
 use crate::params::OutParams;
 use crate::preset::Sound;
 use crate::project::Line;
+use crate::project::{PartId, Performance};
 use crate::ui::alg_layout::AlgLayout;
+use crate::ui::animation::{AnimatedValue, KNOB_SPEED};
 use crate::ui::block_def::{BlockDef, ChainBlock, ChainDef2, SlotBinding};
 use crate::ui::block_registry as reg;
 use crate::ui::fmt::{FmtBuf, fixed};
+use crate::ui::glyph::TAPE_GLYPH_PARAMS;
 use crate::ui::hint::{Gesture, Hint};
 use crate::ui::mod_grid::{Col, MatrixState};
 use crate::ui::renderer::Frame;
 use crate::ui::tape_strip::Paint;
 use crate::ui::theme;
+use core::cell::Cell;
 use embedded_graphics::pixelcolor::Rgb565;
 
 /// What bank 1 asks through `UiDoor`'s one `notes` entry, each with its
@@ -66,6 +73,29 @@ pub enum Ask<'a> {
     },
     /// `key`: KEY's hint on the frame's status line.
     Key(&'a Frame<'a>, &'a mut Option<Hint>),
+    /// `Lanes::ease`: a UI pass of the lanes off the page, from the edited
+    /// Part `part`'s stored values and the FX's.
+    Ease {
+        lanes: &'a mut Lanes,
+        perf: &'a Performance,
+        part: PartId,
+    },
+    /// `Lanes::get`: `at`'s value in its lane, into `out` (its stored
+    /// value) once it has one; asked for, so the next pass keeps one.
+    Lane {
+        lanes: &'a Lanes,
+        at: ParamAddr,
+        out: &'a mut f32,
+    },
+    /// `stage`: an ENV A stage cell's bar under the TIME or LEVEL routes
+    /// it primes (#149); `None` for any other cell, or none routed.
+    Stage {
+        addr: ParamAddr,
+        value: f32,
+        sound: &'a Sound,
+        sources: &'a [f32; MAX_MOD_SOURCES],
+        out: &'a mut Option<f32>,
+    },
 }
 
 /// The page an operator's cell is on: one parameter across OP1-OP6, the
@@ -95,7 +125,128 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         } => loops(on, algo, at, &links),
         Ask::OpsChain { formant, out } => *out = Some(ops_chain(formant)),
         Ask::Key(f, out) => *out = key(f),
+        Ask::Stage {
+            addr,
+            value,
+            sound,
+            sources,
+            out,
+        } => *out = stage(addr, value, sound, sources),
+        Ask::Ease { lanes, perf, part } => {
+            let p = &perf.parts()[part.index()];
+            lanes.ease(|a| {
+                crate::project::part_block(&p.sound, &p.mix, &perf.fx, a.block)
+                    .map_or(0.0, |b| b.normalized(a.param))
+            });
+        }
+        Ask::Lane { lanes, at, out } => {
+            if let Some(v) = lanes.get(at) {
+                *out = v;
+            }
+        }
     }
+}
+
+/// Lanes for a glyph's params off its page: TAPE's machine reads the most.
+const LANES: usize = TAPE_GLYPH_PARAMS.len() + 1;
+
+/// The params a glyph reads that its page has no cell for, each eased in
+/// a lane of its own (#284): a CC on one moves the glyph over frames, as
+/// a turn does, and the band redraws as it eases (#365). Each lane is its
+/// param and its value, eased as `AnimatedValue` eases a knob.
+pub struct Lanes {
+    at: [Option<ParamAddr>; LANES],
+    now: [f32; LANES],
+    /// The params the last draw asked for: the lanes the next pass keeps.
+    asked: Cell<[Option<ParamAddr>; LANES]>,
+}
+
+impl Default for Lanes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Lanes {
+    pub const fn new() -> Lanes {
+        Lanes {
+            at: [None; LANES],
+            now: [0.0; LANES],
+            asked: Cell::new([None; LANES]),
+        }
+    }
+
+    /// `at`'s eased value, if it has a lane; asked for either way.
+    fn get(&self, at: ParamAddr) -> Option<f32> {
+        let mut asked = self.asked.get();
+        if let Some(free) = asked.iter_mut().find(|w| w.is_none_or(|w| w == at)) {
+            *free = Some(at);
+        }
+        self.asked.set(asked);
+        let i = self.at.iter().position(|&a| a == Some(at))?;
+        Some(self.now[i])
+    }
+
+    /// A UI pass: each param the last draw asked for eases to `stored`'s
+    /// value; a new one starts there.
+    fn ease(&mut self, stored: impl Fn(ParamAddr) -> f32) {
+        let asked = self.asked.replace([None; LANES]);
+        for i in 0..LANES {
+            if let Some(a) = asked[i] {
+                let to = stored(a);
+                self.now[i] = if self.at[i] == asked[i] {
+                    let mut lane = AnimatedValue::new(self.now[i]).with_speed(KNOB_SPEED);
+                    lane.set_target(to);
+                    lane.update();
+                    lane.current()
+                } else {
+                    to
+                };
+            }
+            self.at[i] = asked[i];
+        }
+    }
+}
+
+/// An ENV A stage cell's bar as the envelope plays it (#149): ATTACK,
+/// DECAY, RELEASE and HOLD × 2^(−5·Σ) of the slot's TIME routes, as
+/// `ACoefs` takes them, in each law's octaves; SUS × the peak a LEVEL
+/// route sets. The cells prime those (`prime_target`), so no route is
+/// their own.
+fn stage(
+    addr: ParamAddr,
+    value: f32,
+    sound: &Sound,
+    sources: &[f32; MAX_MOD_SOURCES],
+) -> Option<f32> {
+    use crate::params::EnvParams as E;
+    let BlockRef::Env(slot) = addr.block else {
+        return None;
+    };
+    let e = &sound.params.envelopes[slot.index()];
+    if e.env_type != EnvType::A {
+        return None;
+    }
+    let m = &sound.mod_state;
+    let routed = |p: ParamId| {
+        let a = ParamAddr::new(addr.block, p);
+        m.find(a)
+            .filter(|&d| m.present(d) != 0)
+            .map(|d| m.sum_for(d, sources))
+    };
+    let r = speed_ranges(e.speed);
+    let oct = match addr.param {
+        E::ATTACK => r.attack.oct,
+        E::HOLD => r.hold.oct,
+        E::DECAY | E::RELEASE => r.dec_rel.oct,
+        E::SUSTAIN => {
+            let peak = routed(E::LEVEL)?;
+            return Some(value * clampf(peak, 0.0, 1.0));
+        }
+        _ => return None,
+    };
+    let sum = clampf(routed(E::TIME)?, -1.0, 1.0);
+    Some(clampf(value - 5.0 * sum / oct, 0.0, 1.0))
 }
 
 /// Each word `WORDS` holds.

@@ -360,3 +360,63 @@ fn a_kit_edit_never_drops_a_program_change() {
     assert_eq!(from(&ui, P[0]), PartFrom::Slot(SlotId::ALL[1]));
     assert_eq!(*ui.project().kit(P[0]), kit, "the kit stays on the Part");
 }
+
+/// #1068: a program change that swaps the shown Part's engine redraws the
+/// chain strip and the page tabs on the frame the body does, as the
+/// box's own engine change does.
+#[test]
+fn a_program_change_to_another_engine_redraws_the_strip() {
+    let mut ui = rig();
+    let draw = |ui: &mut UiState, fb: &mut screen::Fb| {
+        ui.render_dirty_with_audio(
+            fb,
+            &chimera_core::ui::perf::PerfStats::zero(),
+            Some(&screen::audio_fixture()),
+            &screen::scope_fixture(),
+        );
+    };
+    let mut fb = screen::Fb::new();
+    draw(&mut ui, &mut fb);
+    // Slot 1 (VA), slot 2 (MODAL), bank 1's DRUM, slot 3 (ALGO): each a
+    // new engine on the Part shown.
+    for ev in [
+        prog(2, None, 0),
+        prog(2, None, 1),
+        prog(2, Some((1, 0)), 4),
+        prog(2, Some((0, 0)), 2),
+    ] {
+        pass(&mut ui, &[ev]);
+        screen::settle(&mut ui);
+        draw(&mut ui, &mut fb);
+        let full = screen::render_ui(&ui);
+        assert!(
+            fb.hash() == full.hash(),
+            "{:?}: the dirty frame is stale",
+            ui.project().part(P[0]).sound.engine()
+        );
+    }
+}
+
+/// #1068: an engine change from the box (an INIT load from the browser)
+/// redraws the strip as a program change does.
+#[test]
+fn a_browser_load_of_another_engine_redraws_the_strip() {
+    let draw = |ui: &mut UiState, fb: &mut screen::Fb| {
+        ui.render_dirty_with_audio(
+            fb,
+            &chimera_core::ui::perf::PerfStats::zero(),
+            Some(&screen::audio_fixture()),
+            &screen::scope_fixture(),
+        );
+    };
+    // From ALGO's pages, a fresh UI's, each time.
+    for e in [EngineType::Va, EngineType::Modal, EngineType::Drum] {
+        let mut ui = Box::new(screen::stack_ui());
+        let mut fb = screen::Fb::new();
+        draw(&mut ui, &mut fb);
+        screen::load_init(&mut ui, e);
+        screen::settle(&mut ui);
+        draw(&mut ui, &mut fb);
+        assert!(fb.hash() == screen::render_ui(&ui).hash(), "{e:?}: stale");
+    }
+}

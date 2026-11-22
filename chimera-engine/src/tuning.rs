@@ -232,6 +232,20 @@ impl VoiceTunes {
         }
     }
 
+    /// Voice `v`'s offset now, as `strike` or `glide` left it.
+    #[inline(always)]
+    pub fn now(&self, v: usize) -> f32 {
+        #[cfg(feature = "tuning")]
+        {
+            self.v[v % crate::hw::MAX_VOICES].0
+        }
+        #[cfg(not(feature = "tuning"))]
+        {
+            let _ = v;
+            0.0
+        }
+    }
+
     /// Voice `v`'s offset this block, a block nearer its target.
     #[inline(always)]
     pub fn step(&mut self, v: usize) -> f32 {

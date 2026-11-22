@@ -2,11 +2,13 @@
 //! table, so a feature is built out by replacing its `Later(issue(n))`
 //! kind and navigation stays as it is.
 
+#[cfg(feature = "orbit")]
+use super::leaves::LIVE_SNAP_LEAF;
 #[cfg(feature = "push-encoders")]
 use super::leaves::PUSH_LEAF;
 use super::leaves::{
-    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, FOLLOW_LEAF, LIVE_SNAP_LEAF, MAP_LEAF,
-    OUTPUTS_LEAF, OnePage, POOL_LEAF, RANDOM_LEAF, SAVER_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
+    ABOUT_LEAF, AUDIO_LOAD_LEAF, CHANNELS_LEAF, FOLLOW_LEAF, MAP_LEAF, OUTPUTS_LEAF, OnePage,
+    POOL_LEAF, RANDOM_LEAF, SAVER_LEAF, TEXT_LEAF, THEME_LEAF, TUNING_LEAF,
 };
 use core::num::NonZeroU16;
 
@@ -109,12 +111,14 @@ static PROJECT: [Row; 5] = [
     ),
 ];
 
-/// The active Part's list: its crumb is `PART n`.
-pub static PART: [Row; 7 + cfg!(feature = "midi-map") as usize] = [
+/// The active Part's list: its crumb is `PART n`. LIVE SNAP snaps to
+/// ORBIT's chord: none without it (#323).
+pub static PART: [Row; 6 + cfg!(feature = "orbit") as usize + cfg!(feature = "midi-map") as usize] = [
     row("RENAME", Kind::Act(Act::PartRename)),
     row("CLEAR", Kind::Act(Act::PartClear)),
     crumb("SAVE TO PROJ", "SAVE TO", Kind::Screen(Screen::SaveToProj)),
     crumb("RELOAD FROM PROJ", "RELOAD", Kind::Act(Act::PartReload)),
+    #[cfg(feature = "orbit")]
     crumb("LIVE SNAP", "SNAP", Leaf(&LIVE_SNAP_LEAF)),
     crumb(
         "SAVE TO LIBRARY",
@@ -206,8 +210,9 @@ static PERSONALIZE: [Row; 6] = [
     crumb("ALGO PAGES", "ALGO", Leaf(&super::leaves::ALGO_PAGES_LEAF)),
 ];
 
-/// A row per DEMO page, by its short name.
-#[cfg(debug_assertions)]
+/// A row per DEMO page, by its short name: debug builds and tests, in
+/// any profile (#354).
+#[cfg(any(debug_assertions, feature = "test-support"))]
 static DEMO: [Row; super::leaves::DEMO_LEAVES.len()] = {
     use super::leaves::DEMO_LEAVES;
     let mut r = [row("", Leaf(&DEMO_LEAVES[0])); DEMO_LEAVES.len()];
@@ -223,7 +228,7 @@ static DIAGNOSTICS: &[Row] = &[
     crumb("AUDIO LOAD", "AUD LOAD", Leaf(&AUDIO_LOAD_LEAF)),
     crumb("TEST TONE", "TONE", Later(issue(295))),
     crumb("INPUT TEST", "INPUT", Later(issue(296))),
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "test-support"))]
     row("DEMO", List(&DEMO)),
 ];
 
@@ -406,4 +411,14 @@ pub fn screen_path(s: Screen) -> &'static [u8] {
         Screen::MidiMap => &SCREEN_PATHS[SCREEN_PATHS.len() - 1],
     };
     &path[..*depth]
+}
+
+#[cfg(test)]
+mod live_snap_tests {
+    /// #323: LIVE SNAP is PART's only with ORBIT, whose chord it snaps to.
+    #[test]
+    fn live_snap_only_with_orbit() {
+        let has = super::PART.iter().any(|r| r.label == "LIVE SNAP");
+        assert_eq!(has, cfg!(feature = "orbit"));
+    }
 }

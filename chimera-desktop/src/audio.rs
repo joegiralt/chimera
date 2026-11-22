@@ -337,7 +337,7 @@ impl Engine {
             shared,
             ports,
             |inst, reads, ports| {
-                if gate.before_block(link, inst, shared) {
+                if gate.before_block(link, inst, shared, Some(&mut *runner)) {
                     let now = runner.now();
                     drain.drain_held(&HOLD, |src, ev| match ev {
                         // Capture sees the raw key, before any snap.

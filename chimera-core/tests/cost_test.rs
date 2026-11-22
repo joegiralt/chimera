@@ -1583,15 +1583,22 @@ fn a_refused_note_on_does_not_recost() {
     assert_eq!(r.inst.costings(), before + 2, "and once the next");
 }
 
-/// ADR 0091's reserve beside the voices: the bus's 1,204, the knobs' 14
-/// (ADR 0116), the LFO clocks' 10 (ADR 0135) and a note-on burst's 836
-/// (1,494 + 14 + 10 + 836 with the master tape), 171 more while ORBIT
-/// plays. Spec § 5's admission table is counted
-/// against it.
-// ponytail: literal until `Instrument::RESERVED` (orbit-budget) merges.
-const RESERVED: u32 = 2_064;
-const RESERVED_TAPE: u32 = 2_354;
-const ORBIT_COST: u32 = 171;
+/// The room the admission tables plan for: the bus without the master
+/// tape (1,190), the knobs' 14 (ADR 0116), the LFO clocks' 10 (ADR 0135)
+/// and a note-on burst (859, ADR 0091), 2,073; with the master tape's bus
+/// (1,494), 2,377. Admission books the burst only while ORBIT plays
+/// (`Instrument::reserved`), so the columns without ORBIT keep a burst's
+/// margin, and the ORBIT column, its block (171) on top, is admission's
+/// room exactly. Spec § 5's admission table is counted against it (#836).
+fn reserved() -> u32 {
+    (FxBus::COST_NO_TAPE + CONTROL_RESERVE + chimera_core::instrument::Instrument::BURST).0
+}
+fn reserved_tape() -> u32 {
+    (FxBus::COST_TAPE + CONTROL_RESERVE + chimera_core::instrument::Instrument::BURST).0
+}
+fn orbit_cost() -> u32 {
+    chimera_core::orbit::runner::OrbitRunner::COST.0
+}
 
 /// A matrix with `routes` (source, destination, amount) and nothing else;
 /// `None` if a destination takes no route.
@@ -1630,13 +1637,13 @@ fn tape_bills_each_model() {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
         [
-            v - RESERVED,
-            y - RESERVED,
-            v - RESERVED - ORBIT_COST,
-            v - RESERVED_TAPE,
+            v - reserved(),
+            y - reserved(),
+            v - reserved() - orbit_cost(),
+            v - reserved_tape(),
         ]
     };
-    assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
+    assert_eq!(rooms, [5_427, 4_177, 5_256, 5_123]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     let on = |q| ParamAddr::new(BlockRef::TapeEngine, q);
     // Model, bill, voices with TAPE and AGE off, with both.
@@ -1703,7 +1710,7 @@ fn tape_bills_each_model() {
 /// LOOP's and TRON's voices at their floor, TAPE and AGE off and both at
 /// ½; PING-PONG's.
 const LP_OFF: [u32; 4] = [8, 6, 8, 8];
-const LP_BOTH: [u32; 4] = [8, 6, 8, 8];
+const LP_BOTH: [u32; 4] = [8, 6, 8, 7];
 const PING_OFF: [u32; 4] = [8, 7, 8, 8];
 const PING_BOTH: [u32; 4] = [8, 6, 8, 8];
 
@@ -1718,17 +1725,17 @@ fn stretch_bills_by_type() {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
         [
-            v - RESERVED,
-            y - RESERVED,
-            v - RESERVED - ORBIT_COST,
-            v - RESERVED_TAPE,
+            v - reserved(),
+            y - reserved(),
+            v - reserved() - orbit_cost(),
+            v - reserved_tape(),
         ]
     };
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (kind, bill, off, both) in [
         (StretchType::Mono, 540, [8, 6, 8, 8], [8, 6, 7, 7]),
         (StretchType::Poly, 540, [8, 6, 8, 8], [8, 6, 7, 7]),
-        (StretchType::Grain, 945, [5, 4, 5, 5], [5, 3, 4, 4]),
+        (StretchType::Grain, 945, [5, 4, 5, 4], [5, 3, 4, 4]),
     ] {
         let mut p = tape_sound(TapeModel::Stretch);
         p.tape.machine = TapeMachine::Stretch;
@@ -1765,13 +1772,13 @@ fn va_bills_each_mode() {
         let v = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0;
         let y = SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0;
         [
-            v - RESERVED,
-            y - RESERVED,
-            v - RESERVED - ORBIT_COST,
-            v - RESERVED_TAPE,
+            v - reserved(),
+            y - reserved(),
+            v - reserved() - orbit_cost(),
+            v - reserved_tape(),
         ]
     };
-    assert_eq!(rooms, [5_436, 4_186, 5_265, 5_146]);
+    assert_eq!(rooms, [5_427, 4_177, 5_256, 5_123]);
     let at = |voice: u32| rooms.map(|r| (r / voice).min(MAX_VOICES as u32));
     for (mode, bill, voices) in [
         (Mix, 530, [7, 6, 7, 7]),
@@ -1783,9 +1790,9 @@ fn va_bills_each_mode() {
         (Am, 550, [7, 5, 7, 7]),
         (Max, 550, [7, 5, 7, 7]),
         // The unit reads LOOPFM 712 a voice against 584 (2026-10-22).
-        (LoopFm, 480, [8, 6, 8, 8]),
+        (LoopFm, 480, [8, 6, 8, 7]),
         (SoftSync, 610, [7, 5, 6, 6]),
-        (Phase, 590, [7, 5, 7, 6]),
+        (Phase, 590, [7, 5, 6, 6]),
     ] {
         let p = va_sound(mode);
         assert_eq!(
@@ -2570,7 +2577,7 @@ fn fuzz_routed_adds_its_ramp() {
 #[test]
 fn a_fuzz_part_gets_the_voices_its_reading_allows() {
     let none = ModState::new();
-    let room = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED;
+    let room = SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - reserved();
     let at = |v| room / Voice::cost(&fuzz_voice(v), &none).0;
     assert_eq!((at(K2040Voice::Rev2), at(K2040Voice::Exp)), FUZZ_VOICES);
 }
@@ -2609,8 +2616,8 @@ fn stability_bills_the_four_pole_kinds_below_one() {
         );
     }
     let rooms = [
-        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
-        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - reserved(),
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - reserved(),
     ];
     let init = Sound::init(EngineType::Va).params;
     let stable = {
@@ -2674,8 +2681,8 @@ fn sem_bills_its_count_and_its_voices() {
     assert_eq!(SEM_COST, Cost(10));
     assert_eq!(SEM_MOVE_COST, Cost(70));
     let rooms = [
-        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
-        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - reserved(),
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - reserved(),
     ];
     let voices = |e: EngineType, k: FilterKind, mods: &ModState| {
         let mut p = ParamSnapshot::for_engine(e);
@@ -2752,8 +2759,8 @@ fn the_gate_bills_only_when_up_and_its_voices() {
     use chimera_core::dsp::lpg::LPG_COST;
     use chimera_core::params::OutParams;
     let rooms = [
-        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - RESERVED,
-        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - RESERVED,
+        SampleBudget::for_cpu(CPU_HZ_REV_V).as_cost().0 - reserved(),
+        SampleBudget::for_cpu(CPU_HZ_REV_Y).as_cost().0 - reserved(),
     ];
     let still = ModState::new();
     for e in [EngineType::Algo, EngineType::Va] {

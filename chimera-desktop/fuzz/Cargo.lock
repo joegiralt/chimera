@@ -176,10 +176,12 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "chimera-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chimera-engine",
  "chimera-hal",
+ "chimera-image",
+ "chimera-midi",
  "chimera-theory",
  "embedded-graphics",
  "embedded-graphics-core",
@@ -189,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-desktop"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -214,9 +216,11 @@ dependencies = [
 
 [[package]]
 name = "chimera-engine"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "chimera-hal",
+ "chimera-image",
+ "chimera-midi",
  "chimera-theory",
  "chimera-waves",
  "libm",
@@ -225,18 +229,34 @@ dependencies = [
 
 [[package]]
 name = "chimera-hal"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
+ "chimera-midi",
  "embedded-graphics-core",
+ "loom",
+]
+
+[[package]]
+name = "chimera-image"
+version = "0.3.0"
+
+[[package]]
+name = "chimera-midi"
+version = "0.3.0"
+dependencies = [
+ "usb-device",
 ]
 
 [[package]]
 name = "chimera-theory"
-version = "0.1.0"
+version = "0.3.0"
+dependencies = [
+ "libm",
+]
 
 [[package]]
 name = "chimera-waves"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "libm",
 ]
@@ -568,10 +588,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+]
 
 [[package]]
 name = "hound"
@@ -1010,6 +1049,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
+
+[[package]]
 name = "primal-check"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1274,6 +1319,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
+name = "stable_deref_trait"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
 name = "strength_reduce"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1452,6 +1503,16 @@ name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "usb-device"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98816b1accafbb09085168b90f27e93d790b4bfa19d883466b5e53315b5f06a6"
+dependencies = [
+ "heapless",
+ "portable-atomic",
+]
 
 [[package]]
 name = "valuable"
