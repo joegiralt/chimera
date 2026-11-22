@@ -3153,6 +3153,8 @@ impl UiState {
         if mv != 0.0 {
             let p = &mut self.project.edit_part(self.active_part).sound.params.tape;
             p.position = crate::dsp::clampf(p.position + mv, 0.0, 1.0);
+            // The reel is the hand: a mapped POSITION's ramp stops (#524).
+            self.cc_hand(self.active_part, SCRUB_FINGER);
         }
         mv != 0.0
     }
@@ -3535,6 +3537,7 @@ impl UiState {
                 if !shift && v.addr() == Some(SCRUB_FINGER) && self.ctx().tape == TapeMachine::Scrub
                 {
                     self.jog.turn(delta, controls.now_ms());
+                    self.cc_hand(at, SCRUB_FINGER);
                     continue;
                 }
                 // The reverb turns by its TYPE's panel, and TYPE keeps the
