@@ -301,6 +301,14 @@ pub(crate) mod door {
     #[inline(always)]
     pub(crate) fn events(s: &mut Stream) {
         let g = otg();
+        // DSTS before GINTSTS (#973): a SOF landing between the reads then
+        // leaves `at` a frame behind the flags, so `missed` names a frame
+        // earlier than the one that ended. That errs toward leaving a
+        // packet armed: a real miss is re-aimed by the next frame's flag,
+        // one frame later. Read the other way round, it errs toward
+        // moving a good packet a frame on, which the host reads as a
+        // zero-length packet: the fault this guards.
+        let at = now();
         let flags = g.gintsts.read().bits() & (SOF | IISOIXFR);
         if flags == 0 {
             return;
@@ -313,11 +321,25 @@ pub(crate) mod door {
             // SAFETY: the stream's own IN endpoint's DIEPCTL; the bus
             // writes it only in `write` and its reset's configure, both
             // from this poll's context, never concurrently.
+            // Only a capture packet past its own frame: in duplex the
+            // feedback endpoint's misses raise the flag too (#973).
+            // Not told apart (ADR 0312): a poll held off past EOPF in the
+            // same frame, its SOF still pending, reads as one past the next
+            // SOF, so a real miss of that frame is taken for the one before
+            // and is not re-aimed; its packet keeps its parity and the next
+            // frame's flag re-aims it. DSTS, DIEPCTL and DIEPTSIZ say
+            // nothing finer than the frame and its parity.
             unsafe {
                 let v = p.read_volatile();
-                if uac::armed(v) {
-                    p.write_volatile(uac::aim(v, now()));
-                    s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
+                // Its own frame ended (#973): aimed at the next frame, by
+                // parity only if it holds the other one (#943), and the
+                // pacer's frame moved on either way.
+                if uac::armed(v) && s.pacer.late(uac::missed(at, flags & SOF != 0)) {
+                    if let Some(w) = uac::reaim(v, at) {
+                        p.write_volatile(w);
+                        s.counts.reaimed = s.counts.reaimed.wrapping_add(1);
+                    }
+                    s.pacer.reaim(at.wrapping_add(1), &mut s.counts);
                 }
             }
         }

@@ -469,7 +469,7 @@ fn mixer_fixture() {
     let mut f = Fake::new();
     let text = mixer_pages(&mut f).join("");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/mixer-schema.txt");
+        .join("tests/fixtures/editor/mixer-schema.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::write(&path, &text).unwrap();
     }

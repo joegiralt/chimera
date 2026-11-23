@@ -264,6 +264,28 @@ impl Debounce {
     }
 }
 
+/// The switches down at the controls' first read (the key held at power-on
+/// that picked the bootloader's slot), one bit each: each reads up, press
+/// and release alike, until it is released once (#1000).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartHold(u32);
+
+impl StartHold {
+    /// None held: before the first read.
+    pub const NONE: StartHold = StartHold(0);
+
+    /// Switch `i`'s tick: its raw level and `Debounce`'s settled one in,
+    /// `first` on the controls' first read; the level the UI sees out.
+    #[inline(always)]
+    pub fn step(&mut self, i: usize, first: bool, raw: bool, settled: bool) -> bool {
+        // Set at a first read down, cleared once raw and settled are up;
+        // branch-free, the SysTick read's 18 switches a tick.
+        self.0 |= u32::from(first & raw) << i;
+        self.0 &= !(u32::from(!raw & !settled) << i);
+        settled & (self.0 >> i & 1 == 0)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EncoderId {

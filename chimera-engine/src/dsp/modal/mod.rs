@@ -1004,6 +1004,16 @@ impl ModalEngine {
         let first = core::mem::take(&mut self.shape_pending);
         if first {
             self.macros = to;
+            // A route moved the pitch off the note-on's: plucked again at
+            // the routed length, before any retune (#233).
+            if self.ratio() != self.tuned {
+                let f = self.pitched(self.frequency) * sample_rate as f32;
+                match &mut self.model {
+                    ModelSlot::String(s) => s.repluck(f, sample_rate),
+                    ModelSlot::Sympathetic(v) => v.main.repluck(f, sample_rate),
+                    ModelSlot::Bank(_) | ModelSlot::Bowed(_) => {}
+                }
+            }
             // Before any retune: the pluck is the note-on's length.
             match &mut self.model {
                 ModelSlot::String(s) => s.shape(to.pos),
@@ -1480,6 +1490,42 @@ impl SymPool {
             },
             _ => FRESH_CLEAR_BYTES + promise.map_or(0, set),
         }
+    }
+
+    /// Up to `max` bytes of `note_on_clear`'s lines cleared ahead of the
+    /// note, a block's room at a time (#306, ADR 0311): the main string
+    /// where the note keeps it (`engine` idle), and the set it will ring,
+    /// its own or the one promised, which no voice renders meanwhile.
+    /// What it cleared. Inlined into its one caller, bank 2's
+    /// (`AdmitDoor::pre_clear`, ADR 0320).
+    #[inline(always)]
+    pub fn pre_clear(
+        &mut self,
+        engine: Option<&mut ModalEngine>,
+        voice: VoiceIdx,
+        max: usize,
+    ) -> usize {
+        let promise = self.alloc.promise_of(voice);
+        let mut left = max;
+        let set = match engine.map(|e| &mut e.model) {
+            Some(ModelSlot::Sympathetic(m)) => {
+                let (main, set) = match &m.halo {
+                    Halo::Full(l) => (true, Some(l.slot())),
+                    Halo::Bare => (promise.is_none(), promise),
+                };
+                if main {
+                    left -= m.main.string.clear_some(left);
+                }
+                set
+            }
+            _ => promise,
+        };
+        if let Some(s) = set {
+            for st in self.sets[s.index()].strings.iter_mut() {
+                left -= st.clear_some(left);
+            }
+        }
+        max - left
     }
 
     /// The set `halo` rings, if any. It borrows the pool and the lease, so
@@ -2421,6 +2467,14 @@ mod tests {
             assert!(want <= SYM_NOTE_ON_CLEAR_MAX);
             play(&mut e, &mut pool, &p, SECOND / 8, (1, pitch));
         }
+        // A route that moves the pitch by the first block re-plucks the
+        // main string with no second clear: the note-on's bill stands.
+        e.set_pitch(1.0);
+        let plain = pool.note_on_clear(Some(&e), v0);
+        let _ = take_cleared_bytes();
+        e.note_on(60, 100, &p, SR, &mut pool);
+        play(&mut e, &mut pool, &p, 1, (0, 2.0));
+        assert_eq!(take_cleared_bytes(), plain, "the routed re-pluck");
         // Voice 1, unplaced, plays bare: a fresh main string. Placed, it
         // is promised a slot never played: eight fresh lines.
         let v1 = VoiceIdx::ALL[1];

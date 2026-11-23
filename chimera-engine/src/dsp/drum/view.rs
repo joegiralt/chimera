@@ -18,6 +18,11 @@ use crate::project::{Kits, PartId};
 
 use crate::MidiNote;
 
+/// A Part's kit publishes, as a hit has seen them or the view counts them
+/// (`KitView::seq`): only ever compared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct KitSeq(u32);
+
 use super::sound::{KitBill, PAD_SOUND_BYTES, PadSound, kit_bill};
 use super::types::{DrumHit, HitSeed, Kit, KitNote, PAD_BYTES, Pad, PadId, PadSet, Tonal};
 
@@ -123,22 +128,22 @@ impl KitView {
     }
 
     /// Audio: `part`'s publishes so far, as `sound_if_newer` counts them.
-    pub fn seq(&self, part: PartId) -> u32 {
-        self.parts[part.index()].seq.load(Ordering::Acquire)
+    pub fn seq(&self, part: PartId) -> KitSeq {
+        KitSeq(self.parts[part.index()].seq.load(Ordering::Acquire))
     }
 
     /// Audio: `pad`'s sound on `part`'s kit if a publish came since `seen`,
     /// which then moves on; else `None` from one load. It decodes only
     /// after a publish, and never waits.
     #[inline(never)]
-    pub fn sound_if_newer(&self, part: PartId, pad: PadId, seen: &mut u32) -> Option<PadSound> {
+    pub fn sound_if_newer(&self, part: PartId, pad: PadId, seen: &mut KitSeq) -> Option<PadSound> {
         let v = &self.parts[part.index()];
-        if v.seq.load(Ordering::Relaxed) == *seen {
+        if v.seq.load(Ordering::Relaxed) == seen.0 {
             return None;
         }
         let (s, b) = v.read(pad);
         // Read mid-publish (odd), the next block reads again.
-        *seen = s;
+        *seen = KitSeq(s);
         let d = Kit::default_pad(pad);
         Some(PadSound::from_bytes(
             core::array::from_fn(|i| b[PAD_BYTES + i]),

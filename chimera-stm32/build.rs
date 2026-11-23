@@ -210,13 +210,13 @@ ASSERT(_stack_start - _stack_end >= 32K, "DTCM must keep at least 32 KB of stack
     // fixed slot after the door (`chimera_engine::bank2`'s `*_DOOR_ADDR`):
     // the board's (the card interrupt), then the UI's.
     let (slots, asserts) = (
-        "    . = __bank2_door + 0x100; __bank2_board_door = .;
+        "    . = __bank2_door + 0x180; __bank2_board_door = .;
     KEEP(*(.bank2.door.board));
-    . = __bank2_door + 0x180; __bank2_ui_door = .;
+    . = __bank2_door + 0x200; __bank2_ui_door = .;
     KEEP(*(.bank2.door.ui));
 ",
-        "ASSERT(__bank2_board_door == 0x08100200, \"the board's table at its slot\");
-ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
+        "ASSERT(__bank2_board_door == 0x08100280, \"the board's table at its slot\");
+ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     );
     // The VA's MOD oscillators (ADR 0163): `va::osc::door`, every MOD
     // render's entry and its runs' instances, LOOPFM's render, and NOISE's
@@ -259,8 +259,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     let (bench, bench_slot, bench_assert) = if env::var_os("CARGO_FEATURE_BENCH").is_some() {
         (
             "    *(.text.*13chimera_stm325bench* .rodata.*13chimera_stm325bench*);\n",
-            "    . = __bank2_door + 0x200; __bank2_bench_door = .;\n    KEEP(*(.bank2.door.bench));\n",
-            "ASSERT(__bank2_bench_door == 0x08100300, \"the bench's table at its slot\");",
+            "    . = __bank2_door + 0x280; __bank2_bench_door = .;\n    KEEP(*(.bank2.door.bench));\n",
+            "ASSERT(__bank2_bench_door == 0x08100380, \"the bench's table at its slot\");",
         )
     } else {
         ("", "", "")
@@ -352,10 +352,10 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
       .text.*11OrbitRunner4load* .text.*9MidiClock4tick*);
     *(.text.*2ui5orbit4draw* .rodata.*2ui5orbit4draw* .text.*2ui5orbit6raster* .rodata.*2ui5orbit6raster*);
 ",
-            "    . = __bank2_door + 0x280; __bank2_orbit_ui_door = .;
+            "    . = __bank2_door + 0x300; __bank2_orbit_ui_door = .;
     KEEP(*(.bank2.door.orbit_ui));
 ",
-            "ASSERT(__bank2_orbit_ui_door == 0x08100380, \"ORBIT's pages' table at its slot\");",
+            "ASSERT(__bank2_orbit_ui_door == 0x08100400, \"ORBIT's pages' table at its slot\");",
         )
     } else {
         ("", "", "")
@@ -366,8 +366,8 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
     // home and the stubs.
     let (midi_ui, midi_ui_slot, midi_ui_assert) = (
         "    *(.text.*12chimera_core2ui4midi* .rodata.*12chimera_core2ui4midi*);\n",
-        "    . = __bank2_door + 0x300; __bank2_midi_ui_door = .;\n    KEEP(*(.bank2.door.midi_ui));\n",
-        "ASSERT(__bank2_midi_ui_door == 0x08100400, \"the MIDI UI's table at its slot\");",
+        "    . = __bank2_door + 0x380; __bank2_midi_ui_door = .;\n    KEEP(*(.bank2.door.midi_ui));\n",
+        "ASSERT(__bank2_midi_ui_door == 0x08100480, \"the MIDI UI's table at its slot\");",
     );
     // The console's `ed` (ADR 0251): `console::ed`, the browser editor's
     // parse and answers, text and rodata, its table at its slot after the
@@ -402,17 +402,20 @@ ASSERT(__bank2_ui_door == 0x08100280, \"the UI's table at its slot\");",
         &format!(
             "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    . = __bank2_part_peaks_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_stereo_door = .;\n    KEEP(*(.bank2.door.stereo));\n    . = __bank2_stereo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_comp_key_door = .;\n    KEEP(*(.bank2.door.comp_key));\n    . = __bank2_comp_key_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_kit_door = .;\n    KEEP(*(.bank2.door.kit));\n    . = __bank2_kit_door + 0x{KIT_DOOR_ROOM:X};\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*8VaEngine15render_am_kinks* .rodata.*8VaEngine15render_am_kinks* .text.*2va3osc2am* .rodata.*2va3osc2am*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n    *(.text.*6stereo4kern* .rodata.*6stereo4kern*);\n    *(.text.*8comp_key4kern* .rodata.*8comp_key4kern*);\n"
         ),
-        "    . = __bank2_door + 0x380; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
+        "    . = __bank2_door + 0x400; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         &format!(
-            "ASSERT(__bank2_ed_door == 0x08100480, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");\nASSERT(__bank2_part_peaks_door == 0x{PART_PEAKS_DOOR_ADDR:08X}, \"the Parts' meters' table a stride after the EQ's\");\nASSERT(__bank2_stereo_door == 0x{STEREO_DOOR_ADDR:08X}, \"the stereo's table a stride after the meters'\");\nASSERT(__bank2_comp_key_door == 0x{COMP_KEY_DOOR_ADDR:08X}, \"KEY's table a stride after the stereo's\");\nASSERT(__bank2_kit_door == 0x{KIT_DOOR_ADDR:08X}, \"the kit's table a stride after the KEY's\");"
+            "ASSERT(__bank2_ed_door == 0x08100500, \"ed's table at its slot\");\nASSERT(__bank2_va_solo_door == 0x{VA_SOLO_DOOR_ADDR:08X}, \"VA's solos' table heads the S4 groups\");\nASSERT(__bank2_part_eq_door == 0x{PART_EQ_DOOR_ADDR:08X}, \"the Parts' EQ's table a stride after the solos'\");\nASSERT(__bank2_part_peaks_door == 0x{PART_PEAKS_DOOR_ADDR:08X}, \"the Parts' meters' table a stride after the EQ's\");\nASSERT(__bank2_stereo_door == 0x{STEREO_DOOR_ADDR:08X}, \"the stereo's table a stride after the meters'\");\nASSERT(__bank2_comp_key_door == 0x{COMP_KEY_DOOR_ADDR:08X}, \"KEY's table a stride after the stereo's\");\nASSERT(__bank2_kit_door == 0x{KIT_DOOR_ADDR:08X}, \"the kit's table a stride after the KEY's\");"
         ),
     );
     // DRUM's voice groups (ADR 0280, `UiDoor::groups`, its one entry):
     // `ui::kit_groups` and the count it reads, `drum::groups`;
-    // an S4 group after `ed`'s (ADR 0272: new 0.4 work goes high).
+    // an S4 group after `ed`'s (ADR 0272: new 0.4 work goes high). Batch
+    // E's SYMP pacing and DRUM bills (`instrument::sym_admit`, `AdmitDoor`'s
+    // five entries, ADR 0320) beside them: S0-S3 is short (ADR 0251).
     let groups =
         "    *(.text.*12chimera_core2ui10kit_groups* .rodata.*12chimera_core2ui10kit_groups*
-      .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);\n";
+      .text.*14chimera_engine3dsp4drum6groups* .rodata.*14chimera_engine3dsp4drum6groups*);
+    *(.text.*10instrument9sym_admit* .rodata.*10instrument9sym_admit*);\n";
     // A Part's MAX VOICES and RESERVE (ADR 0281, `UiDoor::voices`, its
     // one entry): `ui::part_voices`, beside the voice groups; and SMART
     // EQ's band (ADR 0296, asked through `UiDoor::meters`): `ui::smart_eq`.

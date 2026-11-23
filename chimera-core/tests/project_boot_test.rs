@@ -192,6 +192,40 @@ fn boot_without_a_card_says_no_card() {
     assert_eq!(b.ui.step_toast(0), ToastStep::Show(want.line()));
 }
 
+/// A SYSTEM the card holds but this firmware can't read keeps the
+/// defaults, and the boot says why instead of only NEW PROJECT (#197).
+#[test]
+fn boot_with_an_unreadable_system_says_why() {
+    let mut s = MemStore::new(1);
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.write(vol, AbFile::SYSTEM.side(Side::A), &mut |w| {
+        w.put(b"not a chimera file, not at all")
+    })
+    .unwrap();
+    let mut card = Card::new();
+    let (_, settings, note) = SystemSync::boot(&mut card, &mut s);
+    assert_eq!(settings.last_project, None);
+    let mut ui = Box::new(UiState::new());
+    ui.boot_project(&mut card, &mut s, settings.last_project);
+    ui.show_system_note(note);
+    let want = ProjectNote::File {
+        err: FileError::Truncated,
+        subject: Subject::System,
+    };
+    assert_eq!(ui.step_toast(0), ToastStep::Show(want.line()));
+    assert_eq!(want.line(), Line::new("FILE IS CUT SHORT: SYSTEM"));
+
+    // A missing SYSTEM or no card: the project's own note stands.
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let (_, settings, note) = SystemSync::boot(&mut card, &mut s);
+    let mut ui = Box::new(UiState::new());
+    ui.boot_project(&mut card, &mut s, settings.last_project);
+    ui.show_system_note(note);
+    assert_eq!(ui.step_toast(0), show("NEW PROJECT"));
+}
+
 /// A card in the slot that times out on every call.
 struct Timeout;
 

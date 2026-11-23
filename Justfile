@@ -11,12 +11,16 @@
 # (private issue #656).
 bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
+# Where cargo builds: the checks read the ELF from there, not a fixed
+# target/ (#379).
+target_dir := env_var_or_default("CARGO_TARGET_DIR", "target")
 
 # Build desktop simulator
 desktop:
     cargo run -p chimera-desktop --bin chimera-desktop
 
-# The browser editor against the simulator: the sim, and its console on ws://127.0.0.1:7342
+# The browser editor (chimera-releases' editor/) against the simulator: the
+# sim, and its console on ws://127.0.0.1:7342
 editor-sim:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -27,31 +31,45 @@ editor-sim:
     trap 'pkill -P $bridge || true; kill $bridge 2>/dev/null || true' EXIT
     cargo run -p chimera-desktop --bin chimera-desktop
 
-# The editor's protocol end to end, against a running `just editor-sim` (the simulator has no headless mode)
-editor-e2e:
-    node editor/e2e/sim.mjs
+# The editor kit (ADR 0322): what chimera-releases' editor builds and tests
+# against, into target/editor-kit/<version>/ for its editor/kit/<version>/.
+# The unit's protocol text (`ed describe` of every engine, MIXER, SETTINGS,
+# MAP and ORBIT; each engine's INIT panels; the engines; a Part refusal),
+# held current by chimera-core's fixture tests first (`BLESS=1` rewrites
+# them), and screen.wasm (`editor-screen`); KIT stamps the version and the
+# commit. `just editor-kit 0.4`
+editor-kit version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo test -q -p chimera-core --test console_ed_test --test console_ed_engines_test --test console_ed_map_test --test console_ed_mixer_test --test console_ed_orbit_test --test console_ed_settings_test -- fixture
+    out=target/editor-kit/{{version}}
+    rm -rf "$out"
+    mkdir -p "$out/fixtures"
+    cp chimera-core/tests/fixtures/editor/*.txt "$out/fixtures/"
+    just editor-screen "$out/screen.wasm"
+    rev=$(git rev-parse --short=9 HEAD)
+    if ! git diff --quiet HEAD; then rev="$rev-dirty"; fi
+    printf 'chimera %s\nfirmware %s\n' "{{version}}" "$rev" > "$out/KIT"
+    echo "editor kit: $out"
 
-# The browser editor's Elm tests, then elm-review (the site's gate, editor/review)
-# and elm-format. Elm itself is pinned in editor/package.json (0.19.1).
-editor-test:
-    cd editor && npm install --no-audit --no-fund --silent && node tests/gen-fixture.js && npx elm-test --compiler node_modules/.bin/elm && npx elm-review --compiler node_modules/.bin/elm && npx elm-format --validate src tests review/src >/dev/null && node public/ports.check.js && node public/theme.check.js
-
-# The browser editor, optimised, into editor/dist/
-editor-build: editor-screen
-    cd editor && npm install --no-audit --no-fund --silent && mkdir -p dist/glyphs && npx elm make src/Main.elm --optimize --output=dist/elm.js && cp public/index.html public/ports.js public/theme.js public/style.css public/screen.js public/screen.wasm dist/ && cp public/glyphs/*.png dist/glyphs/
-
-# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32 into editor/public/screen.wasm.
-# Stripped, then wasm-opt'd if there is one whose sha256 is the pinned
-# release binary's (`just editor-wasm-opt`'s, else one on PATH; optional: it
-# trims ~17%, ~2% gzipped; any other is not run); each size printed, then
-# checked from node (screen.check.js, which prints the paint cost). Its own
-# target dir (target-wasm): the host's builds aren't touched.
-editor-screen:
+# The editor's glyphs: chimera-screen (the firmware's Renderer) for wasm32
+# into `out`. Stripped, then wasm-opt'd by the one whose sha256 is the pinned
+# release binary's (`just editor-wasm-opt`'s, else one on PATH; any other is
+# not run, and without it nothing is built: every kit's wasm is the same
+# build); each size printed, and checked for build paths. Its own target dir (target-wasm): the
+# host's builds aren't touched.
+editor-screen out="target/editor-kit/screen.wasm":
     #!/usr/bin/env bash
     set -euo pipefail
     export CARGO_TARGET_DIR=target-wasm
-    cargo build -q -p chimera-screen --target wasm32-unknown-unknown --profile wasm
-    out=editor/public/screen.wasm
+    # Public (the editor kit): panics carry no file, line or column, and no
+    # local path is left in it (check-bin-paths below).
+    T=wasm32-unknown-unknown
+    cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    flags="['-Zlocation-detail=none','--remap-path-prefix=$HOME=/build/hm','--remap-path-prefix=$cargo_home=/build/cargo','--remap-path-prefix=$PWD=/build/chimera']"
+    cargo build -q -p chimera-screen --target $T --profile wasm --config "target.$T.rustflags=$flags"
+    out="{{out}}"
+    mkdir -p "$(dirname "$out")"
     cp target-wasm/wasm32-unknown-unknown/wasm/chimera_screen.wasm "$out"
     size() { echo "screen.wasm $1: $(stat -c %s "$out") bytes, $(gzip -9c "$out" | wc -c) gzipped"; }
     size built
@@ -74,9 +92,10 @@ editor-screen:
         BINARYEN_CORES=10 "$opt" -Oz --all-features "$out" -o "$out"
         size wasm-opt
     else
-        echo "screen.wasm: no pinned wasm-opt (optional; just editor-wasm-opt fetches it)"
+        echo "screen.wasm: no pinned wasm-opt: \`just editor-wasm-opt\` fetches it" >&2
+        exit 1
     fi
-    node editor/public/screen.check.js
+    just check-bin-paths "$out"
 
 # binaryen's wasm-opt for editor-screen, pinned, into tools/binaryen/ (gitignored):
 # the release's static binary alone, its tarball's sha256 and its own checked.
@@ -95,11 +114,6 @@ editor-wasm-opt:
     echo "f661d2bb96cfc3e399dd3513c1efb674c820bb5a5a70edf0b4e5a029065c45c2  $tmp/binaryen-$v/bin/wasm-opt" | sha256sum -c --quiet
     mv "$tmp/binaryen-$v/bin/wasm-opt" "$dir/wasm-opt"
     "$dir/wasm-opt" --version
-
-# The UI component gallery (every component, every state, DAY and NIGHT, and
-# the JITTER probe), into editor/gallery/
-editor-gallery:
-    cd editor && npm install --no-audit --no-fund --silent && mkdir -p gallery/glyphs && npx elm make src/Gallery.elm --optimize --output=gallery/gallery.js && cp public/gallery.html gallery/index.html && cp public/style.css public/theme.js gallery/ && cp public/glyphs/*.png gallery/glyphs/
 
 # TAPE's listening rig (spec § 9): each model on each source into
 # target/listen/ (WAVs, report.txt, and index.html once every render passes
@@ -221,19 +235,19 @@ put-factory-sounds dir="target/factory-sounds/public" *flags:
 # Build STM32 firmware (release): target/chimera.bin and .bk2
 firmware:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
 
 # Build STM32 firmware with ORBIT (release): target/chimera-orbit.bin and .bk2
 firmware-orbit:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit
 
 # ORBIT with usb-device writing the configuration (`usb-config-writer`),
 # the fallback if the class's static (ADR 0260) fails on a host:
 # target/chimera-orbit-writer.bin and .bk2.
 firmware-orbit-writer:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features orbit,usb-config-writer
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit-writer
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-orbit-writer
 
 # Hardware Gate 2's power-pull aid (`bank2-gate`): the install holds 3 s at
 # each phase for a hand to pull the power, and the console takes `bank2
@@ -242,7 +256,7 @@ firmware-orbit-writer:
 # released: every other .bin is refused if it holds the aid.
 firmware-gate:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --features bank2-gate
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-gate
 
 utils := "cargo run -q --profile utils -p chimera-utils --"
 
@@ -359,7 +373,7 @@ check-door-placed elf:
     midi_ui+=('ui::smart_eq::')
     if grep -qE ' [tT] .*ToastTimer>::shows' <<< "$syms"; then midi_ui+=('ToastTimer>::shows'); fi
     if grep -qE ' [tT] .*Shares>::refusal' <<< "$syms"; then midi_ui+=('Shares>::refusal'); fi
-    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::osc::solo::' 'part_eq::dsp::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::' 'ui::notes::' 'part_peaks::kern::' 'ui::part_meter::' 'rev::duck::run' 'comp_key::kern::'; do
+    for pat in "${orbit[@]}" "${nrpn[@]}" "${pipe[@]}" "${midi_ui[@]}" 'midi_map::codec::' 'va::osc::door::' 'va::osc::solo::' 'part_eq::dsp::' 'va::lbfm::render_loop' 'VaEngine>::render_loopfm' 'chimera_engine::lfo_glyph::draw::' 'voice_fx::fuzz::Fuzz' 'voice_fx::look::render' 'filter::clean::Clean>::fed$' 'filter::dirty::Dirty>::fed$' 'filter::ladder::Ladder>::fed$' 'filter::k2040::K2040>::fed::' 'filter::sem::kern::' 'ui::jog::Jog>::pass' 'va::noise::kern::' 'dsp::delay::grain::' 'dsp::delay::tape::' 'dsp::chorus::kern::' 'dsp::grain::core::' 'voice::gate::kern::' 'voice::depth::kern::' 'dsp::modal::kern::' 'dsp::modal::render_bowed$' 'StringVoice>::render$' 'StringVoice>::colour$' 'algo::engine::kern::' 'algo::kernel::Kernel>::render_ops::' 'ui::pit_tuner::calc::' 'ui::walk::machine_edit_in' 'ui::walk::tape_note_in' 'ui::walk::tape_held_in' 'ui::walk::tape_fmt_in' 'ui::walk::law_text_in' 'ui::walk::delay_note_in' 'ui::walk::readout_word_in' 'ui::walk::tape_writes_in' 'ui::walk::band_note_in' 'stretch::grain::Grains>::on' 'randomize::kern::' 'console::ed::' 'ui::notes::' 'part_peaks::kern::' 'ui::part_meter::' 'rev::duck::run' 'comp_key::kern::' 'Instrument>::clear_avail_in$' 'Instrument>::admit_sym_in$' 'Instrument>::strike_ready_in$' 'Instrument>::ringing_kits_in$' 'Instrument>::follows_in$'; do
         grep -E " [tT] .*$pat" <<< "$syms" | awk -v pat="$pat" '{ n++; a = strtonum("0x" $1); o = (a - 0x08100000) % 0x40000; if (a < 0x08100000 || a >= 0x08200000) { print "not in bank 2: " $0 > "/dev/stderr"; bad = 1 } else if (a - 0x08100000 >= 0x80000 && (o < 0x400 || o >= 0x3FFE0)) { print "in a slot reserve or end marker: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print pat ": nothing linked" > "/dev/stderr"; exit bad || !n }'
     done
     # ed is pinned to the S4 group (ADR 0272), not anywhere in bank 2.
@@ -373,6 +387,8 @@ check-door-placed elf:
     # So are 0.4's tester cells' words (ADR 0292), PRT's meters (ADR 0293)
     # and the reverb's duck (ADR 0295).
     grep -E ' [tT] .*(ui::notes::|part_peaks::kern::|ui::part_meter::|rev::duck::)' <<< "$syms" | awk '{ a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "tester work outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }'
+    # So is batch E's SYMP pacing and DRUM bills (ADR 0320).
+    grep -E ' [tT] .*Instrument>::(clear_avail_in|admit_sym_in|strike_ready_in|follows_in|ringing_kits_in)$' <<< "$syms" | awk '{ n++; a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "sym_admit outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "sym_admit: nothing linked" > "/dev/stderr"; exit bad || !n }'
     # So is the compressor's KEY (ADR 0303).
     grep -E ' [tT] .*comp_key::kern::' <<< "$syms" | awk '{ n++; a = strtonum("0x" $1); if (a < 0x08180400 || a >= 0x081BFFE0) { print "comp KEY outside the S4 group: " $0 > "/dev/stderr"; bad = 1 } } END { if (!n) print "comp KEY: nothing linked" > "/dev/stderr"; exit bad || !n }'
     # So is the delay's tempo sync, engine and UI (ADR 0302).
@@ -380,6 +396,9 @@ check-door-placed elf:
     # And no solo code of theirs sits in bank 1: the quiet pulse's or its runs' (ADR 0283).
     # (awk alone: when all of it is inlined into `solo::play` there is none, and grep would fail.)
     awk '/ [tT] .*PulseQuiet/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "VA solo code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
+    # Nor any of batch E's SYMP pacing or DRUM fold out of line in bank 1:
+    # they inline into admission's door entries (ADR 0320).
+    awk '/ [tT] .*(DrumEngine>::runs$|DrumEngine>::follow_state$|SymPool>::pre_clear$|KsString>::clear_some$|Voice>::sym_pre_clear$|Voice>::drum_runs$|Voice>::sym_strike_adds$|Voice>::drum_follow_extra$)/ { a = strtonum("0x" $1); if (a < 0x08100000 || a >= 0x08200000) { print "pacing or fold code in bank 1: " $0 > "/dev/stderr"; bad = 1 } } END { exit bad }' <<< "$syms"
 
 # ITCM's state (ADR 0266, 0286): CPU-only, never a DMA's. Only the
 # residents tools/itcm-residents.txt lists lie in `[__sitcm, __eitcm)`, and
@@ -412,7 +431,7 @@ check-bank1 set:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p target/bank1
-    rust-objcopy -R .bank2 -O binary target/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
+    rust-objcopy -R .bank2 -O binary {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 "target/bank1/{{set}}.bin"
     python3 tools/bank1_budget.py "{{set}}" "target/bank1/{{set}}.bin"
 
 # Bank 2's room (ADR 0272): the last-built firmware's free space in S0-S3,
@@ -420,7 +439,7 @@ check-bank1 set:
 # 0251), and the bytes in use are held to the set's line in
 # tools/bank2-budget.txt under bank 1's rules.
 check-bank2 set:
-    python3 tools/bank2_budget.py "{{set}}" target/thumbv7em-none-eabihf/release/chimera-stm32
+    python3 tools/bank2_budget.py "{{set}}" {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
 
 # The .bk2's slot stubs and end markers (ADR 0272): chimera-utils checks
 # their bytes, the size and the 0xFF reserves; here, every gap from a
@@ -553,11 +572,12 @@ release version *flags:
     gh release create "v$V" "${assets[@]}" -R $REPO --draft --title "Chimera $V" --notes-file "$out/RELEASE-NOTES.md"
     echo "drafted v$V on $REPO: review and publish it there"
 
-# Fail if a binary carries a home directory, the cargo registry or the user name (#413).
+# Fail if a binary carries a home directory, the cargo registry, the user name
+# (#413), a crate's source path or the remapped repo (`/build/chimera`).
 check-bin-paths bin:
     #!/usr/bin/env bash
     set -euo pipefail
-    if strings -a {{bin}} | grep -E -e '/home/' -e '\.cargo/registry' -e "$(id -un)"; then
+    if strings -a {{bin}} | grep -E -e '/home/' -e '\.cargo/registry' -e "$(id -un)" -e 'chimera-[a-z]*/src' -e '/build/chimera'; then
         echo "{{bin}} leaks a build path" >&2; exit 1
     fi
 
@@ -579,14 +599,14 @@ build:
 # folds into code, and bank 1 is measured as the commit would build (#874).
 check $CHIMERA_STAMP_CLEAN="1":
     python3 -m unittest discover -s tools -p 'test_*.py'
-    # The editor's Elm tests: its Part count is pinned to the unit's (UnitTest).
-    just editor-test
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     # The editor's glyph renderer against the console's `ed` and the sim's frame.
     cargo test -p chimera-screen
     cargo test -p chimera-core -p chimera-engine --no-default-features
     cargo test -p chimera-core --features fault-inject --test console_fault_test --test console_answer_test
+    # The whole page walks, normal and LARGE (~15 s): ignored by `test` for their time (#637).
+    cargo test -p chimera-core --test all_pages_walk_test -- --ignored
     # WALK's kept glyph styles (ADR 0209): host only, never in firmware.
     cargo test -p chimera-core --features walk-styles --test tape_walk_glyph_test
     # TAPE's UI with bank 2 closed, through the host's own door (ADR 0175).
@@ -595,12 +615,16 @@ check $CHIMERA_STAMP_CLEAN="1":
     # TAPE's, the reverb's, VA FM's and solos' (and the solos fuzzed against their pairs), the LFO raster's, FUZZ's, FB's, SEM's, GRAIN's, the VCA gate's, ALGO's and the streamed loads' bank-1 sides through the host's own door.
     cargo test -p chimera-engine --features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test --test va_solo_door_test --test va_solo_fuzz_test --test lfo_proxy_test --test fuzz_proxy_test --test fed_proxy_test --test sem_proxy_test --test stream_door_test --test glyph_door_test --test grain_proxy_test --test gate_proxy_test --test depth_proxy_test --test algo_door_test --test modal_door_test --test midi_door_test
     # ORBIT's runner and pages through the host's own door: open it plays as before the move, closed nothing (ADR 0208); a closed door keeps each Part's map record for its saves (#815).
-    cargo test -p chimera-core --features bank2 --test orbit_door_test --test part_eq_door_test --test part_peaks_door_test --test stereo_door_test --test comp_key_door_test --test randomize_door_test --test drum_groups_door_test --test part_voices_door_test --test feel_door_test --test algo_pages_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test
+    cargo test -p chimera-core --features bank2 --test orbit_door_test --test part_eq_door_test --test part_peaks_door_test --test stereo_door_test --test comp_key_door_test --test randomize_door_test --test drum_groups_door_test --test part_voices_door_test --test feel_door_test --test algo_pages_door_test --test midi_ui_door_test --test midi_map_door_test --test midi_boot_door_test --test ed_door_test --test mpe_closed_door_test --test bindings_codec_test --test replace_guard_test --test controller_page_test --test library_ui_test --test exclusive_state_test
     # A DRUM Part's kit in the library and its status through the host's own door, open and closed (ADR 0305).
     cargo test -p chimera-core --features bank2 --test kit_library_test --test kit_library_closed_test
     just test-fat-tools
     cargo test -p chimera-desktop
     cargo build -p chimera-desktop --no-default-features
+    # The fuzz targets compile, so none rots unnoticed (#505).
+    cargo check --manifest-path chimera-core/fuzz/Cargo.toml --bins
+    cargo check --manifest-path chimera-desktop/fuzz/Cargo.toml --bins
+    cargo check --manifest-path chimera-midi/fuzz/Cargo.toml --bins
     # The default build in release too: with TAPE its dev build passes FLASH (#303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     # Every other feature set in release: a build check, not a debug flash;
@@ -609,35 +633,35 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
     just check-bank2 default
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit
     just check-bank1 orbit
     just check-bank2 orbit
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features bank2-gate
     just check-bank1 bank2-gate
     just check-bank2 bank2-gate
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     # ORBIT with usb-device writing the configuration, the static's fallback (ADR 0260).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --features orbit,usb-config-writer
     just check-bank1 orbit,usb-config-writer
-    just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     # The gate's doors and placement, USB audio's stream among them (ADR
     # 0256); `release-bin` checks the default and ORBIT builds'.
-    {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32
-    just check-door-placed target/thumbv7em-none-eabihf/release/chimera-stm32
+    {{utils}} door-check {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
+    just check-door-placed {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
-    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm target/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
+    for f in {{bench_sets}}; do cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features "$f" || exit 1; {{utils}} door-check {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; just check-bank1 "$f" || exit 1; just check-itcm {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 || exit 1; done
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # Its split as `flash-sd-probe` makes it (the seal, check-itcm with ITCM empty).
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     # The bootloader links cortex-m-rt's script itself: without it lld warns
     # and links an ELF with no vector table.
     out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
-    rust-objdump -h target/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
+    rust-objdump -h {{target_dir}}/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
     cargo build -p chimera-theory --target thumbv7em-none-eabihf
     just clippy
     just loom
@@ -676,7 +700,7 @@ stack-check:
     objdump="$bin/llvm-objdump"
     nm="$bin/llvm-nm"
     test -x "$objdump" && test -x "$nm"
-    elf=target/thumbv7em-none-eabihf/release/chimera-stm32
+    elf={{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     sets=("" "--no-default-features" "--features orbit" "--features bank2-gate")
     for f in {{bench_sets}}; do sets+=("--no-default-features --features $f"); done
     sets+=("--no-default-features --features sd-probe")
@@ -758,6 +782,9 @@ clippy:
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features orbit -- -D warnings
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --features bank2-gate -- -D warnings
     cargo clippy -p chimera-core --features bank2-gate --all-targets -- -D warnings
+    # bank2's tests, the door's proxies among them (#811, #1018).
+    cargo clippy -p chimera-core --features bank2,test-support --all-targets -- -D warnings
+    cargo clippy -p chimera-engine --features bank2,test-support --all-targets -- -D warnings
     cargo clippy -p chimera-core --features walk-styles --test tape_walk_glyph_test -- -D warnings
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
@@ -828,7 +855,7 @@ flash:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera
     python3 tools/chimera-usb.py update target/chimera.bin target/chimera.bk2
 
 # Flash one bench area to PreenFM3 via DFU: `just flash-bench <area> [extra]`,
@@ -849,7 +876,7 @@ flash-bench area extra="":
     features="bench-{{area}}"
     if [ -n "{{extra}}" ]; then features="$features,{{extra}}"; fi
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features "$features"
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-bench
     echo "bank 2 not installed by this: stage target/chimera-bench.bk2 first (chimera-usb.py bank2, under a console build)"
     python3 tools/chimera-usb.py to-dfu
     log=$(mktemp) && trap 'rm -f "$log"' EXIT
@@ -866,7 +893,7 @@ flash-fault:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
     python3 tools/chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
@@ -890,7 +917,7 @@ backup-bootloader:
 # Flash the SD bring-up probe (--no-default-features --features sd-probe) to PreenFM3 via DFU
 flash-sd-probe:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features sd-probe
-    just bank2-split target/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
+    just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
     dfu-util -a0 -d 0x0483:0xdf11 -D target/chimera-sd-probe.bin -s 0x8020000:leave
 
 # Coverage-guided fuzz of the Sound and project decoders, the library peek, seeded with the

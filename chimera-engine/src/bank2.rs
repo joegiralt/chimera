@@ -21,25 +21,28 @@ pub const PROBE_ADDS: u32 = 42;
 /// Where the link puts the door: right after the header (`bank2.x` asserts
 /// `__bank2_door` is this).
 pub const DOOR_ADDR: u32 = BANK2_BASE + HEADER_LEN;
+/// The door table's room (ADR 0320): 0x180, grown from 0x100 when ORBIT's
+/// table filled it (256 B), room for about 30 entries more.
+pub const DOOR_ROOM: u32 = 0x180;
 /// The board's table (`chimera_board::bank2::BoardDoor`): the card
 /// interrupt's streaming work. A crate the engine can't name keeps its own
 /// table at its own fixed slot after the door (`bank2.x` asserts each),
 /// reached through its `DoorSlot`.
-pub const BOARD_DOOR_ADDR: u32 = DOOR_ADDR + 0x100;
+pub const BOARD_DOOR_ADDR: u32 = DOOR_ADDR + DOOR_ROOM;
 /// The UI's table (`chimera_core::bank2::UiDoor`): TAPE's cells and strip.
-pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x180;
+pub const UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x200;
 /// The bench's table (`chimera-stm32`'s `bench::BenchDoor`, ADR 0194): its
 /// run, in a bench build only.
-pub const BENCH_DOOR_ADDR: u32 = DOOR_ADDR + 0x200;
+pub const BENCH_DOOR_ADDR: u32 = DOOR_ADDR + 0x280;
 /// ORBIT's pages' table (`chimera_core::ui::orbit::door::OrbitUiDoor`, ADR
 /// 0208), in a build with `orbit` only.
-pub const ORBIT_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x280;
+pub const ORBIT_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x300;
 /// The MIDI UI's table (`chimera_core::ui::cc::MidiUiDoor`, ADR 0217):
 /// bindings resolving.
-pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x300;
+pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
 /// The console's `ed` table (`chimera_core::bank2::EdDoor`, ADR 0251): the
 /// browser editor's answers.
-pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
+pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x400;
 include!("s4_tables.rs");
 const _: () = assert!(S4_TABLES_ADDR == Slot::Mixer.base() + slot::RESERVE);
 // On the chip: a host's pointers are twice as wide (the solos' table
@@ -177,6 +180,10 @@ pub struct Bank2Door {
 // less plainly).
 #[cfg(all(feature = "bank2", target_pointer_width = "32"))]
 const _: () = assert!(size_of::<Bank2Door>() <= (BOARD_DOOR_ADDR - DOOR_ADDR) as usize);
+// And keeps room for eight entries more (ADR 0320): a table that grows
+// into the last of it asks for the next layout change before it fails.
+#[cfg(all(feature = "bank2", target_pointer_width = "32"))]
+const _: () = assert!(size_of::<Bank2Door>() + 8 * 4 <= DOOR_ROOM as usize);
 
 impl Bank2Door {
     #[inline(always)]

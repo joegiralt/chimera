@@ -199,13 +199,14 @@ fn every_leaf_cell_is_described() {
         "PART3.CH",
         "PART6.OUT",
         "PART2.TUNING",
-        "PART4.SNAP",
         "THEME.ACCENT",
         "MIDI.TUNE",
         "RANDOM.OSC",
     ] {
         assert!(got.contains(a), "{a}");
     }
+    // LIVE SNAP snaps to ORBIT's chord: none without it (#323).
+    assert_eq!(got.contains("PART4.SNAP"), cfg!(feature = "orbit"));
 }
 
 #[test]
@@ -258,11 +259,16 @@ fn a_theme_set_reaches_the_panels_colours_on_the_next_frame() {
 #[test]
 fn a_midi_and_a_parts_settings_cell_set_round_trip() {
     let mut f = Fake::new();
-    set(&mut f, "PART3.SNAP", "#1");
+    let orbit = cfg!(feature = "orbit");
+    if orbit {
+        set(&mut f, "PART3.SNAP", "#1");
+    }
     set(&mut f, "MIDI.ECHO", "#0");
     apply(&mut f);
-    let snap = ask(&mut f, "ed get PART3.SNAP\n");
-    assert!(snap.starts_with("val PART3.SNAP 0.5 1 "), "{snap}");
+    if orbit {
+        let snap = ask(&mut f, "ed get PART3.SNAP\n");
+        assert!(snap.starts_with("val PART3.SNAP 0.5 1 "), "{snap}");
+    }
     let echo = ask(&mut f, "ed get MIDI.ECHO\n");
     assert!(echo.starts_with("val MIDI.ECHO 0 0 "), "{echo}");
 }
@@ -322,7 +328,7 @@ fn since_answers_settings_whole_then_its_diff() {
     assert!(s.contains("\nprojects 0\n"), "{s}");
     // A Part's SETTINGS cells are the mixer's values.
     let m = section(&a, "mixer");
-    assert!(m.contains("\nval PART3.SNAP "), "{m}");
+    assert!(m.contains("\nval PART3.CH "), "{m}");
     assert!(!s.contains("PART3."), "{s}");
     let n: u32 = a.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
     assert_eq!(since(&mut f, n), format!("OK {}\n", n + 1));
@@ -658,7 +664,7 @@ fn settings_fixture() {
     let mut f = Fake::new();
     let text = pages(&mut f).join("");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/settings-schema.txt");
+        .join("tests/fixtures/editor/settings-schema.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::write(&path, &text).unwrap();
     }

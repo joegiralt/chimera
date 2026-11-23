@@ -359,7 +359,8 @@ fn leaving_an_anchor_plays_as_before_with_no_door() {
 }
 
 /// `va_scenes::prints` at origin/0.4 `807e740d`, door open: every scene as
-/// before the solo.
+/// before the solo. SYNC THROUGH LOOPFM re-taken when SYNC's slave starts
+/// on the master's phase at the swap (#670, ADR 0310).
 const SCENES: [u64; 21] = [
     0xf8c013c5830747d2,
     0xb69e917b497e4636,
@@ -373,7 +374,7 @@ const SCENES: [u64; 21] = [
     0x421ab479f81ae0cd,
     0xb2ff66e25af7e855,
     0x4176827baec83b64,
-    0x6f8bac5461ef61fe,
+    0x5ea75f33c0b6b073,
     0xf35dd5460946e525,
     0x8d50a4bb43e4ca21,
     0x84ec05f12b7416d1,

@@ -150,7 +150,7 @@ impl LoadDoor {
 /// Why a streamed load published nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamFail {
-    /// In more runs than the registry keeps: `FRAGMENTED · COPY IT AGAIN`.
+    /// In more runs than the registry keeps: `FRAGMENTED · SILENT`.
     Fragmented,
     /// Every stream row taken: `STREAMS FULL`.
     Full,

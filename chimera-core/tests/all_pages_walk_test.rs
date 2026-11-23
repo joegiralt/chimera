@@ -113,7 +113,18 @@ impl Context {
                     feed(ui, Input::press(ButtonId::Minus));
                 }
             }
-            Context::Fx => to_fx(ui, node),
+            Context::Fx => {
+                // MORE 2 holds HALL's DENSITY; under another TYPE, EDIT
+                // goes round past it (#637). The last page's encoders may
+                // have turned TYPE away.
+                let more2 = self.chain().active_def(node, sub).map(|d| d.id)
+                    == Some(chimera_core::ui::block_registry::EFX_MORE2.id);
+                if more2 {
+                    ui.project_mut().edit_fx().reverb.kind =
+                        chimera_core::dsp::reverb::ReverbType::Hall;
+                }
+                to_fx(ui, node)
+            }
             Context::Leaf(i) => to_leaf(ui, &leaves()[i].labels),
         }
         for _ in 0..sub {

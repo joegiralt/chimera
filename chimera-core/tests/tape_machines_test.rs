@@ -4,6 +4,10 @@
 //! Elektron Digitakt II (machines; § Playback modes), Octatrack manual OS
 //! 1.25 § Machines, Mellotron M400, CHOMPI (ideas only).
 
+// TAPE's DSP as bank 1 builds it: under `bank2` the engine is the door's
+// proxy (tape_proxy_test), and none of this links (#811).
+#![cfg(not(feature = "bank2"))]
+
 mod common;
 
 use chimera_core::dsp::tape_engine::{Tron, Way};
