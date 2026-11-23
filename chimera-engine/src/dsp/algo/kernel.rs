@@ -194,6 +194,8 @@ struct Lane<'a> {
     op: usize,
     phase: u32,
     inc: u32,
+    /// The increment's step a sample (`render_ramped`), 0 held.
+    dinc: i32,
     gain: f32,
     dgain: f32,
     carrier: f32,
@@ -293,12 +295,32 @@ impl Kernel {
             // `render_ops`: the arm alone cost every other loop in it a
             // register reload.
             if skip_pm_gains(blk) {
-                self.render_ops::<true>(blk, env, out, taps);
+                self.render_ops::<true>(blk, &STEADY, env, out, taps);
             } else {
-                self.render_ops::<false>(blk, env, out, taps);
+                self.render_ops::<false>(blk, &STEADY, env, out, taps);
             }
         } else {
-            self.render_samples(blk, env, out, taps);
+            self.render_samples(blk, &STEADY, env, out, taps);
+        }
+    }
+
+    /// `render` with each table operator's increment ramping by `dinc[op]`
+    /// a sample (signed, wrapping), from its `inc` on the first (#164): a fast
+    /// route on the voice's pitch. A noise or formant operator reads 0.
+    /// Every loop adds the step, 0 under `render`: one loop for both, so
+    /// all zeros renders as `render`, bit for bit.
+    pub fn render_ramped(
+        &mut self,
+        blk: &KernelBlock,
+        dinc: &[i32; OPS],
+        env: &mut [OpEnv; OPS],
+        out: &mut [f32; BLOCK_SIZE],
+        taps: &mut TapRows,
+    ) {
+        if blk.plan.delayed == 0 {
+            self.render_ops::<false>(blk, dinc, env, out, taps);
+        } else {
+            self.render_samples(blk, dinc, env, out, taps);
         }
     }
 
@@ -309,6 +331,7 @@ impl Kernel {
     fn render_ops<const FREE: bool>(
         &mut self,
         blk: &KernelBlock,
+        dinc: &[i32; OPS],
         env: &mut [OpEnv; OPS],
         out: &mut [f32; BLOCK_SIZE],
         taps: &mut TapRows,
@@ -330,7 +353,7 @@ impl Kernel {
         while k < OPS {
             let a = plan.order[k] as usize % OPS;
             if silent(&blk.ops[a]) {
-                self.idle(&blk.ops[a], a, &mut env[a]);
+                self.idle(&blk.ops[a], dinc[a], a, &mut env[a]);
                 bufs[k] = [MaybeUninit::new(0.0); BLOCK_SIZE];
                 k += 1;
                 continue;
@@ -379,7 +402,7 @@ impl Kernel {
                 k += 1;
                 continue;
             }
-            let mut x = self.lane(blk, a, dm);
+            let mut x = self.lane(blk, a, dm, dinc[a]);
             let pair = k + 1 < OPS
                 && n <= 2
                 && is_table(&blk.ops[plan.order[k + 1] as usize % OPS])
@@ -394,7 +417,7 @@ impl Kernel {
                 };
             if pair {
                 let b = plan.order[k + 1] as usize % OPS;
-                let mut y = self.lane(blk, b, dm);
+                let mut y = self.lane(blk, b, dm, dinc[b]);
                 let m = plan.starts[k + 2].saturating_sub(plan.starts[k + 1]) as usize;
                 let link_b = |i: usize| {
                     let e = plan.edges[plan.starts[k + 1] as usize + i];
@@ -465,12 +488,13 @@ impl Kernel {
 
     /// A table operator's lane (`render_ops` sends noise to `noise_lane`).
     #[inline(always)]
-    fn lane(&self, blk: &KernelBlock, op: usize, dm: f32) -> OpState {
+    fn lane(&self, blk: &KernelBlock, op: usize, dm: f32, dinc: i32) -> OpState {
         let (plan, o) = (blk.plan, &blk.ops[op]);
         let (lo, hi, xfade_from, xfade_to) = tables(o);
         OpState {
             phase: self.phase[op],
             inc: o.inc,
+            dinc,
             gain: o.gain_from,
             dgain: (o.gain_to - o.gain_from) * STEP,
             carrier: blend(plan.carrier_a[op], plan.carrier_b[op], blk.morph_from),
@@ -630,7 +654,7 @@ impl Kernel {
     /// An operator silent all block outputs zeros (its row stays 0), so
     /// only its phase and envelope move; the output is unchanged. A
     /// formant's lanes close, and a reset's first grain waits for the wrap.
-    fn idle(&mut self, o: &OpBlock, op: usize, env: &mut OpEnv) {
+    fn idle(&mut self, o: &OpBlock, dinc: i32, op: usize, env: &mut OpEnv) {
         if let KindState::Formant(f) = &mut self.state[op] {
             *f = FormantState::CLOSED;
         }
@@ -642,7 +666,11 @@ impl Kernel {
             }
             env.store(run);
         }
-        self.phase[op] = self.phase[op].wrapping_add(o.inc.wrapping_mul(BLOCK_SIZE as u32));
+        // A ramp's block: Σ (inc + s·dinc) for s < 64 (#164); 0 adds 0.
+        let ramp = dinc.wrapping_mul((BLOCK_SIZE * (BLOCK_SIZE - 1) / 2) as i32);
+        self.phase[op] = self.phase[op]
+            .wrapping_add(o.inc.wrapping_mul(BLOCK_SIZE as u32))
+            .wrapping_add_signed(ramp);
         self.out[op] = 0.0;
         self.hist[op] = 0.0;
     }
@@ -657,6 +685,7 @@ impl Kernel {
     fn render_samples(
         &mut self,
         blk: &KernelBlock,
+        dinc: &[i32; OPS],
         env: &mut [OpEnv; OPS],
         out: &mut [f32; BLOCK_SIZE],
         taps: &mut TapRows,
@@ -706,6 +735,7 @@ impl Kernel {
                 op,
                 phase: self.phase[op],
                 inc: o.inc,
+                dinc: dinc[op],
                 gain: o.gain_from,
                 dgain: (o.gain_to - o.gain_from) * STEP,
                 carrier: blend(plan.carrier_a[op], plan.carrier_b[op], blk.morph_from),
@@ -753,7 +783,7 @@ impl Kernel {
         }
         for l in &lanes {
             if silent(&blk.ops[l.op]) {
-                self.idle(&blk.ops[l.op], l.op, &mut env[l.op]);
+                self.idle(&blk.ops[l.op], dinc[l.op], l.op, &mut env[l.op]);
             } else {
                 self.phase[l.op] = l.phase;
                 self.hist[l.op] = l.hist;
@@ -794,6 +824,7 @@ impl Kernel {
         }
         let (ph, wrapped) = l.phase.overflowing_add(l.inc);
         l.phase = ph;
+        l.inc = l.inc.wrapping_add_signed(l.dinc);
         let pm_phase = (pm as i32 as u32) << 8;
         let p = ph.wrapping_add(pm_phase);
         let (y, weight) = match &mut l.src {
@@ -829,6 +860,9 @@ impl Kernel {
 }
 
 const STEP: f32 = 1.0 / BLOCK_SIZE as f32;
+
+/// No operator's increment ramps (`render`).
+const STEADY: [i32; OPS] = [0; OPS];
 
 /// Whether `blk` gains from `render_ops::<true>`: on the M7 its no-PM
 /// loop saves five instructions a sample on each lit table op with no link
@@ -1477,6 +1511,8 @@ fn still_span<const S: u8>(
 struct OpState {
     phase: u32,
     inc: u32,
+    /// The increment's step a sample (`render_ramped`), 0 held.
+    dinc: i32,
     gain: f32,
     dgain: f32,
     carrier: f32,
@@ -1509,7 +1545,8 @@ fn pick2(env: &mut [OpEnv; OPS], a: usize, b: usize) -> (&mut OpEnv, &mut OpEnv)
 
 /// One sample of one operator, exactly as `render_samples` does it. With
 /// `PM` false (no link, FEEDBACK 0) the PM is left out: `0 · x` is ±0 or
-/// NaN, and either casts to phase 0.
+/// NaN, and either casts to phase 0. The increment then steps by `dinc`
+/// (#164), 0 but under a fast pitch route.
 #[inline(always)]
 fn tick<const N: usize, const PM: bool>(
     st: &mut OpState,
@@ -1519,6 +1556,7 @@ fn tick<const N: usize, const PM: bool>(
     s: usize,
 ) -> f32 {
     st.phase = st.phase.wrapping_add(st.inc);
+    st.inc = st.inc.wrapping_add_signed(st.dinc);
     let p = if PM {
         let mut pm = st.feedback * (st.prev + st.hist);
         for l in links.iter_mut() {

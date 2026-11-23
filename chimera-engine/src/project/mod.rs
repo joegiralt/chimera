@@ -523,8 +523,6 @@ impl Project {
     fn load_part(&mut self, src: PartSource) -> Result<(), ReplaceError> {
         self.bump();
         let part = &mut self.perf.parts[src.part.index()];
-        part.loads.bump();
-        part.env = [0; 2];
         // Cleared only once the load can't fail: a refused one keeps it.
         let kept = &mut self.kept[src.part.index()];
         match src.from {
@@ -547,6 +545,10 @@ impl Project {
                 part.origin = Origin::Init(e);
             }
         }
+        // Landed: the audio sees a new Sound (and fades the old, #14); a
+        // refused load moves neither.
+        part.loads.bump();
+        part.env = [0; 2];
         Ok(())
     }
 }

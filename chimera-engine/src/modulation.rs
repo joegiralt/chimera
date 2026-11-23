@@ -135,6 +135,24 @@ impl ModSource {
         self as usize
     }
 
+    /// Moves within a note, block to block: the ENVs and LFOs. The others
+    /// are latched at the strike or slewed controllers.
+    pub const fn is_fast(self) -> bool {
+        match self {
+            ModSource::Env1
+            | ModSource::Env2
+            | ModSource::Env3
+            | ModSource::Lfo1
+            | ModSource::Lfo2
+            | ModSource::Lfo3 => true,
+            ModSource::Vel
+            | ModSource::Note
+            | ModSource::Wheel
+            | ModSource::Press
+            | ModSource::Timbre => false,
+        }
+    }
+
     /// The ENV slot this source is, if any.
     pub const fn env_slot(self) -> Option<crate::dsp::modulator::EnvSlot> {
         use crate::dsp::modulator::EnvSlot;

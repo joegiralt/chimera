@@ -972,7 +972,7 @@ impl Machine for Bongo {
             &Drive {
                 level: Level::Open,
                 knobs: self.knobs,
-                hit: self.hit,
+                hit: Unit::new(self.hit.unit()),
                 note: self.note,
                 fs: FS,
             },

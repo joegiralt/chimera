@@ -112,10 +112,17 @@ pub(super) mod kern {
                 _ => Level::Open,
             },
         };
+        // A DRUM hit's velocity is its kernel's level by its pad's VEL,
+        // already in the block: it strikes at full height, so the law
+        // applies once (#963).
+        let hit = match &v.slot {
+            EngineSlot::Drum(_) => Unit::new(1.0),
+            _ => Unit::new(v.last_velocity.unit()),
+        };
         let d = Drive {
             level,
             knobs,
-            hit: v.last_velocity,
+            hit,
             note: v.last_note,
             fs: v.sample_rate as f32,
         };

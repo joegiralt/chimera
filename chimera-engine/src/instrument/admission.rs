@@ -62,6 +62,8 @@ pub struct AdmitDoor {
     strike_ready: StrikeReady,
     ringing_kits: fn(&Instrument) -> [crate::dsp::drum::sound::KitBill; crate::hw::MAX_PARTS],
     follows: fn(&Instrument) -> [Cost; MAX_VOICES],
+    fade_replaced: fn(&mut Instrument, &AudioShared),
+    ramps: fn(&AudioShared) -> super::part_sound::Ramps,
 }
 
 /// `AdmitDoor::strike_ready`'s entry.
@@ -95,6 +97,16 @@ impl AdmitDoor {
         w: super::Waiting,
     ) -> bool {
         (self.strike_ready)(i, v, params, note, w)
+    }
+
+    #[inline(always)]
+    pub(crate) fn fade_replaced(&self, i: &mut Instrument, shared: &AudioShared) {
+        (self.fade_replaced)(i, shared)
+    }
+
+    #[inline(always)]
+    pub(crate) fn ramps(&self, shared: &AudioShared) -> super::part_sound::Ramps {
+        (self.ramps)(shared)
     }
 
     #[inline(always)]
@@ -171,6 +183,8 @@ impl Instrument {
         strike_ready: Self::strike_ready_in,
         ringing_kits: Self::ringing_kits_in,
         follows: Self::follows_in,
+        fade_replaced: Self::fade_replaced_in,
+        ramps: Self::ramps_in,
     };
 
     /// What key `key`'s note `note` on Part `p`, reading `source`, asks of

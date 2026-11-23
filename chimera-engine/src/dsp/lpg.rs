@@ -55,10 +55,10 @@
 //! The cadence runs across the voice's blocks, so a 64-sample block holds
 //! five or six steps. Every loop is bank 2's (`voice::gate::kern`).
 
+use crate::MidiNote;
 use crate::dsp::va::osc::Unit;
 use crate::dsp::{clampf, fast_exp2};
 use crate::hw::{BLOCK_SIZE, Cost};
-use crate::{MidiNote, Velocity};
 
 type Buf = [f32; BLOCK_SIZE];
 
@@ -183,8 +183,9 @@ impl Level<'_> {
 pub struct Drive<'a> {
     pub level: Level<'a>,
     pub knobs: Knobs,
-    /// The note's velocity: × the strike's peak.
-    pub hit: Velocity,
+    /// The strike's height, × its peak: the note's velocity; 1 for a DRUM
+    /// hit, whose velocity is already in its level (#963).
+    pub hit: Unit,
     /// The note, for the strike's rise (Plaits').
     pub note: MidiNote,
     pub fs: f32,
@@ -484,7 +485,7 @@ impl Lpg {
         // Only the routes read it, and they are never `Law::Ping`.
         self.detail = 1.0 - r.w;
         let input = if self.rising {
-            let x = s * d.hit.unit();
+            let x = s * d.hit.get();
             let peak = match law {
                 Law::Accent => u + x * (1.0 - u),
                 Law::Ping => (u + x).min(1.0),

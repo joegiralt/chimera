@@ -149,7 +149,7 @@ fn gate_hit(
                 .as_ref()
                 .map_or(Level::Open, |l| Level::Routes(l, Unit::new(1.0))),
             knobs: Knobs::of([a, d, s]),
-            hit,
+            hit: Unit::new(hit.unit()),
             note: MidiNote::new(note).unwrap(),
             fs: FS as f32,
         };
@@ -719,7 +719,7 @@ fn the_gate_sweeps_smoothly() {
             let d = Drive {
                 level: Level::Routes(&half, Unit::new(1.0)),
                 knobs: Knobs::of(k),
-                hit: Velocity::MAX,
+                hit: Unit::new(1.0),
                 note: MidiNote::new(60).unwrap(),
                 fs: FS as f32,
             };
@@ -748,7 +748,7 @@ fn the_gate_recovers_from_nan() {
         let d = Drive {
             level: Level::Routes(level, Unit::new(1.0)),
             knobs: Knobs::of([0.7, 0.5, 0.3]),
-            hit: Velocity::MAX,
+            hit: Unit::new(1.0),
             note: MidiNote::new(60).unwrap(),
             fs: FS as f32,
         };
@@ -846,7 +846,7 @@ fn a_softer_strike_never_drops_the_gate() {
     let drive = |vel: u8| Drive {
         level: Level::Routes(&open, Unit::new(1.0)),
         knobs: Knobs::of([0.5, 0.5, 1.0]),
-        hit: Velocity::new(vel).unwrap(),
+        hit: Unit::new(Velocity::new(vel).unwrap().unit()),
         note: MidiNote::new(60).unwrap(),
         fs: FS as f32,
     };

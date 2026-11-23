@@ -371,6 +371,13 @@ pub struct AlgoEngine {
     note: MidiNote,
     /// The voice's pitch offset in semitones (`set_pitch`, ADR 0042).
     pitch: f32,
+    /// The last block's ratio-1 cycles a sample, which a ramped block's
+    /// increments start from (#164); 0 before a note's first block.
+    ramp_from: Option<f32>,
+    /// Its Part's fast pitch routes can pass a semitone
+    /// (`engines::pitch_ramps`, taken once a publish by the Instrument):
+    /// this voice's table operators ramp (#164).
+    ramps: bool,
     /// A glide steal's portamento: the sounding pitch over the note's,
     /// gliding to 1 (#254).
     slide: Glide,
@@ -403,8 +410,8 @@ pub struct AlgoEngine {
 }
 
 crate::in_place::field_list!(AlgoEngine => AlgoEngine {
-    kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, slide,
-    velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, pm_k, peak, view, law_key,
+    kernel, env, plan, plan_key, kinds, rates, gain, mip, morph, norm, swap, note, pitch, ramp_from, ramps,
+    slide, velocity, active, held, latch, noise_c, noise_k, mix, c_ratio, pm_k, peak, view, law_key,
     laws, noise,
 });
 
@@ -424,6 +431,13 @@ const fn table_of(k: OpKind) -> WaveId {
     }
 }
 
+/// `COST_RAMP`: a ramped table operator's start increment, taken each
+/// block (`op_cycles` again, its cast, and the difference's divide by 64,
+/// which compiles to shifts: ~100 cycles), over 64 samples. The loop's own
+/// step, an integer add a sample that adds 0 when steady, runs on every
+/// operator in `COST_OP`.
+const RAMP_CYCLES: u32 = 2;
+
 /// DETUNE's top ratio, +3 steps.
 const DETUNE_TOP: f32 = exp2(3.0 * DETUNE_CENTS / 1200.0);
 
@@ -438,6 +452,9 @@ impl AlgoEngine {
     pub const COST_OP: Cost = Cost(60); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_LINK: Cost = Cost(8); // measured 2026-09-27, bench, rev V at 480 MHz
     pub const COST_FEEDBACK: Cost = Cost(1); // measured 2026-09-27, bench, rev V at 480 MHz
+    /// A priced table operator under a fast pitch route (#164): its
+    /// block's start increment (`render_ramped`).
+    pub const COST_RAMP: Cost = Cost(RAMP_CYCLES);
     // Counted on the bench-algo ELF with tools/loop_count.py (ADR 0131): a
     // SKIRT 1–3 FRMT's two lanes in spans (`run_formant::<3>`), SKIRT 0's
     // (`::<0>`), and with links the moving loop (`run_moving` and
@@ -555,6 +572,24 @@ impl AlgoEngine {
         Cost(Self::COST_BASE.0 + ops + links * Self::COST_LINK.0 + feedback * Self::COST_FEEDBACK.0)
     }
 
+    /// What a fast pitch route (`engines::pitch_ramps`) adds to a voice's
+    /// bill (#164): `COST_RAMP` for every table operator, an upper bound
+    /// (the block takes a start increment for each one sounding). The
+    /// Instrument bills it once a publish (`part_sound::ramps_in`).
+    #[inline(always)]
+    pub fn ramp_cost(p: &AlgoParams) -> Cost {
+        let tables = (0..OPS)
+            .filter(|&i| matches!(p.kinds().get(i), OpKind::Table(_)))
+            .count();
+        Cost(tables as u32 * Self::COST_RAMP.0)
+    }
+
+    /// Whether this voice's table operators ramp (`ramps`): its Part's
+    /// `engines::pitch_ramps`, set by the Instrument before each block.
+    pub fn set_pitch_ramps(&mut self, on: bool) {
+        self.ramps = on;
+    }
+
     /// The ops the kernel runs next block: gain off zero where the last
     /// block ended (a LEVEL gliding to 0 runs until it lands, ADR 0112).
     pub fn running(&self) -> [bool; OPS] {
@@ -591,6 +626,8 @@ impl AlgoEngine {
             addr_of_mut!((*p).swap).write(Swap::Idle);
             addr_of_mut!((*p).note).write(MidiNote::A4);
             addr_of_mut!((*p).pitch).write(0.0);
+            addr_of_mut!((*p).ramp_from).write(None);
+            addr_of_mut!((*p).ramps).write(false);
             addr_of_mut!((*p).slide).write(Glide::new(1.0, 1.0));
             addr_of_mut!((*p).velocity).write(1.0);
             addr_of_mut!((*p).active).write(false);
@@ -629,6 +666,7 @@ impl AlgoEngine {
         }
         self.note = note;
         self.velocity = velocity.unit();
+        self.ramp_from = None;
         let m = Morph::from_param(live.morph);
         let level = level_gains(&live);
         if !self.active {
@@ -860,6 +898,11 @@ impl AlgoEngine {
             OpKind::Table(_) => mip_step(self.mip[i], self.mip_of(opc[i], sr, m, &level, i)),
             OpKind::Formant | OpKind::Noise => (0, 0.0, 0.0),
         });
+        // Under a fast pitch route each table operator starts the block at
+        // the last block's pitch and ramps to this one's (#164).
+        let from = self.ramp_from.filter(|_| self.ramps);
+        self.ramp_from = Some(cycles);
+        let mut dinc = [0i32; OPS];
         let mut view = self.view;
         let mut peak = self.peak;
         self.formant_blocks(p, live, cycles, sr);
@@ -893,8 +936,19 @@ impl AlgoEngine {
                 };
             }
             let (lo, xfade_from, xfade_to) = mips[i];
+            let to = (opc[i] * 4_294_967_296.0) as u32;
+            // A silent operator takes no start: it plays nothing to ramp.
+            let sounds = self.gain[i] != 0.0f32 || gain_to != 0.0f32;
+            let inc = match from.filter(|_| sounds) {
+                Some(c) => {
+                    let at = (op_cycles(c, p, live, i) * 4_294_967_296.0) as u32;
+                    dinc[i] = ((i64::from(to) - i64::from(at)) / BLOCK_SIZE as i64) as i32;
+                    at
+                }
+                None => to,
+            };
             OpBlock {
-                inc: (opc[i] * 4_294_967_296.0) as u32,
+                inc,
                 gain_from: self.gain[i],
                 gain_to,
                 feedback: feedback_cycles(live.feedback[i]),
@@ -915,7 +969,12 @@ impl AlgoEngine {
             norm_from: self.norm,
             norm_to: norm,
         };
-        self.kernel.render(&blk, &mut self.env, out, taps);
+        if from.is_some() {
+            self.kernel
+                .render_ramped(&blk, &dinc, &mut self.env, out, taps);
+        } else {
+            self.kernel.render(&blk, &mut self.env, out, taps);
+        }
         (self.view, self.peak) = (view, peak);
         for (i, o) in ops.iter().enumerate() {
             self.gain[i] = o.gain_to;

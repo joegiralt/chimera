@@ -96,6 +96,15 @@ macro_rules! with_ctx {
 }
 
 impl Rig {
+    /// What the Instrument hands a voice each block from its Part's Sound
+    /// (`part_sound::ramps_in`, #164): an ALGO Sound whose fast pitch
+    /// routes can pass a semitone.
+    fn ramps(&mut self, params: &ParamSnapshot, mods: &ModState) {
+        let on = params.engine() == chimera_core::params::EngineType::Algo
+            && chimera_core::dsp::engines::pitch_ramps(mods);
+        self.voice.set_pitch_ramps(on);
+    }
+
     pub fn new(sample_rate: u32) -> Self {
         Self::at(sample_rate, VoiceIdx::ALL[0], Src::Saw)
     }
@@ -140,6 +149,7 @@ impl Rig {
         if SlotKind::of(params) == SYM && self.voice.kind() != SYM {
             self.pool.place(VoiceIdx::ALL[0]);
         }
+        self.ramps(params, mods);
         with_ctx!(self, |v, ctx, _id| v.render(out, params, mods, ctx))
     }
 
@@ -154,6 +164,7 @@ impl Rig {
         side: &mut Option<[f32; BLOCK_SIZE]>,
     ) {
         let knobs = Knobs::UNPRIMED;
+        self.ramps(params, mods);
         with_ctx!(self, |v, ctx, _id| v
             .render_knobs(out, params, mods, &knobs, None, ctx, side))
     }
@@ -175,6 +186,7 @@ impl Rig {
         let pace = Some(Pace::Glide(self.voice.sample_rate()));
         self.knobs.ease((&p, &m), &KnobDelta::default(), pace);
         let knobs = self.knobs;
+        self.ramps(params, mods);
         with_ctx!(self, |v, ctx, _id| v
             .render_knobs(out, params, mods, &knobs, None, ctx, &mut None))
     }

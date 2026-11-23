@@ -4,8 +4,10 @@
 //! At VEL 1 a pad's law is slice 1's own (v / 127, the kernel's level,
 //! before the filter; ADR 0269): the slice-1 fixture with every pad on
 //! VEL 1 renders slice 1's golden, from before the VEL ruling re-recorded
-//! it, bit for bit. Its own binary: hit seeds are global, so the render
-//! must be the process's first.
+//! it, bit for bit, but where a pad's STRIKE runs: slice 1 struck at
+//! the velocity on top of the kernel's level, the law twice, and a hit now
+//! strikes at full height (#963, ADR 0316; re-recorded). Its own binary:
+//! hit seeds are global, so the render must be the process's first.
 
 mod common;
 
@@ -29,20 +31,20 @@ fn drum_slice1_at_vel_1_is_slice_1() {
             (
                 "drum_slice1_kit",
                 (
-                    0xc2a1c68cb4e18524,
+                    0xcb96f64f73aefdaa,
                     [
-                        744912150, 1015558077, 1021275702, 994767959, 3152327482, 3152324800,
-                        3125716229, 973063495,
+                        744912150, 1015558077, 1021473894, 994788127, 3152333225, 3152330541,
+                        3125716523, 973063543,
                     ],
                 ),
             ),
             (
                 "drum_slice1_kit_lr",
                 (
-                    0x5e45c7723c3b2d49,
+                    0x4d4eb14cbe6e7cc3,
                     [
-                        0, 3147987561, 3169244756, 1015513240, 965258014, 958784398, 3148135933,
-                        3147268870,
+                        0, 3147987561, 3169244927, 1015640034, 965129506, 958479304, 3148154150,
+                        3147272863,
                     ],
                 ),
             ),

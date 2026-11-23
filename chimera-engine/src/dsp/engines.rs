@@ -22,7 +22,7 @@ use crate::dsp::tape_engine::{COST_WAVE_LEVEL, LEVEL_CENTS, TapeEngine, TapeMach
 use crate::dsp::va::{VA_OUT_GAIN, VaEngine, VaParams};
 use crate::hw::Cost;
 use crate::in_place::{in_place_enum, move_out};
-use crate::modulation::{ModState, amount_scale};
+use crate::modulation::{ModSource, ModState, amount_scale};
 use crate::params::{EngineType, ParamSnapshot, PitchParams, Steal};
 use crate::project::{PartId, SourceId};
 use crate::source_table::GateView;
@@ -561,6 +561,15 @@ impl EngineSlot {
         }
     }
 
+    /// ALGO's table operators ramp under its Part's fast pitch routes
+    /// (#164); the other engines take their pitch per block.
+    pub fn set_pitch_ramps(&mut self, on: bool) {
+        match self {
+            Self::Algo(a) => a.set_pitch_ramps(on),
+            Self::Modal(_) | Self::Tape(_) | Self::Va(_) | Self::Drum(_) => {}
+        }
+    }
+
     /// ALGO's ops the kernel runs next block; `None` on other engines.
     pub fn algo_running(&self) -> Option<[bool; OPS]> {
         match self {
@@ -583,6 +592,8 @@ impl EngineSlot {
     /// Cycles/sample of one engine instance playing `p` (ADR 0013).
     pub fn cost(p: &ParamSnapshot, mods: &ModState) -> Cost {
         match p.engine() {
+            // A fast pitch route's ramp is the Instrument's to bill, once a
+            // publish (#164, `part_sound::ramps_in`).
             EngineType::Algo => AlgoEngine::cost(&p.algo, &mods.algo_levels_routed()),
             EngineType::Modal => {
                 let mut c = ModalEngine::cost(&p.modal);
@@ -636,6 +647,19 @@ fn wave_levels(p: &ParamSnapshot) -> bool {
 /// and FINE routes whose `|amount| × range` sum past it. A vibrato can't.
 fn level_billed(p: &ParamSnapshot, mods: &ModState) -> bool {
     p.pitch.steal == Steal::Glide || pitch_reach(mods) > LEVEL_CENTS
+}
+
+/// The ENVs and LFOs (`ModSource::is_fast`) routed into PITCH and FINE can
+/// move a note more than a semitone, at full swing: ALGO's table operators
+/// ramp their increments across the block (#164). Only the routes' reach
+/// is read, never their sources' depths, and WHEEL, PRESS and SLIDE never
+/// count: INIT's wheel vibrato (LFO 1 at 2, 38 cents) steps unheard, as
+/// ADR 0042 has it, and is not billed. A Sound's: the Instrument takes it
+/// once a publish (`recost`).
+#[inline(always)]
+pub fn pitch_ramps(mods: &ModState) -> bool {
+    let fast = |s: usize| f32::from(u8::from(ModSource::ALL.get(s).is_some_and(|m| m.is_fast())));
+    pitch_reach_by(mods, fast) > 100.0
 }
 
 /// The most cents PITCH's and FINE's routes can move a note, every source

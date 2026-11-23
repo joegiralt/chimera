@@ -58,6 +58,7 @@ use crate::voice_alloc::{Allocator, Steal, VoiceIdx};
 use crate::{MidiChannel, MidiNote, Velocity};
 
 mod admission;
+mod part_sound;
 mod sym_admit;
 pub use admission::AdmitDoor;
 use chimera_theory::{Note, snap};
@@ -941,6 +942,12 @@ pub struct Instrument {
     eq: crate::part_eq::EqHome,
     /// Each Part's WIDTH as its side last played it (ADR 0294).
     widths: crate::stereo::PartWidths,
+    /// Each Part's `loads` when its voices were last faded for a new Sound
+    /// (`fade_replaced`, #14).
+    faded: [Loads; MAX_PARTS],
+    /// The Parts whose fast pitch routes ramp ALGO (`engines::pitch_ramps`,
+    /// #164), a bit each: taken with the bills, once a publish.
+    ramps: u8,
 }
 
 /// Who plays a note: the keys and MIDI, or one of ORBIT's rings.
@@ -966,7 +973,7 @@ pub const SYM_CLEAR_CYCLES_PER_BYTE: u32 = 8;
 pub const BLOCK_OVERHEAD: Cost = Cost(160);
 pub const PART_OVERHEAD: Cost = Cost(230);
 
-crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths });
+crate::in_place::field_list!(Instrument => Instrument { voices, sym, alloc, note_channel, note_origin, keys, held_keys, harmony, tempo, resnap_to, sounding, waiting, buses, sends, mix, sample_rate, last_kind, clear_left, clear_backlog, costs, costed, costings, wheel, expr, master, poly, pedal, sustained, bend_k, knobs, lfo_clocks, knob_pace, rev_extra, rev_bill, tune_ease, tune, tuned, streaming, eq, widths, faded, ramps });
 
 const SYMPATHETIC: SlotKind = SlotKind::Modal(ResonatorMode::Sympathetic);
 
@@ -1052,6 +1059,8 @@ impl Instrument {
             addr_of_mut!((*p).streaming).write([Streaming::IDLE; MAX_VOICES]);
             addr_of_mut!((*p).eq).write(crate::part_eq::EqHome::new());
             addr_of_mut!((*p).widths).write(crate::stereo::PartWidths::REST);
+            addr_of_mut!((*p).faded).write([Loads::NONE; MAX_PARTS]);
+            addr_of_mut!((*p).ramps).write(0);
             slot.assume_init_mut()
         }
     }
@@ -1470,6 +1479,7 @@ impl Instrument {
         src: &GateView<'_>,
         ports: &mut P,
     ) {
+        self.fade_replaced(shared);
         match ev.kind {
             NoteKind::On(vel) => {
                 let smart_load = self.smart_load(shared);
@@ -1894,7 +1904,35 @@ impl Instrument {
         }
     }
 
-    /// Voice `v` fades out now, whatever holds it (CC 120's).
+    /// A Part's new Sound (its `loads` moved, #14): its held voices fade
+    /// (`part_sound::fade_replaced_in`, bank 2's). Called before a block's
+    /// notes and its render, so a note after the load plays the new Sound.
+    fn fade_replaced(&mut self, shared: &AudioShared) {
+        let _ = Self::part_door(|d| d.fade_replaced(self, shared));
+    }
+
+    /// `f` on `AdmitDoor`'s entries for a Part's Sound (#14, #164):
+    /// bank 2's through the door (`None` while it is closed), else the
+    /// host's own table. A firmware built without bank 2 has none.
+    #[inline(always)]
+    fn part_door<R>(f: impl FnOnce(&AdmitDoor) -> R) -> Option<R> {
+        #[cfg(feature = "bank2")]
+        {
+            crate::bank2::DOOR_CELL.with(|d| f(&d.admit))
+        }
+        #[cfg(all(not(feature = "bank2"), not(target_os = "none")))]
+        {
+            Some(f(&Self::ADMIT))
+        }
+        #[cfg(all(not(feature = "bank2"), target_os = "none"))]
+        {
+            let _ = f;
+            None
+        }
+    }
+
+    /// Voice `v` fades out now, whatever holds it (CC 120's; a new Sound's
+    /// in bank 2, `part_sound`, inlined there).
     fn sound_off(&mut self, v: VoiceIdx) {
         let i = v.index();
         self.held_keys[i] = HeldKeys::EMPTY;
@@ -2376,8 +2414,12 @@ impl Instrument {
         });
         let costs: [PartBill; MAX_PARTS] =
             core::array::from_fn(|p| shared.parts[p].voice_cost(kits[p]));
+        // Which Parts ramp ALGO's pitch, and its bill, once a publish
+        // (#164, `part_sound::ramps_in`, bank 2's).
+        let ramps = Self::part_door(|d| d.ramps(shared)).unwrap_or(part_sound::Ramps::NONE);
+        self.ramps = ramps.parts;
         // A new note is judged with its Part's glide on it (ADR 0117).
-        self.costs = core::array::from_fn(|p| costs[p].with(glides[p]));
+        self.costs = core::array::from_fn(|p| costs[p].with(glides[p] + ramps.bills[p]));
         (self.costed, self.costings) = (at, self.costings.wrapping_add(1));
         // The Parts' MAX VOICES and RESERVE for this snapshot's picks (ADR 0281).
         self.alloc.set_shares(shares_of(shared));
@@ -2795,6 +2837,7 @@ impl Instrument {
             .tune_ease
             .step(f32::from(shared.tune), ease_coeff(self.sample_rate.get()));
         self.tune = cents / 100.0;
+        self.fade_replaced(shared);
         self.recost(shared);
         self.restart_switched(shared);
 
@@ -2843,6 +2886,7 @@ impl Instrument {
                 tune: self.tune + off,
             };
             let voice = &mut self.voices[v];
+            voice.set_pitch_ramps(self.ramps & 1 << p != 0);
             let side = &mut sides[p];
             let (knobs, clock) = (&self.knobs[p].0, &self.lfo_clocks[p]);
             ports.ctx(base, vi, port, |ctx| {

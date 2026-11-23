@@ -669,6 +669,12 @@ impl Voice {
         self.slot.kind()
     }
 
+    /// Its Part's fast pitch routes can pass a semitone
+    /// (`engines::pitch_ramps`): ALGO ramps its increments (#164).
+    pub fn set_pitch_ramps(&mut self, on: bool) {
+        self.slot.set_pitch_ramps(on);
+    }
+
     /// Its engine slot: for the tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn slot(&self) -> &EngineSlot {

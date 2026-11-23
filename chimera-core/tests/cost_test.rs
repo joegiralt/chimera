@@ -1222,11 +1222,19 @@ fn a_pitch_route_on_modal_bills_the_retune() {
         EngineSlot::cost(&symp, &ModState::new()),
         ModalEngine::cost(&symp.modal) + ModalEngine::PITCH + ModalEngine::HALO_PITCH
     );
+    // ALGO steps its pitch a block; an LFO that can move it past a
+    // semitone ramps it, billed by the Instrument once a publish (#164),
+    // so the engine's own bill stays as it was.
     let algo = ParamSnapshot::for_engine(EngineType::Algo);
     assert_eq!(
         EngineSlot::cost(&algo, &routed(PitchParams::PITCH, 127)),
         EngineSlot::cost(&algo, &ModState::new())
     );
+    use chimera_core::dsp::engines::pitch_ramps;
+    assert!(pitch_ramps(&routed(PitchParams::PITCH, 127)));
+    // ±100 cents of FINE, or a vibrato at 2, never pass a semitone.
+    assert!(!pitch_ramps(&routed(PitchParams::FINE, 127)));
+    assert!(!pitch_ramps(&routed(PitchParams::PITCH, 2)));
 }
 
 /// A route into STRUCTURE can keep SYMP's halo gliding between chords:

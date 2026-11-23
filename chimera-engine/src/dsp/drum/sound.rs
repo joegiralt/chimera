@@ -1418,12 +1418,17 @@ impl PadSound {
         }
     }
 
-    /// Lays the FILTER and AMP's gate cells over `m`. VEL is the pad's
-    /// own (`PadAmp::level`): a Part VCA route keeps the Sound's.
+    /// Lays the FILTER and AMP's gate cells over `m`, and AMP VEL 0: VEL
+    /// is the pad's own (`PadAmp::level`, at the kernel), so neither a
+    /// Part VCA route nor the gate takes the Sound's (#963).
     pub fn overlay(&self, m: &mut ParamSnapshot) {
         self.filter.apply(&mut m.filter);
         let g = self.amp.gate;
         m.out.gate = [g.lpg.get(), g.decay.get(), g.strike.get()];
+        // The pad's VEL is the hit's one velocity law, at its kernel
+        // (`PadAmp::level`): the Sound's AMP VEL, not on any DRUM page,
+        // scales nothing more (#963).
+        m.out.vca_vel = 0.0;
     }
 
     pub const fn filter(&self) -> &PadFilter {

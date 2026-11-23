@@ -123,7 +123,9 @@ fn overlay_of_from_sound_is_identity() {
         assert_eq!(a.kind(), b.kind());
         assert_eq!(a.mode(), b.mode());
         assert_eq!(a.voice, b.voice);
-        assert_eq!(q.out.vca_vel, 0.25, "VEL is the pad's own, not the VCA's");
+        // #963: the pad's VEL is the hit's one velocity law, at its kernel:
+        // the Sound's AMP VEL plays nothing on DRUM.
+        assert_eq!(q.out.vca_vel, 0.0, "VEL is the pad's own, not the VCA's");
         for i in 0..3 {
             assert_eq!(q.out.gate[i].to_bits(), p.out.gate[i].to_bits());
         }

@@ -324,6 +324,15 @@ fn a_one_part_publish_loads_and_turns() {
             .render(&mut r.fx, &mut r.dac, &r.shared, &mut r.scope);
         assert_eq!(r.inst.knob_reads(5), before, "a load: no move");
     }
+    // A load fades the held key (#14): let go and struck again, a voice
+    // plays the Part once the fade is out.
+    r.key(5, false);
+    r.key(5, true);
+    for _ in 0..20 {
+        r.shared.publish_sound(5, &s, loads, &mut r.knobs);
+        r.inst
+            .render(&mut r.fx, &mut r.dac, &r.shared, &mut r.scope);
+    }
     let cutoff = ParamAddr::new(BlockRef::Filter, FilterParams::CUTOFF);
     assert_eq!(r.inst.knob(5, cutoff).map(|k| k.1), Some(false));
     s.params.filter.cutoff = 600.0;

@@ -341,3 +341,87 @@ fn a_soft_hit_drives_the_ladder_less() {
         "the soft hit is only {ladder} dB over the hard one scaled"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #963 (owner 2026-11-22): DRUM plays the pad's VEL alone. The Sound's
+// AMP VEL (hidden on DRUM) no longer scales a hit under a Part VCA route,
+// and a pad's STRIKE hits as hard as its level, not its raw velocity.
+// ---------------------------------------------------------------------------
+
+/// Part 1's bus over 100 ms after a hit on pad 1 at `vel`, its routes
+/// `mods`.
+fn hit_bus(k: &Kit, vel: u8, mods: &chimera_core::modulation::ModState) -> Vec<f32> {
+    let (_w, mut r) = rig(k);
+    *r.shared.parts[0].mod_state = mods.clone();
+    r.note_on_vel(0, 0, vel);
+    let mut out = Vec::new();
+    for _ in 0..(SR as usize / 10 / BLOCK_SIZE) {
+        r.render(1);
+        out.extend_from_slice(r.inst.part_bus(0));
+    }
+    out
+}
+
+fn same(a: &[f32], b: &[f32]) -> bool {
+    a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
+}
+
+#[test]
+fn vel_zero_ignores_velocity_under_a_vca_route() {
+    use chimera_core::modulation::{ModSource, VCA};
+    assert_eq!(sound().out.vca_vel, 1.0, "DRUM INIT's AMP VEL");
+    let mut m = chimera_core::preset::Sound::init(EngineType::Drum).mod_state;
+    assert!(m.set_route_addr(ModSource::Env1.index(), VCA, 127));
+    let k = init_kit(0.0);
+    let (hard, soft) = (hit_bus(&k, 127, &m), hit_bus(&k, 32, &m));
+    assert!(peak(&hard) > 1e-3, "silent");
+    assert!(same(&hard, &soft), "{} vs {}", peak(&hard), peak(&soft));
+}
+
+#[test]
+fn strike_hits_as_hard_as_the_pad_level() {
+    use chimera_core::dsp::lpg::Knobs;
+    let strike = |vel: f32| {
+        let mut k = init_kit(vel);
+        k.pad_mut(pad(1))
+            .sound_mut()
+            .amp_mut()
+            .set_gate(Knobs::of([0.0, 0.0, 1.0]));
+        k
+    };
+    let none = chimera_core::preset::Sound::init(EngineType::Drum).mod_state;
+    // VEL 0: the level is 1 at any velocity, so is the strike.
+    let k = strike(0.0);
+    let (hard, soft) = (hit_bus(&k, 127, &none), hit_bus(&k, 32, &none));
+    assert!(peak(&hard) > 1e-3, "silent");
+    assert!(same(&hard, &soft), "{} vs {}", peak(&hard), peak(&soft));
+    // VEL 1: a soft hit strikes softer.
+    let k = strike(1.0);
+    assert!(peak(&hit_bus(&k, 32, &none)) < peak(&hit_bus(&k, 127, &none)));
+}
+
+/// One velocity law (owner, #963): under STRIKE a hit at VEL 0.5 comes out
+/// as much softer as its kernel level says, the law applied once, not
+/// once at the kernel and again at the strike's height.
+#[test]
+fn strike_applies_the_pad_vel_once() {
+    use chimera_core::dsp::lpg::Knobs;
+    let mut k = init_kit(0.5);
+    k.pad_mut(pad(1))
+        .sound_mut()
+        .amp_mut()
+        .set_gate(Knobs::of([0.0, 0.0, 1.0]));
+    let none = chimera_core::preset::Sound::init(EngineType::Drum).mod_state;
+    let (hard, soft) = (
+        peak(&hit_bus(&k, 127, &none)),
+        peak(&hit_bus(&k, 32, &none)),
+    );
+    let want = 1.0 - 0.5 * (1.0 - 32.0 / 127.0);
+    let err = db(soft / hard) - db(want);
+    assert!(
+        err.abs() < 0.1,
+        "{} dB vs the law's {} dB",
+        db(soft / hard),
+        db(want)
+    );
+}

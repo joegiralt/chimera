@@ -376,13 +376,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
         ),
     ),
     // Re-recorded in Task 14: DRV is SOFT, voiced at LEVEL 0.7626 to cancel
-    // its `MAKE_UP` 0.483 (the factory Sounds keep their loudness).
+    // its `MAKE_UP` 0.483 (the factory Sounds keep their loudness). Again
+    // for #164 (ADR 0316): its ENV 3 → PITCH swoop ramps across the block.
     (
         "factory_11",
         (
-            0xdfa5d34164854b11,
+            0x2c38908b9b524af6,
             [
-                944197035, 1056502661, 1053648260, 1031350190, 3173886388, 3173428923, 0, 0,
+                944197035, 1056300261, 1053647021, 1031346519, 3173889874, 3173433364, 0, 0,
             ],
         ),
     ),
@@ -870,24 +871,25 @@ fn tape_goldens_match() {
 /// later task keeps it bit-identical, but for one deliberate change: a
 /// pad's VEL law is its kernel's level (owner ruling 2026-11-14, ADR
 /// 0269), and the fixture's pads are on VEL 0.6. At VEL 1 it is slice 1's
-/// own render, bit for bit (`drum_slice1_vel_test`).
+/// own render, bit for bit (`drum_slice1_vel_test`). Re-recorded for #963
+/// (ADR 0316): a pad's STRIKE hits at its level, so VEL 0.6's.
 const DRUM_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     (
         "drum_slice1_kit",
         (
-            0xbaf3b786b8800642,
+            0x241f2ed2b7338765,
             [
-                746962870, 1017080472, 1023522656, 996918979, 3154436379, 3154434877, 3127904367,
-                974432274,
+                746962870, 1017080472, 1023637572, 996942397, 3154439718, 3154438215, 3127904708,
+                974432302,
             ],
         ),
     ),
     (
         "drum_slice1_kit_lr",
         (
-            0xf69b9da5ab7aece0,
+            0x5dc84f6617e44bbe,
             [
-                0, 3147695438, 3171463343, 1016936196, 966493225, 960100544, 3149885297, 3148878693,
+                0, 3147695438, 3171463568, 1017082813, 966338201, 959734228, 3149906471, 3148883336,
             ],
         ),
     ),

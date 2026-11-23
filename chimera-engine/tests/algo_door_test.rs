@@ -105,7 +105,7 @@ const BEFORE: &[u64] = &[
     0x547570ece616094c,
     0xc3f2e7b223030f63,
     0x8bf931a905da35af,
-    0x225291d9c022aefd,
+    0x1df6c5dafd6a0d0a, // #164: its ENV 3 → PITCH swoop ramps (ADR 0316)
 ];
 
 fn hashes() -> Vec<u64> {
@@ -126,7 +126,7 @@ fn algo_plays_as_before_the_move() {
     // not their DSP, differs.
     let mut before = BEFORE.to_vec();
     if cfg!(feature = "master-tape") {
-        (before[9], before[12]) = (0x5817_f5ef_944f_c7d2, 0x9c8a_179f_a745_ce0c);
+        (before[9], before[12]) = (0x5817_f5ef_944f_c7d2, 0x7764_9f79_f21b_1039);
     }
     assert_eq!(h, before);
 }
