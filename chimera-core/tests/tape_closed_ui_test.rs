@@ -123,4 +123,26 @@ fn closed_tape_ui_says_so_and_does_nothing() {
     assert_eq!(strip_pixels(), 0);
     let p = TapeEngineParams::default();
     assert_eq!(key(&Overview::EMPTY, TapeMachine::Walk, &p, Heads::NONE), 0);
+
+    // FLANGER and PHASER fall back to the braid closed (ADR 0324): its
+    // strands behind the line in FAINT, which the moiré and the ray gun
+    // never draw unfocused at MIX 1.
+    let faint = |mode| {
+        use chimera_core::ui::glyph::{Braid, Gauge};
+        let b = Braid {
+            mode,
+            ..Braid::from_set([0.0, 0.5, 0.8, 1.0], None, 9)
+        };
+        let mut fb = screen::Fb::new();
+        chimera_core::ui::components::draw_gauge(&mut fb, Gauge::Braid(b));
+        let t = chimera_core::ui::theme::FAINT;
+        (0..320)
+            .flat_map(|y| (0..240).map(move |x| (x, y)))
+            .filter(|&(x, y)| fb.at(x, y) == t)
+            .count()
+    };
+    use chimera_core::dsp::chorus::ChorusMode::{Flanger, Phaser};
+    assert!(faint(Flanger) > 0 && faint(Phaser) > 0, "closed: the braid");
+    DOOR_CELL.open_host();
+    assert_eq!((faint(Flanger), faint(Phaser)), (0, 0), "open: their own");
 }
