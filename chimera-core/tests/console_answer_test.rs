@@ -198,6 +198,7 @@ fn stats_reads_audio_load_and_the_loop() {
         loop_peak_us: 4210,
         streams: None,
         usb: None,
+        panel: None,
     });
     assert_eq!(
         ask(&mut u, "stats\n"),
@@ -215,6 +216,7 @@ fn stats_reads_audio_load_and_the_loop() {
             loop_peak_us: 0,
             streams: None,
             usb: None,
+            panel: None,
         });
         assert!(ask(&mut u, "stats\n").contains(want), "{sources} sources");
     }
@@ -245,6 +247,7 @@ fn stats_prints_the_streams_lines() {
             irq_share: PerMille::of(4, 1_000),
         }),
         usb: None,
+        panel: None,
     });
     let got = ask(&mut u, "stats\n");
     assert!(
@@ -280,6 +283,7 @@ fn stats_prints_the_usb_lines() {
             midi_in_drops: 5,
             midi_out_drops: 6,
         }),
+        panel: None,
     });
     let got = ask(&mut u, "stats\n");
     assert!(
@@ -461,6 +465,7 @@ fn a_stall_is_returned_from_every_answer() {
         loop_peak_us: 2,
         streams: None,
         usb: None,
+        panel: None,
     });
     let mut c = Console::new();
     u.card = Some(CardAnswer::Measured(full(), None));
@@ -507,6 +512,7 @@ fn a_stall_mid_text_ends_the_answer_there() {
         loop_peak_us: 2,
         streams: None,
         usb: None,
+        panel: None,
     });
     for req in [
         Request::Help(NoArg),
@@ -584,6 +590,7 @@ fn random_streams_never_panic_and_end_each_answer_once() {
         loop_peak_us: 2,
         streams: None,
         usb: None,
+        panel: None,
     });
     let mut answers = 0;
     for _ in 0..5_000 {
@@ -632,6 +639,7 @@ fn the_specs_stats_has_every_line_stats_writes() {
         loop_peak_us: 0,
         streams: None,
         usb: None,
+        panel: None,
     });
     let key = |l: &str| l.split(' ').next().unwrap().to_owned();
     let got: Vec<_> = ask(&mut u, "stats\n").lines().map(key).collect();
@@ -1402,4 +1410,29 @@ fn irq_cycles_fold_past_the_wrap() {
     assert!(own > u64::from(u32::MAX), "the raw counter wrapped");
     let wall = passes * pass_ms * hz / 1_000;
     assert_eq!(PerMille::of(own, wall).to_string(), "2.0");
+}
+
+/// The display link's counters after the loop's lines (ADR 0326).
+#[test]
+fn stats_prints_the_panel_lines() {
+    let mut u = Fake::new();
+    u.stats = Some(Stats {
+        audio: audio(),
+        loop_avg_us: 1,
+        loop_peak_us: 2,
+        streams: None,
+        usb: None,
+        panel: Some(|t: &mut dyn core::fmt::Write| {
+            t.write_str(
+                "panel_armed 1
+panel_reinits 3
+spi_errors 7
+",
+            )
+        }),
+    });
+    assert!(
+        ask(&mut u, "stats\n")
+            .ends_with("loop_peak_us 2\npanel_armed 1\npanel_reinits 3\nspi_errors 7\nOK\n")
+    );
 }

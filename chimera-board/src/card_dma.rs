@@ -253,6 +253,27 @@ pub fn watch(now: Ms) {
     watch_in(now);
 }
 
+/// `watch`, and the panel's health check through the same door (ADR
+/// 0326): the UI loop's, once a pass, between frames.
+#[cfg(not(feature = "sd-probe"))]
+pub fn watch_and_tend(now: Ms, display: &mut crate::Display) {
+    #[cfg(feature = "bank2")]
+    if crate::bank2::board_door(|d| {
+        (d.card.watch)(now);
+        (d.panel)(display);
+    })
+    .is_none()
+        && BUS.owner() == Owner::Stream
+    {
+        pend();
+    }
+    #[cfg(not(feature = "bank2"))]
+    {
+        let _ = display;
+        watch_in(now);
+    }
+}
+
 /// A transfer stuck past `WATCHDOG_MS` (a TE, a MODF, a lost TC) is asked
 /// to abort. A want left with the bus free (a failed fill requeued, or
 /// one whose look found the bus the UI's) is woken here; a parked one,

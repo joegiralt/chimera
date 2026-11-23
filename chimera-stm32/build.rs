@@ -460,6 +460,10 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // fit, the head's aim and its glide, called from bank 2's `tape::run`
     // and `grain::run`; and `ui::delay_sync`, the note's text, MIX +
     // turn and the band's words, called from `walk`, `feel` and `notes`.
+    // The panel's health check (ADR 0326, `BoardDoor::panel`): the read and
+    // `tend` (`.bank2_panel.*`) and the check's logic. An S4 group.
+    let panel = "    *(.bank2_panel .bank2_panel.* .text.*11chimera_hal5panel4tend*
+      .text.*11chimera_hal5panel6Health5judge* .text.*11chimera_hal5panel6Health3due*);\n";
     // S4 groups.
     let delay_sync = "    *(.text.*5delay4sync* .rodata.*5delay4sync*
       .text.*12chimera_core2ui10delay_sync* .rodata.*12chimera_core2ui10delay_sync*);\n";
@@ -469,7 +473,7 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     let kit_library =
         "    *(.text.*7project11kit_library4kern* .rodata.*7project11kit_library4kern*);\n";
     let s4 = format!(
-        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{kit_library}"
+        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{panel}{kit_library}"
     );
     fs::write(
         out_dir.join("bank2.x"),

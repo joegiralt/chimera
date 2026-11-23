@@ -40,7 +40,17 @@ pub(crate) struct BoardDoor {
     /// USB MIDI's class: its allocation and the device's poll.
     #[cfg(feature = "midi-usb")]
     pub(crate) usb: crate::usb_midi::UsbDoor,
+    /// The panel's health check (ADR 0326).
+    #[cfg(not(feature = "sd-probe"))]
+    pub(crate) panel: fn(&mut crate::Display),
+    /// Its counters as `stats` lines.
+    #[cfg(not(feature = "sd-probe"))]
+    pub(crate) panel_stats: chimera_core::console::PanelLines,
 }
+
+// The board's slot is 0x80 bytes, up to the UI's table.
+#[cfg(feature = "bank2")]
+const _: () = assert!(size_of::<BoardDoor>() <= 0x80);
 
 /// `BoardDoor::magic`.
 #[cfg(feature = "bank2")]
@@ -55,6 +65,10 @@ static BOARD_DOOR: BoardDoor = BoardDoor {
     card: crate::card_dma::CardDoor::DOOR,
     #[cfg(feature = "midi-usb")]
     usb: crate::usb_midi::UsbDoor::DOOR,
+    #[cfg(not(feature = "sd-probe"))]
+    panel: crate::Display::tend,
+    #[cfg(not(feature = "sd-probe"))]
+    panel_stats: crate::display::stats_lines,
 };
 
 /// `BOARD_DOOR`'s slot.

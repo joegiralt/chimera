@@ -686,6 +686,10 @@ impl Unit for ChipUnit<'_> {
             usb: Some(self.usb_irq.tally(wall)),
             #[cfg(not(feature = "midi-usb"))]
             usb: None,
+            #[cfg(feature = "bank2")]
+            panel: crate::bank2::board_door(|d| d.panel_stats),
+            #[cfg(not(feature = "bank2"))]
+            panel: None,
         })
     }
 

@@ -67,7 +67,7 @@ use chimera_core::board::{BoardId, HC165_PA, HC165_PF, Port};
 use chimera_core::project::{LOAD_ACK_TIMEOUT_MS, LOAD_LINK};
 #[cfg(not(feature = "sd-probe"))]
 use chimera_core::reset::ResetCause;
-use chimera_core::ui::theme_settings::{ThemeSettings, duty, palette, tables};
+use chimera_core::ui::theme_settings::{ThemeSettings, duty, palette};
 use display::Stm32Display;
 use stm32h7xx_hal::gpio::{Output, PD8, PD9, PD10, PushPull, Speed};
 use stm32h7xx_hal::rcc::CoreClocks;
@@ -284,6 +284,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
 
     let mut sck = gpioa.pa5.into_alternate::<5>();
     let mut mosi = gpioa.pa7.into_alternate::<5>();
+    // The panel's SDO, read back by the health check (ADR 0326), as stock wires it.
+    let miso = gpioa.pa6.into_alternate::<5>();
     sck.set_speed(Speed::High);
     mosi.set_speed(Speed::High);
     let dc = gpiod.pd8.into_push_pull_output();
@@ -291,8 +293,10 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     let cs = gpiod.pd10.into_push_pull_output();
 
     let spi = dp.SPI1.spi(
-        (sck, spi::NoMiso, mosi),
-        spi::Config::new(spi::MODE_0),
+        (sck, miso, mosi),
+        // Transmit-only: `display::put` streams without draining RX; the
+        // health check's read turns full duplex for its two bytes (ADR 0326).
+        spi::Config::new(spi::MODE_0).communication_mode(spi::CommunicationMode::Transmitter),
         50.MHz(),
         ccdr.peripheral.SPI1,
         &ccdr.clocks,
@@ -305,7 +309,7 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     // The boot theme is no longer the panel's own reset state (PUNCH, not
     // PANEL; ground −2, not 0), so push it explicitly instead of waiting for
     // the first change the main loop notices.
-    display.set_gamma(tables(theme.gamma));
+    display.set_gamma(theme.gamma);
     display.set_palette(palette(&theme));
     Board {
         cp,
@@ -771,7 +775,8 @@ pub fn synth(board: Board, shell: Shell) -> ! {
         if let Some(q) = sd::BUS.settle(controls::now_ms()) {
             shared::STREAM_STATS.note_quiet(q);
         }
-        card_dma::watch(controls::now_ms());
+        // The card's watch and the panel's health check (ADR 0326).
+        card_dma::watch_and_tend(controls::now_ms(), &mut display);
         // A `card dma` run moved on: B6 redraws every row, and saves the
         // project once a minute.
         #[cfg(all(
@@ -1057,7 +1062,7 @@ fn apply_theme(
     let recolour = palette(&new) != palette(theme);
     backlight.set_duty(duty(new.bright, backlight.get_max_duty()));
     if new.gamma != theme.gamma {
-        display.set_gamma(tables(new.gamma));
+        display.set_gamma(new.gamma);
     }
     display.set_palette(palette(&new));
     *theme = new;

@@ -26,7 +26,14 @@ pub struct Stats {
     pub streams: Option<StreamTally>,
     /// `None`: no USB interrupt in this build.
     pub usb: Option<UsbTally>,
+    /// The display link's lines (ADR 0326: `panel_armed`, `panel_reinits`,
+    /// `spi_errors`), written behind the board's door. `None`: no check in
+    /// this build, or bank 2 closed.
+    pub panel: Option<PanelLines>,
 }
+
+/// Writes the display link's `stats` lines.
+pub type PanelLines = fn(&mut dyn Write) -> fmt::Result;
 
 /// The USB interrupt's counters: its longest entry and storms since boot,
 /// its share since the last `stats`.
@@ -427,6 +434,9 @@ fn stats(s: &Stats, t: &mut impl Write) -> fmt::Result {
     writeln!(t, "cost_pct {}", a.cost_pct)?;
     writeln!(t, "loop_avg_us {}", s.loop_avg_us)?;
     writeln!(t, "loop_peak_us {}", s.loop_peak_us)?;
+    if let Some(p) = s.panel {
+        p(t)?;
+    }
     s.streams.map_or(Ok(()), |n| streams(&n, t))?;
     s.usb.map_or(Ok(()), |u| {
         writeln!(t, "usb_irq_pct {}", u.irq_share)?;

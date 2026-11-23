@@ -62,7 +62,7 @@ UPSTREAM = {
     "chimera-engine/src/dsp/rev/room.rs": REVERB,
     "chimera-engine/src/dsp/rev/bloom.rs": REVERB,
     "chimera-engine/src/dsp/rev/loop_engine.rs": REVERB,
-    "chimera-board/src/display.rs": ["Copyright (c) 2017 martnak (the ILI9341 init list, martnak/STM32-ILI9341, MIT, via PreenFM3; notice below)"],
+    "chimera-hal/src/panel.rs": ["Copyright (c) 2017 martnak (the ILI9341 init list, martnak/STM32-ILI9341, MIT, via PreenFM3; notice below)"],
     "chimera-engine/src/dsp/va/lbfm.rs": [f"After Tamara Smyth, Loopback Frequency Modulation, DAFx-26 {CC_BY}"],
     "chimera-engine/src/dsp/filter/sem.rs": [f"After L. Köper, M. Holters, F. Esqueda, J. D. Parker, DAFx20in22 {CC_BY}"],
     "chimera-circuits/src/sem1a/mod.rs": [f"After L. Köper, M. Holters, F. Esqueda, J. D. Parker, DAFx20in22 {CC_BY}"],
@@ -89,7 +89,7 @@ EXTRA_LICENCE = {
     "chimera-utils/src/sig.rs": BSD,
     "chimera-circuits/src/util/sig.rs": BSD,
     "chimera-utils/src/stim.rs": "BSD-3-Clause AND (Apache-2.0 OR MIT)",
-    "chimera-board/src/display.rs": MIT,
+    "chimera-hal/src/panel.rs": MIT,
 }
 
 

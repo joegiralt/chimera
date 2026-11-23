@@ -1,39 +1,14 @@
-// Copyright (c) 2017 martnak (the ILI9341 init list, martnak/STM32-ILI9341, MIT, via PreenFM3; notice below)
 // Copyright (C) 2026 Joe Giralt
-// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
-
-// The ILI9341 init list in `init` comes from PreenFM3's `lib/Src/ili9341.c`,
-// whose `ILI9341_Init` bases it on martnak/STM32-ILI9341
-// (https://github.com/martnak/STM32-ILI9341), under the MIT licence:
-//
-// Copyright (c) 2017 martnak
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 //! ILI9341 display driver via SPI1.
 //! 240x320 RGB565, framebuffer in static BSS (too large for stack).
 
 use core::ptr::addr_of_mut;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use chimera_core::ui::theme_settings::{GammaTables, Palette};
+use chimera_core::ui::theme_settings::{Gamma, Palette, tables};
+use chimera_hal::panel::{self, Health, Link};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};
 use embedded_graphics_core::Pixel;
 use embedded_graphics_core::draw_target::DrawTarget;
@@ -46,6 +21,13 @@ use stm32h7xx_hal::hal::digital::v2::OutputPin;
 static mut FRAMEBUFFER: [u16; FB_SIZE] = [0u16; FB_SIZE];
 static FRAMEBUFFER_TAKEN: AtomicBool = AtomicBool::new(false);
 
+/// SPI1 transfers that ended in an error, for `stats`.
+pub static SPI_ERRORS: AtomicU32 = AtomicU32::new(0);
+/// Times the health check re-inited the panel (ADR 0326), for `stats`.
+pub static PANEL_REINITS: AtomicU32 = AtomicU32::new(0);
+/// The health check has seen the panel healthy once: it is judging.
+pub static PANEL_ARMED: AtomicBool = AtomicBool::new(false);
+
 /// The framebuffer, once: `Stm32Display` owns it from then on.
 pub fn take_framebuffer() -> Option<&'static mut [u16; FB_SIZE]> {
     if FRAMEBUFFER_TAKEN.swap(true, Ordering::AcqRel) {
@@ -56,8 +38,96 @@ pub fn take_framebuffer() -> Option<&'static mut [u16; FB_SIZE]> {
     Some(unsafe { &mut *addr_of_mut!(FRAMEBUFFER) })
 }
 
+type Spi1 = stm32h7xx_hal::pac::spi1::RegisterBlock;
+
+/// SPI1's registers, driven here rather than through the HAL's `Spi`.
+fn spi1() -> &'static Spi1 {
+    // SAFETY: this aliases the HAL's `Spi<SPI1>`, which `Stm32Display`
+    // holds (`_spi`) so nothing else can take SPI1 and never calls: every
+    // SPI1 access is `put`, `drain`, `link_up` or the read, all from the
+    // UI loop that owns the display, and no interrupt touches SPI1.
+    unsafe { &*stm32h7xx_hal::pac::SPI1::ptr() }
+}
+
+/// Polls of one flag before the link gives up: a byte at 50 MHz is 160 ns,
+/// two at a read's 6.25 MHz ~2.6 µs.
+const POLLS: u32 = 20_000;
+
+/// SPI1's SR flags waited on (RM0433 SPI_SR).
+const TXP: u32 = 1 << 1;
+const SUSP: u32 = 1 << 11;
+const TXC: u32 = 1 << 12;
+
+/// SR's `flag` set within `POLLS`, else counted for `stats`.
+fn wait(flag: u32) -> bool {
+    let spi = spi1();
+    let mut n = POLLS;
+    while spi.sr.read().bits() & flag == 0 {
+        if n == 0 {
+            SPI_ERRORS.fetch_add(1, Ordering::Relaxed);
+            return false;
+        }
+        n -= 1;
+    }
+    true
+}
+
+/// `bytes` into SPI1's FIFO, transmit-only (`lib.rs`): no RX to drain, so
+/// it streams. CSTART once, on the first byte; `drain` before CS rises.
+#[inline(never)]
+fn put(bytes: &[u8]) {
+    let spi = spi1();
+    let txdr = core::ptr::addr_of!(spi.txdr).cast::<u8>().cast_mut();
+    let mut started = spi.cr1.read().cstart().bit_is_set();
+    for &b in bytes {
+        if !wait(TXP) {
+            return;
+        }
+        // SAFETY: TXP was just read set, so the FIFO has room; a byte
+        // write of TXDR is one 8-bit frame.
+        unsafe { core::ptr::write_volatile(txdr, b) };
+        if !started {
+            spi.cr1.modify(|_, w| w.cstart().set_bit());
+            started = true;
+        }
+    }
+}
+
+/// The last bit out (TXC): before CS rises or DC changes.
+fn drain() {
+    wait(TXC);
+}
+
+/// SPI1 off, its endless transfer suspended first (RM0433's disable
+/// procedure): MBR and COMM only change with SPE clear. AFCNTR keeps SCK
+/// and MOSI driven meanwhile.
+#[cfg_attr(
+    all(target_os = "none", feature = "bank2"),
+    unsafe(link_section = ".bank2_panel.read")
+)]
+fn off(spi: &Spi1) {
+    if spi.cr1.read().cstart().bit_is_set() {
+        spi.cr1.modify(|_, w| w.csusp().set_bit());
+        wait(SUSP);
+        spi.ifcr.write(|w| w.suspc().set_bit());
+    }
+    spi.cr1.modify(|_, w| w.spe().clear_bit());
+}
+
+/// Once at boot, before any transfer (no CSTART yet): SPI1 keeps its pins
+/// driven while disabled (CFG2 AFCNTR), so a clock or duplex change never
+/// floats SCK or MOSI.
+fn link_up() {
+    let spi = spi1();
+    spi.cr1.modify(|_, w| w.spe().clear_bit());
+    spi.cfg2.modify(|_, w| w.afcntr().set_bit());
+    spi.cr1.modify(|_, w| w.spe().set_bit());
+}
+
 pub struct Stm32Display<SPI, DC, RST, CS> {
-    spi: SPI,
+    /// SPI1, held so nothing else takes it; `put` and `slow_read` drive its
+    /// registers.
+    _spi: SPI,
     dc: DC,
     reset: RST,
     cs: CS,
@@ -65,6 +135,13 @@ pub struct Stm32Display<SPI, DC, RST, CS> {
     /// SETTINGS › PERSONALIZE › THEME's colours, swapped in as pixels go
     /// out; the framebuffer keeps the canonical palette.
     palette: Palette,
+    /// The panel's mode as read back (ADR 0326); no check in `sd-probe`.
+    #[cfg_attr(feature = "sd-probe", allow(dead_code))]
+    health: Health,
+    cpu_hz: u32,
+    /// THEME's GAMMA as last pushed, for a re-init to push again.
+    #[cfg_attr(feature = "sd-probe", allow(dead_code))]
+    gamma: Gamma,
 }
 
 impl<SPI, DC, RST, CS> Stm32Display<SPI, DC, RST, CS>
@@ -75,13 +152,17 @@ where
     CS: OutputPin,
 {
     pub fn new(spi: SPI, dc: DC, reset: RST, cs: CS, fb: &'static mut [u16; FB_SIZE]) -> Self {
+        link_up();
         Self {
-            spi,
+            _spi: spi,
             dc,
             reset,
             cs,
             fb,
             palette: Palette::IDENTITY,
+            health: Health::new(),
+            cpu_hz: 0,
+            gamma: Gamma::Panel,
         }
     }
 
@@ -100,9 +181,11 @@ where
     }
 
     /// Positive (E0h) and negative (E1h) gamma correction, live.
-    pub fn set_gamma(&mut self, t: &GammaTables) {
-        self.cmd_data(0xE0, &t.positive);
-        self.cmd_data(0xE1, &t.negative);
+    pub fn set_gamma(&mut self, g: Gamma) {
+        self.gamma = g;
+        let t = tables(g);
+        self.cmd_data(panel::cmd::PGAMCTRL, &t.positive);
+        self.cmd_data(panel::cmd::NGAMCTRL, &t.negative);
     }
 
     /// Push framebuffer pixels `start..end` (already windowed) through the palette.
@@ -112,23 +195,31 @@ where
         let mut bytes = [0u8; 512];
         for chunk in self.fb[start..end].chunks(256) {
             self.palette.map_into(chunk, &mut bytes);
-            let _ = self.spi.write(&bytes[..chunk.len() * 2]);
+            put(&bytes[..chunk.len() * 2]);
         }
+        drain();
+        let _ = self.cs.set_high();
+    }
+
+    /// One CS frame of `bytes`, DC high for data.
+    fn send(&mut self, data: bool, bytes: &[u8]) {
+        let _ = if data {
+            self.dc.set_high()
+        } else {
+            self.dc.set_low()
+        };
+        let _ = self.cs.set_low();
+        put(bytes);
+        drain();
         let _ = self.cs.set_high();
     }
 
     fn cmd(&mut self, cmd: u8) {
-        let _ = self.dc.set_low();
-        let _ = self.cs.set_low();
-        let _ = self.spi.write(&[cmd]);
-        let _ = self.cs.set_high();
+        self.send(false, &[cmd]);
     }
 
     fn data_bytes(&mut self, data: &[u8]) {
-        let _ = self.dc.set_high();
-        let _ = self.cs.set_low();
-        let _ = self.spi.write(data);
-        let _ = self.cs.set_high();
+        self.send(true, data);
     }
 
     fn cmd_data(&mut self, cmd: u8, data: &[u8]) {
@@ -136,38 +227,151 @@ where
         self.data_bytes(data);
     }
 
-    /// ILI9341 init sequence (PreenFM3 ili9341.c, after martnak/STM32-ILI9341). Leaves gamma at the
-    /// panel's reset tables (THEME's PANEL); the caller pushes the boot
+    /// ILI9341 init sequence (`chimera_hal::panel::init`). Leaves gamma at
+    /// the panel's reset tables (THEME's PANEL); the caller pushes the boot
     /// theme's actual gamma right after.
     pub fn init(&mut self, cpu_hz: u32) {
-        let _ = self.reset.set_low();
-        crate::clocks::delay_us(cpu_hz, 12_500);
-        let _ = self.reset.set_high();
-        crate::clocks::delay_us(cpu_hz, 150_000);
-
-        self.cmd(0x01);
-        crate::clocks::delay_us(cpu_hz, 12_500);
-
-        self.cmd_data(0xCB, &[0x39, 0x2C, 0x00, 0x34, 0x02]);
-        self.cmd_data(0xCF, &[0x00, 0xC1, 0x30]);
-        self.cmd_data(0xE8, &[0x85, 0x00, 0x78]);
-        self.cmd_data(0xEA, &[0x00, 0x00]);
-        self.cmd_data(0xED, &[0x64, 0x03, 0x12, 0x81]);
-        self.cmd_data(0xF7, &[0x20]);
-        self.cmd_data(0xC0, &[0x23]);
-        self.cmd_data(0xC1, &[0x10]);
-        self.cmd_data(0xC5, &[0x3E, 0x28]);
-        self.cmd_data(0xC7, &[0x86]);
-        self.cmd_data(0x36, &[0x48]); // MADCTL: MX | BGR
-        self.cmd_data(0x3A, &[0x55]); // 16-bit RGB565
-        self.cmd_data(0xB1, &[0x00, 0x18]);
-        self.cmd_data(0xB6, &[0x08, 0x82, 0x27]);
-        self.cmd_data(0xF2, &[0x00]);
-        self.cmd_data(0x26, &[0x01]);
-        self.cmd(0x11);
-        crate::clocks::delay_us(cpu_hz, 150_000);
-        self.cmd(0x29);
+        self.cpu_hz = cpu_hz;
+        panel::init(self);
     }
+
+    /// The health check, when due (ADR 0326): a panel re-inited takes
+    /// THEME's gamma and the whole framebuffer again. Bank 2's, through
+    /// the board's door.
+    #[cfg(not(feature = "sd-probe"))]
+    #[cfg_attr(
+        all(target_os = "none", feature = "bank2"),
+        unsafe(link_section = ".bank2_panel.tend")
+    )]
+    pub fn tend(&mut self) {
+        let mut h = self.health;
+        let reinit = panel::tend(&mut h, crate::controls::now_ms(), self);
+        self.health = h;
+        PANEL_ARMED.store(h.armed(), Ordering::Relaxed);
+        if reinit {
+            PANEL_REINITS.fetch_add(1, Ordering::Relaxed);
+            self.set_gamma(self.gamma);
+            self.flush();
+        }
+    }
+}
+
+impl<SPI, DC, RST, CS> Link for Stm32Display<SPI, DC, RST, CS>
+where
+    SPI: Write<u8>,
+    DC: OutputPin,
+    RST: OutputPin,
+    CS: OutputPin,
+{
+    fn cmd(&mut self, c: u8) {
+        Stm32Display::cmd(self, c);
+    }
+
+    fn data(&mut self, d: &[u8]) {
+        self.data_bytes(d);
+    }
+
+    #[cfg_attr(
+        all(target_os = "none", feature = "bank2"),
+        unsafe(link_section = ".bank2_panel.read")
+    )]
+    fn read(&mut self, c: u8) -> Option<u8> {
+        // CS is high: every frame before this one drained and raised it.
+        // The clock and duplex change only here, between frames.
+        reading(true);
+        let _ = self.dc.set_low();
+        let _ = self.cs.set_low();
+        let got = exchange(c);
+        let _ = self.cs.set_high();
+        reading(false);
+        got
+    }
+
+    fn reset(&mut self, low: bool) {
+        let _ = if low {
+            self.reset.set_low()
+        } else {
+            self.reset.set_high()
+        };
+    }
+
+    fn delay_us(&mut self, us: u32) {
+        crate::clocks::delay_us(self.cpu_hz, us);
+    }
+}
+
+/// `stats`' lines for the link (ADR 0326), written in bank 2.
+#[cfg(not(feature = "sd-probe"))]
+#[cfg_attr(
+    all(target_os = "none", feature = "bank2"),
+    unsafe(link_section = ".bank2_panel.stats")
+)]
+pub(crate) fn stats_lines(t: &mut dyn core::fmt::Write) -> core::fmt::Result {
+    writeln!(
+        t,
+        "panel_armed {}\npanel_reinits {}\nspi_errors {}",
+        u8::from(PANEL_ARMED.load(Ordering::Relaxed)),
+        PANEL_REINITS.load(Ordering::Relaxed),
+        SPI_ERRORS.load(Ordering::Relaxed)
+    )
+}
+
+/// SPI1 for a read: 100 MHz / 16 = 6.25 MHz, inside the ILI9341's 150 ns
+/// read cycle (datasheet V1.11 § 19.3), and full duplex to hear the panel;
+/// or back to the writes' /2 (50 MHz), transmit-only. With CS high.
+#[cfg_attr(
+    all(target_os = "none", feature = "bank2"),
+    unsafe(link_section = ".bank2_panel.read")
+)]
+fn reading(on: bool) {
+    let spi = spi1();
+    off(spi);
+    spi.ifcr.write(|w| w.ovrc().set_bit().modfc().set_bit());
+    if on {
+        spi.cfg1.modify(|_, w| w.mbr().div16());
+        spi.cfg2.modify(|_, w| w.comm().full_duplex());
+    } else {
+        spi.cfg1.modify(|_, w| w.mbr().div2());
+        spi.cfg2.modify(|_, w| w.comm().transmitter());
+    }
+    spi.cr1.modify(|_, w| w.spe().set_bit());
+}
+
+/// `c` out, then a 0xFF dummy clocking the panel's answer in: the answer.
+/// `None`, counted: the SPI flagged an error or never answered.
+#[cfg_attr(
+    all(target_os = "none", feature = "bank2"),
+    unsafe(link_section = ".bank2_panel.read")
+)]
+fn exchange(c: u8) -> Option<u8> {
+    let spi = spi1();
+    let txdr = core::ptr::addr_of!(spi.txdr).cast::<u8>().cast_mut();
+    let rxdr = core::ptr::addr_of!(spi.rxdr).cast::<u8>();
+    // SAFETY: SPI1 was just enabled with empty FIFOs, so both bytes fit;
+    // byte writes of TXDR are 8-bit frames.
+    unsafe {
+        core::ptr::write_volatile(txdr, c);
+        core::ptr::write_volatile(txdr, 0xFF);
+    }
+    spi.cr1.modify(|_, w| w.cstart().set_bit());
+    let mut got = 0;
+    for _ in 0..2 {
+        let mut n = POLLS;
+        loop {
+            let sr = spi.sr.read();
+            if sr.ovr().bit_is_set() || sr.modf().bit_is_set() || n == 0 {
+                SPI_ERRORS.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+            if sr.rxp().bit_is_set() {
+                // SAFETY: RXP was just read set: a byte waits in RXDR.
+                got = unsafe { core::ptr::read_volatile(rxdr) };
+                break;
+            }
+            n -= 1;
+        }
+    }
+    Some(got)
 }
 
 impl<SPI, DC, RST, CS> DrawTarget for Stm32Display<SPI, DC, RST, CS>
@@ -209,11 +413,7 @@ where
     CS: OutputPin,
 {
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
-        self.cmd_data(0x2A, &[0x00, 0x00, 0x00, 0xEF]);
-        let ys = y_start.to_be_bytes();
-        let ye = (y_end - 1).to_be_bytes();
-        self.cmd_data(0x2B, &[ys[0], ys[1], ye[0], ye[1]]);
-        self.cmd(0x2C);
+        panel::window(self, y_start, y_end);
         self.write_pixels(
             y_start as usize * SCREEN_WIDTH as usize,
             y_end as usize * SCREEN_WIDTH as usize,
