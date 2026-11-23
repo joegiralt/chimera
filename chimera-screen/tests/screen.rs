@@ -36,7 +36,10 @@ fn algo_at(morph: f32, focus: Option<Slot>) -> Fb {
     let mut m = mirror(EngineType::Algo);
     m.set(addr("ALGO.MORPH"), morph).unwrap();
     let mut fb = Fb::new();
-    let how = Shown { focus, pad: None };
+    let how = Shown {
+        focus,
+        ..Shown::default()
+    };
     m.render(ALG, how, &mut fb).unwrap();
     fb
 }
@@ -52,7 +55,7 @@ fn focus_moves_the_band_and_keeps_the_value() {
     let was = m.ed_line("ed get ALGO.MORPH");
     let how = Shown {
         focus: Some(MORPH_KNOB),
-        pad: None,
+        ..Shown::default()
     };
     m.render(ALG, how, &mut Fb::new()).unwrap();
     assert_eq!(m.ed_line("ed get ALGO.MORPH"), was);
@@ -176,6 +179,7 @@ impl Sim {
         // Its refusals' toasts gone: the editor's screens show none.
         self.ui.step_toast(60_000);
         self.ui.update(UiTick::for_test());
+        self.ui.frame_for_test(how.frame);
         let mut fb = Fb::new();
         self.ui.render_with_scope(
             &mut fb,
@@ -573,8 +577,8 @@ fn kit_draws_the_pad_it_is_shown_with() {
         "KIT"
     );
     let pad = |n: u8| Shown {
-        focus: None,
         pad: Some(PadId::new(n - 1).unwrap()),
+        ..Shown::default()
     };
     let mut m = mirror(EngineType::Drum);
     let mut sim = Sim::new(EngineType::Drum);
@@ -640,7 +644,9 @@ fn engine_names_are_the_fixtures() {
     let names =
         unsafe { core::slice::from_raw_parts(abi::engines_ptr(), abi::engines_len() as usize) };
     let fixture = include_str!("../../chimera-core/tests/fixtures/editor/engines.txt");
-    assert_eq!(str::from_utf8(names).unwrap(), fixture.trim_end());
+    // Then the mixer, past the engines: their numbers never move.
+    let want = format!("{}\nMIXER", fixture.trim_end());
+    assert_eq!(str::from_utf8(names).unwrap(), want);
 }
 
 #[test]
@@ -688,17 +694,17 @@ fn the_abi_answers_statuses() {
     assert_eq!(abi::apply(algo, 2, len), i32::from(Status::BadBatch));
     assert_eq!(abi::apply(9, 0, 0), i32::from(Status::NoSuchEngine));
     let screen = Region::Screen as u8;
-    assert_eq!(abi::show(algo, 0, screen, 2, 0), ok);
+    assert_eq!(abi::show(algo, 0, screen, 2, 0, 0), ok);
     assert_eq!(
-        abi::show(algo, 999, screen, -1, 0),
+        abi::show(algo, 999, screen, -1, 0, 0),
         i32::from(Status::NotShown)
     );
     assert_eq!(
-        abi::show(algo, 0, 9, -1, 0),
+        abi::show(algo, 0, 9, -1, 0, 0),
         i32::from(Status::NoSuchRegion)
     );
     assert_eq!(
-        abi::show(algo, 0, screen, 6, 0),
+        abi::show(algo, 0, screen, 6, 0, 0),
         i32::from(Status::NoSuchCell)
     );
     let drum = EngineType::PLAYABLE
@@ -706,13 +712,13 @@ fn the_abi_answers_statuses() {
         .position(|&e| e == EngineType::Drum)
         .unwrap() as u8;
     let icon = Region::PadIcon as u8;
-    assert_eq!(abi::show(drum, 0, icon, -1, 3), ok);
+    assert_eq!(abi::show(drum, 0, icon, -1, 3, 0), ok);
     assert_eq!(
-        abi::show(drum, 0, icon, -1, 0),
+        abi::show(drum, 0, icon, -1, 0, 0),
         i32::from(Status::NoSuchPad)
     );
     assert_eq!(
-        abi::show(drum, 0, screen, -1, 13),
+        abi::show(drum, 0, screen, -1, 13, 0),
         i32::from(Status::NoSuchPad)
     );
     assert_eq!(abi::reset(algo), ok);

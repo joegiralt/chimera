@@ -3,10 +3,10 @@
 
 //! `ed describe`'s page numbering: the console's own walk
 //! (`console::ed_page_at`), the Part's pages of the editor's chain, then
-//! each pad's on DRUM. `tests/screen.rs` holds it to every page
-//! `ed describe` names.
+//! each pad's on DRUM; the mixer's, `ed describe MIXER`'s. `tests/screen.rs`
+//! holds it to every page `ed describe` names.
 
-use chimera_core::console::{Schema, ed_page_at};
+use chimera_core::console::{Round, Schema, ed_page_at};
 use chimera_core::dsp::drum::types::PadId;
 use chimera_core::params::EngineType;
 use chimera_core::ui::block_def::BlockDef;
@@ -18,4 +18,13 @@ pub struct PageNo(pub u16);
 /// Page `n` of `engine`: its def, and the pad it is a page of.
 pub fn page_at(engine: EngineType, n: PageNo) -> Option<(&'static BlockDef, Option<PadId>)> {
     ed_page_at(Schema::Engine(engine), usize::from(n.0)).map(|(def, round)| (def, round.pad()))
+}
+
+/// Page `n` of the mixer, where it is one of the shared FX pages (CHR to
+/// MST › LVL); `None` past them, on a Part's own (PRT, VOI, EQ, SND).
+pub fn mixer_at(n: PageNo) -> Option<&'static BlockDef> {
+    match ed_page_at(Schema::Mixer, usize::from(n.0))? {
+        (def, Round::Shared) => Some(def),
+        _ => None,
+    }
 }

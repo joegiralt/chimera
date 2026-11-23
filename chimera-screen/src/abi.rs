@@ -8,13 +8,13 @@
 //!
 //! | export | meaning |
 //! |---|---|
-//! | `engines_ptr() -> *const u8`, `engines_len() -> u32` | the engines' names, `\n` between, in `EngineType::PLAYABLE`'s order: an engine's number is its place here |
+//! | `engines_ptr() -> *const u8`, `engines_len() -> u32` | the engines' names, `\n` between, in `EngineType::PLAYABLE`'s order, then `MIXER` (the mixer's FX pages, `ed describe MIXER`'s numbering): an engine's number is its place here |
 //! | `text_ptr() -> *mut u8` | `TEXT_CAP` bytes: a batch's addresses, `\n` between |
 //! | `vals_ptr() -> *mut f32` | `VALS_CAP` stored values, one per address |
 //! | `apply(engine: u8, n: u32, len: u32) -> i32` | the engine's mirror takes the batch's `n` values (`len` bytes of text): `Ok`, `Refused` (`refused()` says how many), or an error |
 //! | `refused() -> u32`, `writes() -> u32` | the last `apply`'s refusals, and the values it wrote |
-//! | `reset(engine: u8) -> i32` | the engine's mirror back to its INIT Sound |
-//! | `show(engine: u8, page: u16, region: u8, focus: i32, pad: u8) -> i32` | page `page` drawn (`focus` -1 none, else knob a-f as 0-5; `pad` 0 none, else 1-12), or, for `Region::PadIcon`, pad `pad`'s icon alone; `NotShown` where the Sound doesn't show the page |
+//! | `reset(engine: u8) -> i32` | the engine's mirror back to its INIT Sound; MIXER's to the project's default FX |
+//! | `show(engine: u8, page: u16, region: u8, focus: i32, pad: u8, frame: u32) -> i32` | page `page` drawn (`focus` -1 none, else knob a-f as 0-5; `pad` 0 none, else 1-12) at UI frame `frame` (an animated glyph's phase; 0 when left out), or, for `Region::PadIcon`, pad `pad`'s icon alone; `NotShown` where the Sound doesn't show the page, and on MIXER past its shared FX pages |
 //! | `buf_ptr() -> *const u16` | the 240x320 RGB565 pixels, row by row |
 //! | `rect_ptr() -> *const u16` | `[x, y, w, h]` of the last `show`'s region |
 //!
@@ -23,8 +23,8 @@
 //! array inside it, so a pointer stays valid for the instance's life; JS
 //! reads or writes it only between calls (wasm32 is one thread).
 
-use crate::{Addr, Fb, Mirror, PageNo, Region, Shown, Slot};
-use chimera_core::block::DiskCode;
+use crate::{Addr, Board, Fb, Mirror, PageNo, Region, Shown, Slot};
+use chimera_core::console::Schema;
 use chimera_core::dsp::drum::types::PadId;
 use chimera_core::params::EngineType;
 use core::cell::RefCell;
@@ -62,7 +62,8 @@ impl From<Status> for i32 {
 }
 
 struct Shell {
-    /// `EngineType::PLAYABLE`'s mirrors, each built on first use.
+    /// `EngineType::PLAYABLE`'s mirrors, then the mixer's, each built on
+    /// first use.
     mirrors: Mirrors,
     fb: Fb,
     text: Box<[u8; TEXT_CAP]>,
@@ -86,11 +87,7 @@ fn with<R>(f: impl FnOnce(&mut Shell) -> R) -> R {
             text: Box::new([0; TEXT_CAP]),
             vals: Box::new([0.0; VALS_CAP]),
             rect: [0; 4],
-            names: EngineType::PLAYABLE
-                .iter()
-                .map(|e| e.disk_ident())
-                .collect::<Vec<_>>()
-                .join("\n"),
+            names: names(),
             refused: 0,
             writes: 0,
         });
@@ -98,21 +95,58 @@ fn with<R>(f: impl FnOnce(&mut Shell) -> R) -> R {
     })
 }
 
-type Mirrors = [Option<Mirror>; EngineType::PLAYABLE.len()];
+/// `engines_ptr`'s list: the engines, then the mixer, by their `ed
+/// describe` names.
+fn names() -> String {
+    let mut out = String::new();
+    for (i, s) in BOARDS.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let _ = s.write(&mut out);
+    }
+    out
+}
 
-/// Engine `n`'s mirror, on its INIT Sound the first time.
+/// Each mirror's schema, in its number's place.
+const BOARDS: [Schema; EngineType::PLAYABLE.len() + 1] = {
+    let mut b = [Schema::Mixer; EngineType::PLAYABLE.len() + 1];
+    let mut i = 0;
+    while i < EngineType::PLAYABLE.len() {
+        b[i] = Schema::Engine(EngineType::PLAYABLE[i]);
+        i += 1;
+    }
+    b
+};
+
+type Mirrors = [Option<Mirror>; BOARDS.len()];
+
+/// Mirror `n` as it starts: an engine's INIT Sound, or the mixer's
+/// defaults.
+fn fresh(n: u8) -> Result<Mirror, Status> {
+    match BOARDS.get(usize::from(n)).ok_or(Status::NoSuchEngine)? {
+        Schema::Engine(e) => {
+            let mut m = Mirror::new();
+            m.init(*e);
+            Ok(m)
+        }
+        Schema::Mixer => Ok(Mirror::mixer()),
+        // No mirror walks these: `BOARDS` never lists them.
+        Schema::Matrix(_) | Schema::Settings | Schema::Map | Schema::Orbit => {
+            Err(Status::NoSuchEngine)
+        }
+    }
+}
+
+/// Mirror `n`, as `fresh` the first time.
 fn mirror(mirrors: &mut Mirrors, n: u8) -> Result<&mut Mirror, Status> {
-    let e = *EngineType::PLAYABLE
-        .get(usize::from(n))
-        .ok_or(Status::NoSuchEngine)?;
     let m = mirrors
         .get_mut(usize::from(n))
         .ok_or(Status::NoSuchEngine)?;
-    Ok(m.get_or_insert_with(|| {
-        let mut m = Mirror::new();
-        m.init(e);
-        m
-    }))
+    if m.is_none() {
+        *m = Some(fresh(n)?);
+    }
+    m.as_mut().ok_or(Status::NoSuchEngine)
 }
 
 impl Shell {
@@ -210,17 +244,23 @@ pub extern "C" fn writes() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn reset(engine: u8) -> i32 {
     status(with(|s| {
-        let e = *EngineType::PLAYABLE
+        let m = mirror(&mut s.mirrors, engine)?;
+        let schema = *BOARDS
             .get(usize::from(engine))
             .ok_or(Status::NoSuchEngine)?;
-        mirror(&mut s.mirrors, engine)?.init(e);
+        match (m.board(), schema) {
+            (Board::Sound, Schema::Engine(e)) => m.init(e),
+            (Board::Mixer, Schema::Mixer) => *m = Mirror::mixer(),
+            // A mirror on another board than its number's: never built.
+            (Board::Sound | Board::Mixer, _) => return Err(Status::NoSuchEngine),
+        }
         Ok(Status::Ok)
     }))
 }
 
 // SAFETY: see above.
 #[unsafe(no_mangle)]
-pub extern "C" fn show(engine: u8, page: u16, region: u8, focus: i32, pad: u8) -> i32 {
+pub extern "C" fn show(engine: u8, page: u16, region: u8, focus: i32, pad: u8, frame: u32) -> i32 {
     status(with(|s| {
         let r = Region::from_u8(region).ok_or(Status::NoSuchRegion)?;
         let focus = match focus {
@@ -241,7 +281,7 @@ pub extern "C" fn show(engine: u8, page: u16, region: u8, focus: i32, pad: u8) -
             m.pad_icon(pad.ok_or(Status::NoSuchPad)?, fb);
             crate::Rect::PAD_ICON
         } else {
-            m.render(PageNo(page), Shown { focus, pad }, fb)
+            m.render(PageNo(page), Shown { focus, pad, frame }, fb)
                 .ok_or(Status::NotShown)?;
             m.region(r).ok_or(Status::NoRegion)?
         };

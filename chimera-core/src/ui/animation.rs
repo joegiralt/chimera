@@ -122,6 +122,12 @@ impl UiClock {
     pub const fn frame(self) -> u32 {
         self.0
     }
+
+    /// The clock at `frame`: a harness's frame of an animated glyph.
+    #[cfg(any(test, feature = "test-support"))]
+    pub const fn at(frame: u32) -> Self {
+        Self(frame)
+    }
 }
 
 /// UI frames a second: what `update`'s easing and clock are tuned for.

@@ -15,6 +15,11 @@
 //! the turn makes: two legal kits can differ by steps that each make a 9th. A write can move others (a MACHINE takes its knobs' defaults), so a
 //! batch is written until every value holds (`Mirror::apply`), whatever
 //! its order.
+//!
+//! A mirror's pages are its Part's engine's (`Board::Sound`) or the
+//! mixer's shared FX pages (`Board::Mixer`, `ed describe MIXER`'s
+//! numbering): CHR's braid, moiré or ray gun, DLY's rings, REV's cube or
+//! tail, MST's curve. An animated glyph is drawn at `Shown::frame`.
 
 use chimera_core::console::{
     Console, EdAddr, EdState, Request, SetRefusal, StoredRefusal, ed_stored,
@@ -26,6 +31,7 @@ use chimera_core::project::{Origin, PartFrom, PartId, PartSource};
 use chimera_core::ui::UiState;
 use chimera_core::ui::animation::UiTick;
 use chimera_core::ui::block_def::BlockDef;
+use chimera_core::ui::block_registry::MIXER_CHANNEL_CHAIN;
 use chimera_core::ui::held;
 use chimera_core::ui::kit_band;
 use chimera_core::ui::nav::{Location, PartChain};
@@ -249,6 +255,20 @@ pub struct Shown {
     /// pad's page shows. `None`: the page's own pad (`PAD5_KIT` is pad
     /// 5's), else pad 1.
     pub pad: Option<PadId>,
+    /// The UI frame an animated glyph is drawn at (the braid's twist, the
+    /// rings' wobble, the cube's spin), 20 a second on the unit: the same
+    /// frame is the same picture, whatever was drawn before.
+    pub frame: u32,
+}
+
+/// Which pages a mirror's page numbers walk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Board {
+    /// The Part's engine's, `ed describe <ENGINE>`'s.
+    Sound,
+    /// The mixer's shared FX pages, `ed describe MIXER`'s numbering, as
+    /// Part 1's mixer enters them; its Parts' own pages are not shown.
+    Mixer,
 }
 
 /// `held` is the value `ed since` printed as `sent`: it prints seven
@@ -266,6 +286,7 @@ const PASSES: usize = 8;
 pub struct Mirror {
     ui: Box<UiState>,
     ed: EdState,
+    board: Board,
     /// The last page drawn, for its regions.
     shown: Option<&'static BlockDef>,
 }
@@ -278,9 +299,20 @@ impl Default for Mirror {
 
 impl Mirror {
     pub fn new() -> Mirror {
+        Mirror::on(Board::Sound)
+    }
+
+    /// The mixer's mirror: its FX at the project's defaults, over an
+    /// ALGO INIT Part.
+    pub fn mixer() -> Mirror {
+        Mirror::on(Board::Mixer)
+    }
+
+    fn on(board: Board) -> Mirror {
         let mut m = Mirror {
             ui: Box::new(UiState::new()),
             ed: EdState::new(),
+            board,
             shown: None,
         };
         // NEW's Part is the template's, unedited: this load never asks,
@@ -299,6 +331,10 @@ impl Mirror {
 
     pub fn ui(&self) -> &UiState {
         &self.ui
+    }
+
+    pub fn board(&self) -> Board {
+        self.board
     }
 
     fn part(&self) -> PartId {
@@ -425,6 +461,7 @@ impl Mirror {
     pub fn render(&mut self, n: PageNo, how: Shown, fb: &mut Fb) -> Option<()> {
         self.show(n, how)?;
         self.ui.update(UiTick::for_test());
+        self.ui.frame_for_test(how.frame);
         self.ui.render_with_scope(fb, &PerfStats::zero(), &SCOPE);
         self.paint(fb);
         Some(())
@@ -439,18 +476,29 @@ impl Mirror {
     /// The Part on page `n`, shown as `how` says: its pad selected (a
     /// pad's page's own), entered as its key enters it, the focus set.
     pub fn show(&mut self, n: PageNo, how: Shown) -> Option<()> {
-        let e = self.engine();
-        let (def, own) = pages::page_at(e, n)?;
         let p = self.part();
-        if e == EngineType::Drum {
-            let pad = how.pad.or(own).unwrap_or(PadId::ALL[0]);
-            self.ui.select_pad(p, pad);
-        }
-        let chain = PartChain::of(&self.ui.project().part(p).sound)
-            .ordered(self.ui.theme().algo_first)
-            .def();
-        let at = chain.locate(def.id)?;
-        self.ui.go_for_test(Location::pages(p, at));
+        let def = match self.board {
+            Board::Sound => {
+                let e = self.engine();
+                let (def, own) = pages::page_at(e, n)?;
+                if e == EngineType::Drum {
+                    let pad = how.pad.or(own).unwrap_or(PadId::ALL[0]);
+                    self.ui.select_pad(p, pad);
+                }
+                let chain = PartChain::of(&self.ui.project().part(p).sound)
+                    .ordered(self.ui.theme().algo_first)
+                    .def();
+                let at = chain.locate(def.id)?;
+                self.ui.go_for_test(Location::pages(p, at));
+                def
+            }
+            Board::Mixer => {
+                let def = pages::mixer_at(n)?;
+                let at = MIXER_CHANNEL_CHAIN.locate(def.id)?;
+                self.ui.go_for_test(Location::fx(p, at));
+                def
+            }
+        };
         self.shown = Some(def);
         let slot = how.focus.map_or(0, Slot::index);
         let ctx = self.ui.slot_ctx_for_test();

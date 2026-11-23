@@ -2313,6 +2313,15 @@ impl UiState {
         self.renderer.branch_scroll.snap(rows);
     }
 
+    /// The animation clock at `frame`: what the next render's animated
+    /// glyphs (the braid, the rings, the cube, the tail) read, whatever
+    /// ran before (chimera-screen's `frame`).
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn frame_for_test(&mut self, frame: u32) {
+        self.clock = animation::UiClock::at(frame);
+    }
+
     /// Slot `slot` of the page shown in the focus band, as its last turn
     /// leaves it, its value untouched (chimera-screen's `focus`).
     #[cfg(any(test, feature = "test-support"))]
