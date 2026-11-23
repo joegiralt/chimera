@@ -44,24 +44,45 @@ pub const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
 /// The release this tool builds.
 pub const VERSION: &str = "tapes-v1";
 
+/// A Chimera Sound, by name (a factory Sound, `INIT ALGO` or `INIT
+/// MODAL` with a `modal` model), `notes` held `secs` then `tail` of
+/// release, less its first `from` seconds; `morph` sweeps MORPH 0 → 127
+/// over the hold.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Render {
+    pub sound: String,
+    pub from: f32,
+    pub modal: Option<ResonatorMode>,
+    pub notes: Vec<u8>,
+    pub secs: f32,
+    pub tail: f32,
+    pub morph: bool,
+}
+
+impl Render {
+    /// Its length at 48 kHz, `from` taken off.
+    pub fn frames(&self) -> usize {
+        ((self.secs + self.tail - self.from) * SR).round() as usize
+    }
+}
+
 /// Where a source's audio comes from (spec § 7).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Origin {
-    /// A Chimera Sound, by name (a factory Sound, `INIT ALGO` or `INIT
-    /// MODAL` with a `modal` model), `notes` held `secs` then `tail` of
-    /// release, less its first `from` seconds; `morph` sweeps MORPH 0 →
-    /// 127 over the hold.
-    Render {
-        sound: String,
-        from: f32,
-        modal: Option<ResonatorMode>,
-        notes: Vec<u8>,
-        secs: f32,
-        tail: f32,
-        morph: bool,
+    Render(Render),
+    /// A render taken once and kept (`frozen`, a path under
+    /// `tools/factory-tapes/`): its 48 kHz samples as raw f32 LE, read back
+    /// bit for bit instead of rendered, so an engine change never moves its
+    /// pin or the Sounds on it (#352). `from` is the render it was.
+    Frozen {
+        file: String,
+        from: Render,
     },
     /// The tool's own synthesis, seeded: no recording in it.
-    Synth { kind: Synth, secs: f32 },
+    Synth {
+        kind: Synth,
+        secs: f32,
+    },
     /// A CC0 recording in `$CHIMERA_TAPES_SRC`, `secs` of it from `from`.
     Cc0 {
         file: String,
@@ -178,30 +199,39 @@ fn name(t: &Table) -> Result<SoundName, String> {
 fn source_recipe(name: SoundName, t: &Table) -> Result<SourceRecipe, String> {
     let secs = num(t, "secs")?.ok_or("no secs")?;
     let origin = match need(t, "origin")? {
-        "render" => Origin::Render {
-            sound: need(t, "sound")?.into(),
-            from: num(t, "from")?.unwrap_or(0.0),
-            modal: get(t, "modal")
-                .map(|m| {
-                    [
-                        ResonatorMode::String,
-                        ResonatorMode::Modal,
-                        ResonatorMode::Bowed,
-                        ResonatorMode::Sympathetic,
-                    ]
-                    .into_iter()
-                    .find(|r| r.disk_ident() == m)
-                    .ok_or(format!("modal {m}"))
-                })
-                .transpose()?,
-            notes: need(t, "notes")?
-                .split_whitespace()
-                .map(|n| n.parse().map_err(|_| format!("note {n}")))
-                .collect::<Result<_, _>>()?,
-            secs,
-            tail: num(t, "tail")?.unwrap_or(0.0),
-            morph: get(t, "morph") == Some("sweep"),
-        },
+        "render" => {
+            let r = Render {
+                sound: need(t, "sound")?.into(),
+                from: num(t, "from")?.unwrap_or(0.0),
+                modal: get(t, "modal")
+                    .map(|m| {
+                        [
+                            ResonatorMode::String,
+                            ResonatorMode::Modal,
+                            ResonatorMode::Bowed,
+                            ResonatorMode::Sympathetic,
+                        ]
+                        .into_iter()
+                        .find(|r| r.disk_ident() == m)
+                        .ok_or(format!("modal {m}"))
+                    })
+                    .transpose()?,
+                notes: need(t, "notes")?
+                    .split_whitespace()
+                    .map(|n| n.parse().map_err(|_| format!("note {n}")))
+                    .collect::<Result<_, _>>()?,
+                secs,
+                tail: num(t, "tail")?.unwrap_or(0.0),
+                morph: get(t, "morph") == Some("sweep"),
+            };
+            match get(t, "frozen") {
+                Some(file) => Origin::Frozen {
+                    file: file.into(),
+                    from: r,
+                },
+                None => Origin::Render(r),
+            }
+        }
         "synth" => Origin::Synth {
             kind: match need(t, "synth")? {
                 "noise" => Synth::Noise,
@@ -339,7 +369,20 @@ pub fn audio(r: &SourceRecipe, dir: &Path) -> Result<Option<Mono>, String> {
         smpl: None,
     };
     Ok(Some(match &r.origin {
-        Origin::Render {
+        Origin::Frozen { file, from } => {
+            let path = format!("{ROOT}/tools/factory-tapes/{file}");
+            let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+            let (samples, rest) = bytes.as_chunks::<4>();
+            if !rest.is_empty() || samples.len() != from.frames() {
+                return Err(format!(
+                    "{path}: {} B, not its render's {} f32s",
+                    bytes.len(),
+                    from.frames()
+                ));
+            }
+            mono(samples.iter().map(|b| f32::from_le_bytes(*b)).collect())
+        }
+        Origin::Render(Render {
             sound,
             from,
             modal,
@@ -347,7 +390,7 @@ pub fn audio(r: &SourceRecipe, dir: &Path) -> Result<Option<Mono>, String> {
             secs,
             tail,
             morph,
-        } => {
+        }) => {
             let mut s = chimera_sound(sound)?;
             if let Some(m) = modal {
                 s.params.modal.mode = *m;
@@ -635,7 +678,11 @@ pub fn manifest(r: &Recipes, built: &[Option<Built>]) -> String {
         let Some(b) = b else { continue };
         let h = &b.head;
         let origin = match &s.origin {
-            Origin::Render { sound, notes, .. } => format!(
+            Origin::Render(Render { sound, notes, .. })
+            | Origin::Frozen {
+                from: Render { sound, notes, .. },
+                ..
+            } => format!(
                 "\"render\", \"of\": \"{sound} {}\"",
                 notes
                     .iter()
