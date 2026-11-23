@@ -1546,6 +1546,30 @@ fn a_refusal_stays_with_its_part() {
     assert!(refused_lines(&mut f, m).0.is_empty());
 }
 
+/// A choice held on the box keeps the focus a set elsewhere on its page
+/// would take (ADR 0331): DIRECTION's hold stays shown, its cell focused,
+/// under MODEL's refused set (a refused set takes the focus otherwise).
+#[test]
+fn a_set_beside_a_held_choice_leaves_the_focus() {
+    use chimera_core::dsp::tape_engine::TapeEngineParams;
+    use chimera_hal::EncoderId;
+    let mut f = streamed_at_deck();
+    screen::feed(&mut f.ui, screen::Input::turn(EncoderId::D, 1));
+    assert!(f.ui.held_choice().is_some(), "DIRECTION held");
+    let held = f.ui.focused_slot();
+    let model = ParamAddr::new(BlockRef::TapeEngine, TapeEngineParams::MODEL);
+    let def = f.ui.page_def();
+    let ctx = f.ui.slot_ctx_for_test();
+    let at = (0..6).find(|&i| slot_addr(def, i, &ctx) == Some(model));
+    assert!(
+        at.is_some_and(|i| i != held),
+        "MODEL is another cell of the page shown"
+    );
+    set(&mut f, "TAPE_ENG.MODEL", "#2");
+    assert_eq!(f.ui.focused_slot(), held);
+    assert!(f.ui.held_choice().is_some());
+}
+
 #[test]
 fn a_landed_ed_set_is_silent_and_another_cell_leaves_the_hold() {
     use chimera_core::dsp::tape_engine::TapeEngineParams;

@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! What an editor's set does on the box beside its write (ADR 0285): a set
-//! on a cell ends any choice held dimmed there, as a turn that lands does,
-//! and a set the box refuses says why in a toast, as a CC's refusal does.
+//! on a cell ends any choice held dimmed there and takes the focus, as a
+//! turn that lands does, and a set the box refuses says why in a toast, as
+//! a CC's refusal does.
 //! Bank 2's: `bank2.x` links this module with `console::ed`.
 
 use super::UiState;
+use super::block_def::slot_addr;
 use super::held::Held;
 use super::settings::prompt;
 use crate::addr::ParamAddr;
@@ -14,8 +16,8 @@ use crate::dsp::drum::types::PadId;
 use crate::project::{Line, PartId};
 
 /// A set on `a` of Part `at` (on pad `pad`, a pad's) reached the cell: a
-/// choice held there is over. A held CHOKE is its pad's: another pad's
-/// set leaves it.
+/// choice held there is over, and the cell takes the focus. A held CHOKE
+/// is its pad's: another pad's set leaves it.
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.landed"))]
 pub(crate) fn landed(ui: &mut UiState, at: PartId, a: ParamAddr, pad: Option<PadId>) {
     let on = |h: Held| {
@@ -27,6 +29,24 @@ pub(crate) fn landed(ui: &mut UiState, at: PartId, a: ParamAddr, pad: Option<Pad
     };
     if ui.held.is_some_and(|(p, h)| p == at && on(h)) {
         ui.held = None;
+    }
+    // The cell on the page shown takes the focus, as its knob's turn does:
+    // the band's glyph and the viz then draw the set. Another pad's set
+    // leaves it (the box shows the selected pad). So does a box mid-gesture,
+    // whose focus is what the gesture reads: a choice held on the shown
+    // Part, learn armed, sensing or pointing (it binds the focused cell),
+    // or MIX down (MIX + PLUS primes it).
+    if ui.held.is_some_and(|(p, _)| p == ui.active_part)
+        || !matches!(ui.learn, super::learn::Learn::Off)
+        || ui.mix_held
+        || at != ui.active_part
+        || pad.is_some_and(|n| n != ui.project.selected_pad(at))
+    {
+        return;
+    }
+    let (def, ctx) = (ui.page_def(), ui.ctx());
+    if let Some(i) = (0..def.params.len()).find(|&i| slot_addr(def, i, &ctx) == Some(a)) {
+        ui.focus.touch(def.id, i);
     }
 }
 
