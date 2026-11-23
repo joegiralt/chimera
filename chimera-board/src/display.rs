@@ -25,6 +25,13 @@ static FRAMEBUFFER_TAKEN: AtomicBool = AtomicBool::new(false);
 pub static SPI_ERRORS: AtomicU32 = AtomicU32::new(0);
 /// Times the health check re-inited the panel (ADR 0326), for `stats`.
 pub static PANEL_REINITS: AtomicU32 = AtomicU32::new(0);
+/// The last answer to each of RDDPM, RDDMADCTL, RDDCOLMOD, as `0x100 |
+/// byte`; 0 when the read failed (zero-initialised: no flash for the
+/// statics).
+/// For `stats`' `panel_read` (ADR 0332).
+static LAST_READ: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
+/// Reads attempted, every register counted.
+static READS: AtomicU32 = AtomicU32::new(0);
 /// The health check has seen the panel healthy once: it is judging.
 pub static PANEL_ARMED: AtomicBool = AtomicBool::new(false);
 
@@ -281,10 +288,26 @@ where
         reading(true);
         let _ = self.dc.set_low();
         let _ = self.cs.set_low();
-        let got = exchange(c);
+        let mut cmd = [0u8; 1];
+        let mut ans = [0u8; 1];
+        // The command with DC low; the answer clocked in with DC high, as
+        // a data read (the panel samples D/CX on each byte's 8th bit: low,
+        // our dummy 0xFF would be taken as a command). Measured on the
+        // owner's unit 2026-11-23: `9c 48 05`, no dummy bit (datasheet
+        // V1.11 p. 38, 8-bit read; ADR 0332).
+        let mut ok = exchange(&[c], &mut cmd);
+        if ok {
+            let _ = self.dc.set_high();
+            ok = exchange(&[0xFF], &mut ans);
+        }
         let _ = self.cs.set_high();
         reading(false);
-        got
+        READS.fetch_add(1, Ordering::Relaxed);
+        let raw = if ok { 0x100 | u32::from(ans[0]) } else { 0 };
+        if let Some(slot) = LAST_READ.get(usize::from(c.wrapping_sub(panel::cmd::RDDPM))) {
+            slot.store(raw, Ordering::Relaxed);
+        }
+        if ok { Some(ans[0]) } else { None }
     }
 
     fn reset(&mut self, low: bool) {
@@ -313,7 +336,61 @@ pub(crate) fn stats_lines(t: &mut dyn core::fmt::Write) -> core::fmt::Result {
         u8::from(PANEL_ARMED.load(Ordering::Relaxed)),
         PANEL_REINITS.load(Ordering::Relaxed),
         SPI_ERRORS.load(Ordering::Relaxed)
-    )
+    )?;
+    // `panel_read 9c 48 05 reads 12`: each register's answer, hex; `none`
+    // for one whose read failed. Built by
+    // hand from `READ_WORDS`, so its text and digits stay in bank 2.
+    /// `panel_read`'s words, in bank 2 with the code that writes them.
+    #[cfg_attr(
+        all(target_os = "none", feature = "bank2"),
+        unsafe(link_section = ".bank2_panel.rodata")
+    )]
+    static READ_WORDS: [u8; 22] = *b"panel_read none reads ";
+    let w = &READ_WORDS;
+    let mut line = [0u8; 48];
+    let mut at = 0;
+    // A closure would be its own function, outside this one's section.
+    macro_rules! put {
+        ($b:expr) => {{
+            let b: &[u8] = $b;
+            for &c in b {
+                if let Some(d) = line.get_mut(at) {
+                    *d = c;
+                    at += 1;
+                }
+            }
+        }};
+    }
+    put!(&w[..10]);
+    for r in &LAST_READ {
+        match r.load(Ordering::Relaxed) {
+            0 => put!(&w[10..15]),
+            v => {
+                let mut d = [b' '; 3];
+                for (i, c) in d[1..].iter_mut().enumerate() {
+                    let n = (v >> (4 - 4 * i)) as u8 & 0xF;
+                    *c = if n < 10 { b'0' + n } else { b'a' + n - 10 };
+                }
+                put!(&d);
+            }
+        }
+    }
+    put!(&w[15..22]);
+    let mut n = READS.load(Ordering::Relaxed);
+    let mut digits = [0u8; 10];
+    let mut i = digits.len();
+    loop {
+        i -= 1;
+        digits[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    put!(&digits[i..]);
+    put!(b"\n");
+    // SAFETY: every byte written above is ASCII.
+    t.write_str(unsafe { core::str::from_utf8_unchecked(&line[..at]) })
 }
 
 /// SPI1 for a read: 100 MHz / 16 = 6.25 MHz, inside the ILI9341's 150 ns
@@ -337,41 +414,42 @@ fn reading(on: bool) {
     spi.cr1.modify(|_, w| w.spe().set_bit());
 }
 
-/// `c` out, then a 0xFF dummy clocking the panel's answer in: the answer.
-/// `None`, counted: the SPI flagged an error or never answered.
+/// `tx` out (at most the 16-byte FIFO) and as many bytes in, into `rx`.
+/// False, counted: the SPI flagged an error or never answered.
 #[cfg_attr(
     all(target_os = "none", feature = "bank2"),
     unsafe(link_section = ".bank2_panel.read")
 )]
-fn exchange(c: u8) -> Option<u8> {
+fn exchange(tx: &[u8], rx: &mut [u8]) -> bool {
     let spi = spi1();
     let txdr = core::ptr::addr_of!(spi.txdr).cast::<u8>().cast_mut();
     let rxdr = core::ptr::addr_of!(spi.rxdr).cast::<u8>();
-    // SAFETY: SPI1 was just enabled with empty FIFOs, so both bytes fit;
-    // byte writes of TXDR are 8-bit frames.
-    unsafe {
-        core::ptr::write_volatile(txdr, c);
-        core::ptr::write_volatile(txdr, 0xFF);
+    for &b in tx {
+        // SAFETY: SPI1 was enabled with empty FIFOs and every earlier
+        // exchange read back all it sent, so `tx` (at most 16 bytes) fits;
+        // byte writes of TXDR are 8-bit frames.
+        unsafe { core::ptr::write_volatile(txdr, b) };
     }
-    spi.cr1.modify(|_, w| w.cstart().set_bit());
-    let mut got = 0;
-    for _ in 0..2 {
+    if spi.cr1.read().cstart().bit_is_clear() {
+        spi.cr1.modify(|_, w| w.cstart().set_bit());
+    }
+    for g in rx.iter_mut() {
         let mut n = POLLS;
         loop {
             let sr = spi.sr.read();
             if sr.ovr().bit_is_set() || sr.modf().bit_is_set() || n == 0 {
                 SPI_ERRORS.fetch_add(1, Ordering::Relaxed);
-                return None;
+                return false;
             }
             if sr.rxp().bit_is_set() {
                 // SAFETY: RXP was just read set: a byte waits in RXDR.
-                got = unsafe { core::ptr::read_volatile(rxdr) };
+                *g = unsafe { core::ptr::read_volatile(rxdr) };
                 break;
             }
             n -= 1;
         }
     }
-    Some(got)
+    true
 }
 
 impl<SPI, DC, RST, CS> DrawTarget for Stm32Display<SPI, DC, RST, CS>

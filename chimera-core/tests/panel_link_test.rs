@@ -188,7 +188,8 @@ impl Panel {
         match c {
             0x0A => 0x80 | u8::from(self.awake) << 4 | 0x08 | u8::from(self.on) << 2,
             0x0B => self.madctl,
-            0x0C => self.colmod,
+            // As the owner's panel answers (2026-11-23): DBI only, DPI 0.
+            0x0C => self.colmod & 0x07,
             _ => 0,
         }
     }
@@ -559,6 +560,23 @@ fn a_fault_that_survives_init_backs_off() {
     let mut h = d.health;
     assert!(!h.judge(t, Some(UP)));
     assert!(!h.due(Ms(t.0 + 499)) && h.due(Ms(t.0 + 500)));
+}
+
+/// The owner's panel (2026-11-23, `panel_read 9c 48 05`): RDDCOLMOD
+/// answers 0x05, the DBI field alone, for the 0x55 sent. It must arm.
+#[test]
+fn the_real_panels_answer_arms() {
+    let real = Some(Mode {
+        power: 0x9C,
+        madctl: 0x48,
+        colmod: 0x05,
+    });
+    let mut h = Health::new();
+    assert!(!h.judge(Ms(0), real));
+    assert!(h.armed());
+    // An 18-bit DBI (0x06) is off-mode.
+    assert!(!h.judge(Ms(500), Some(Mode { colmod: 0x06, ..UP })));
+    assert!(h.judge(Ms(1000), Some(Mode { colmod: 0x06, ..UP })));
 }
 
 #[test]
