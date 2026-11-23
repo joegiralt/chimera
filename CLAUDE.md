@@ -24,7 +24,7 @@ chimera-screen/      — the browser editor's glyphs (headless UiState, WASM)
 chimera-desktop/     — simulator (minifb window, cpal audio) and importers
 chimera-utils/       — host tools: A/B renders, clips, budget measures
 chimera-bootloader/  — Chimera's own jump stub (bootloader.bin), never shipped
-editor/              — the Elm browser editor
+(editor)             — the Elm browser editor and site live in joegiralt/chimera-releases (`editor/`)
 tools/               — Python checks and the USB tool (chimera-usb.py)
 ```
 

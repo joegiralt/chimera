@@ -494,7 +494,15 @@ impl<'u> Rig<'u> {
     /// The bar to row `i`.
     pub fn bar_to(&mut self, i: usize) {
         let row = |r: &Rig| r.ui.location().settings().unwrap().row() as usize;
+        // A lap of the longest list at most: a page with no row `i` (none
+        // at all, #902) fails here rather than spinning.
+        let mut lap = 0..=u8::MAX as usize;
         while row(self) != i {
+            assert!(
+                lap.next().is_some(),
+                "bar_to({i}): stuck at row {} after a lap",
+                row(self)
+            );
             let k = if row(self) < i {
                 ButtonId::Plus
             } else {

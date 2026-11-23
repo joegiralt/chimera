@@ -701,6 +701,9 @@ fn list_and_next_id<S: Store>(s: &mut S) {
                 .get(),
             FIRST
         );
+        // Each fresh pair from 1, as the listing below expects: where
+        // fresh pairs start is `Generation::fresh`'s own test.
+        Generation::seed_fresh(1);
         saved(save_at(&mut card, s, &mut named(name), n));
     }
     let first = at(s, FIRST);

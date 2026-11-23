@@ -612,6 +612,10 @@ pub fn synth(board: Board, shell: Shell) -> ! {
     // Then the last project (about 130 KB read), or NEW and why; then a
     // sweep that stopped for doubts says so.
     ui.boot_project(&mut card, store, settings.last_project);
+    // Fresh pairs start this run where the card's reads left the cycle
+    // count: it varies from boot to boot, so a file deleted and put again
+    // is another generation (#455, ADR 0312).
+    chimera_core::storage::Generation::seed_fresh(cortex_m::peripheral::DWT::cycle_count());
     ui.show_system_note(system);
     ui.note_sweep(&swept);
     ui.note_bank2();

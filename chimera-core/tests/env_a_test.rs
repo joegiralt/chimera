@@ -444,9 +444,9 @@ fn a_level_change_ramps_on_the_vca_path() {
         e.run_block(&p, &full, true, SR, None); // well into sustain at 0.7
     }
     let mut g = [0.0f32; BLOCK_SIZE];
-    e.run_block(&p, &full, true, SR, Some((&mut g, 1.0)));
+    e.run_block(&p, &full, true, SR, Some((&mut g, (1.0, 1.0))));
     let mut g = [0.0f32; BLOCK_SIZE];
-    e.run_block(&p, &half, true, SR, Some((&mut g, 1.0)));
+    e.run_block(&p, &half, true, SR, Some((&mut g, (1.0, 1.0))));
     let step = 0.7 * 0.5 / BLOCK_SIZE as f32;
     assert!(
         (g[BLOCK_SIZE - 1] - 0.35).abs() < 1e-4,

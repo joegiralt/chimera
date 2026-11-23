@@ -268,6 +268,12 @@ impl VoiceSlot {
         (self.cost + self.glide).max(self.fading)
     }
 
+    /// The glide's extra on `cost` (admission's): for the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn glide(&self) -> Cost {
+        self.glide
+    }
+
     /// `cost` without the glide: what shedding counts.
     fn shed_cost(&self) -> Cost {
         self.cost.max(self.fading)

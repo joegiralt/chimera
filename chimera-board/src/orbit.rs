@@ -64,6 +64,13 @@ mod on {
             self.runner.now()
         }
 
+        /// The runner, for the load gate's step: a `bank2 erase` shuts it
+        /// (#784).
+        #[inline]
+        pub fn runner(&mut self) -> Option<&mut OrbitRunner> {
+            Some(&mut self.runner)
+        }
+
         /// A live key, raw, before any snap: capture sees it.
         #[inline]
         pub fn live(&mut self, n: NoteEvent) {
@@ -133,6 +140,12 @@ mod off {
     impl Runner {
         pub fn now(&self) -> u64 {
             0
+        }
+
+        /// No ORBIT: nothing for the load gate to shut.
+        #[inline(always)]
+        pub fn runner(&mut self) -> Option<&mut chimera_core::orbit::runner::OrbitRunner> {
+            None
         }
 
         pub fn live(&mut self, _: NoteEvent) {}

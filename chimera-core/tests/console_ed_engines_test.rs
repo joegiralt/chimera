@@ -456,7 +456,7 @@ fn engine_fixtures() {
         let text = page_texts(&mut f, e).join("");
         let name = e.disk_ident_for_test().to_lowercase();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../editor/tests/fixtures/{name}-schema.txt"));
+            .join(format!("tests/fixtures/editor/{name}-schema.txt"));
         if std::env::var_os("BLESS").is_some() {
             std::fs::write(&path, &text).unwrap();
         }
@@ -1642,8 +1642,8 @@ fn writes_editor_engines_fixture() {
         .iter()
         .map(|e| format!("{}\n", e.disk_ident_for_test()))
         .collect();
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/engines.txt");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/editor/engines.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::write(&path, &text).unwrap();
     }
@@ -1653,4 +1653,42 @@ fn writes_editor_engines_fixture() {
         "the engines changed: BLESS=1 rewrites {}",
         path.display()
     );
+}
+
+/// Each engine's INIT panels, `ed since 0`'s `panel` lines on Part 1 that
+/// its own schema describes (the buses' are MIXER's), for the editor's
+/// layout tests (the editor kit's `<engine>-init.txt`).
+#[test]
+fn writes_editor_init_fixtures() {
+    for e in [EngineType::Algo].into_iter().chain(OTHERS) {
+        let mut f = fake(e);
+        let described: BTreeSet<String> = page_texts(&mut f, e)
+            .iter()
+            .flat_map(|t| t.lines())
+            .filter_map(|l| l.strip_prefix("panel "))
+            .filter_map(|l| l.split(' ').next())
+            .map(str::to_string)
+            .collect();
+        let text: String = ask(&mut f, "ed since 0\n")
+            .lines()
+            .filter(|l| {
+                l.strip_prefix("panel ")
+                    .and_then(|l| l.split(' ').next())
+                    .is_some_and(|n| described.contains(n))
+            })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let name = e.disk_ident_for_test().to_lowercase();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/fixtures/editor/{name}-init.txt"));
+        if std::env::var_os("BLESS").is_some() {
+            std::fs::write(&path, &text).unwrap();
+        }
+        let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            on_disk == text,
+            "the INIT panels changed: BLESS=1 rewrites {}",
+            path.display()
+        );
+    }
 }

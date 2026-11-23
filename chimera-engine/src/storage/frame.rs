@@ -44,6 +44,18 @@ impl FileKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Generation(u32);
 
+/// The next fresh pair's generation (`Generation::fresh`). The unit's one
+/// card: a static, seeded at boot.
+#[cfg(target_os = "none")]
+static FRESH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
+
+// A host's: each thread its own (a test is a thread, a card of its own),
+// from 1, so a test's first fresh save is `FIRST` as before.
+#[cfg(not(target_os = "none"))]
+extern crate std;
+#[cfg(not(target_os = "none"))]
+std::thread_local!(static FRESH: core::cell::Cell<u32> = const { core::cell::Cell::new(1) });
+
 impl Generation {
     pub const FIRST: Self = Generation(1);
 
@@ -55,6 +67,29 @@ impl Generation {
     #[optimize(size)]
     pub fn next(self) -> Self {
         Generation(self.0.wrapping_add(1))
+    }
+
+    /// A fresh pair's first generation (#455, ADR 0312): one after the
+    /// last fresh pair's, from a start the shell seeds at boot
+    /// (`seed_fresh`), not 1 for every file. A file deleted and put again
+    /// under the same id and name is then another generation, and a
+    /// listing's witness tells the two apart. No format change: only
+    /// where a pair starts counting.
+    pub fn fresh() -> Self {
+        #[cfg(target_os = "none")]
+        return Generation(FRESH.fetch_add(1, core::sync::atomic::Ordering::Relaxed));
+        #[cfg(not(target_os = "none"))]
+        Generation(FRESH.with(|n| n.replace(n.get().wrapping_add(1))))
+    }
+
+    /// The shell, at boot: where fresh pairs start this run, from
+    /// whatever varies between boots (the board's cycle count after the
+    /// card mounts).
+    pub fn seed_fresh(entropy: u32) {
+        #[cfg(target_os = "none")]
+        FRESH.store(entropy, core::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(target_os = "none"))]
+        FRESH.with(|n| n.set(entropy));
     }
 
     /// Serial-number order: newer when at most 2³¹ − 1 saves ahead.
@@ -503,5 +538,24 @@ impl Framer {
             _ => self.start(State::RecordHead),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fresh_tests {
+    use super::Generation;
+
+    /// Fresh pairs start where the seed says and never repeat in a run
+    /// (#455).
+    #[test]
+    fn fresh_pairs_count_on_from_the_seed() {
+        Generation::seed_fresh(0xDEAD_BEEF);
+        let a = Generation::fresh();
+        let b = Generation::fresh();
+        assert_eq!(a.get(), 0xDEAD_BEEF);
+        assert!(b.is_newer_than(a));
+        Generation::seed_fresh(u32::MAX);
+        assert_eq!(Generation::fresh().get(), u32::MAX);
+        assert_eq!(Generation::fresh().get(), 0, "wrapping");
     }
 }

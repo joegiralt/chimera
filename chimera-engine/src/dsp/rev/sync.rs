@@ -22,11 +22,11 @@ impl Tempo {
         Tempo(clampf(bpm, 30.0, 1_200.0))
     }
 
-    /// A beat of `samples` at `sample_rate`, on a 0.25 BPM grid. Its jitter
-    /// is held upstream, in samples (`MidiClock::beat`).
+    /// A beat of `samples` at `sample_rate`, as it is: no grid, which held
+    /// 141.7 BPM a twentieth off (#1046). Its jitter is held upstream, in
+    /// samples (`MidiClock::beat`).
     pub fn from_beat(samples: u32, sample_rate: u32) -> Tempo {
-        let bpm = 60.0 * sample_rate as f32 / samples.max(1) as f32;
-        Self::from_bpm(libm::roundf(bpm * 4.0) / 4.0)
+        Self::from_bpm(60.0 * sample_rate as f32 / samples.max(1) as f32)
     }
 
     /// One beat, in ms.

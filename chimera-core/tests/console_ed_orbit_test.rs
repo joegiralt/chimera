@@ -191,7 +191,7 @@ fn orbit_fixture() {
     let mut f = Fake::new();
     let text = pages(&mut f).join("");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/orbit-schema.txt");
+        .join("tests/fixtures/editor/orbit-schema.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::write(&path, &text).unwrap();
     }

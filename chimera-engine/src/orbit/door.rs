@@ -11,6 +11,8 @@
 //! isn't running. Its scenes stay the project's, loaded and saved whole.
 
 use super::engine::Events;
+#[cfg(feature = "bank2-gate")]
+use super::runner::Shut;
 use super::runner::{OrbitRunner, OrbitView};
 use crate::dsp::engines::EngineCtx;
 use crate::instrument::{AudioShared, Instrument};
@@ -170,6 +172,10 @@ impl OrbitRunner {
     /// Continue and Stop act at the next block, which sends their offs.
     #[inline(always)]
     pub fn realtime(&mut self, src: usize, rt: RealTime, now: u64) {
+        #[cfg(feature = "bank2-gate")]
+        if self.shut != Shut::Open {
+            return;
+        }
         through(|d| (d.realtime)(self, src, rt, now));
     }
 
@@ -194,12 +200,43 @@ impl OrbitRunner {
         src: &GateView<'_>,
         ports: &mut P,
     ) -> Events {
+        #[cfg(feature = "bank2-gate")]
+        if self.shut == Shut::Shut {
+            inst.set_harmony(None);
+            return Events::new();
+        }
         through(|d| ports.as_orbit(|p| (d.block)(self, inst, shared, src, p))).unwrap_or_else(
             || {
                 inst.set_harmony(None);
                 Events::new()
             },
         )
+    }
+
+    /// A gate build's `bank2 erase`, while the door is still open: ORBIT
+    /// stops, every note it holds let go, and stays stopped (keys, clocks
+    /// and blocks pass it by) until `reopen` (#784). Asked through the
+    /// block's own entry, so the door table keeps its size. True once
+    /// shut; closed already, nothing of it sounds.
+    #[cfg(feature = "bank2-gate")]
+    #[inline(always)]
+    pub fn shut(&mut self, inst: &mut Instrument, shared: &AudioShared) -> bool {
+        if self.shut == Shut::Open {
+            self.shut = Shut::Asked;
+            let src = GateView::empty();
+            let ran = through(|d| (d.block)(self, inst, shared, &src, &mut OrbitPortsMut::None));
+            if ran.is_none() {
+                self.shut = Shut::Shut;
+            }
+        }
+        self.shut == Shut::Shut
+    }
+
+    /// The write done: ORBIT may play again, stopped where `shut` left it.
+    #[cfg(feature = "bank2-gate")]
+    #[inline(always)]
+    pub fn reopen(&mut self) {
+        self.shut = Shut::Open;
     }
 
     /// The view, written into `v` in place: every field, every time, as

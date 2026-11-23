@@ -282,7 +282,7 @@ fn unkept(a: SideState, b: SideState) -> Side {
 }
 
 /// The side a save writes, `unkept`, and its generation: the newest present
-/// side's + 1, or `FIRST`.
+/// side's + 1, or a fresh pair's (`Generation::fresh`, #455).
 ///
 /// `NeedsNewerFirmware` when `pick` refuses a side as needing newer
 /// firmware, whether its header was read or not: a load would never get
@@ -303,7 +303,7 @@ pub fn write_target(a: SideState, b: SideState) -> Result<(Side, Generation), Fi
     };
     Ok((
         unkept(a, b),
-        newest.map_or(Generation::FIRST, Generation::next),
+        newest.map_or_else(Generation::fresh, Generation::next),
     ))
 }
 

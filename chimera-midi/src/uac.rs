@@ -91,6 +91,34 @@ impl Pacer {
         }
     }
 
+    /// Whether the packet last aimed went unsent by the end of frame
+    /// `missed` (`missed`): its own frame has ended. GINTSTS.IISOIXFR names
+    /// no endpoint, and in duplex the feedback endpoint's misses raise it
+    /// too (#973).
+    pub fn late(&self, missed: u16) -> bool {
+        let gap = usize::from(missed.wrapping_sub(self.last) & FRAME_MASK);
+        gap < HIGH / NOMINAL
+    }
+
+    /// The packet late, aimed again at frame `to`: the frames it skipped
+    /// owed once, as `next` owes a gap, and `to` its frame now, so a later
+    /// miss of another endpoint never moves it again.
+    pub fn reaim(&mut self, to: u16, c: &mut Counts) {
+        // The gap `next` would see at the frame after `to`.
+        self.owed(usize::from(to.wrapping_sub(self.last) & FRAME_MASK) + 1, c);
+        self.last = to;
+    }
+
+    /// A gap of `gap` frames since the last packet's: each frame skipped
+    /// owes a frame's worth; a frame again (re-aimed) or a stall past
+    /// `HIGH` owes nothing. `next`'s and `reaim`'s one rule.
+    fn owed(&mut self, gap: usize, c: &mut Counts) {
+        if (2..=HIGH / NOMINAL).contains(&gap) {
+            c.missed = c.missed.wrapping_add(gap as u32 - 1);
+            self.owe += NOMINAL * (gap - 1);
+        }
+    }
+
     /// The stream stopped: the next starts by priming.
     pub fn stop(&mut self) {
         self.primed = false;
@@ -103,10 +131,7 @@ impl Pacer {
             // Each bus frame skipped owes a frame's worth; a frame again
             // (re-aimed) or a stall past `HIGH` owes nothing.
             let gap = usize::from(frame.wrapping_sub(self.last) & FRAME_MASK);
-            if (2..=HIGH / NOMINAL).contains(&gap) {
-                c.missed = c.missed.wrapping_add(gap as u32 - 1);
-                self.owe += NOMINAL * (gap - 1);
-            }
+            self.owed(gap, c);
         } else if fill < TARGET {
             return Next { skip: 0, send: 0 };
         } else {
@@ -143,6 +168,15 @@ impl Pacer {
 
 /// Full speed's frame numbers: 11 bits.
 const FRAME_MASK: u16 = 0x7FF;
+
+/// The frame GINTSTS.IISOIXFR ended, read at bus frame `now` (DSTS.FNSOF)
+/// with SOF pending beside it or not: it is raised at EOPF, inside the
+/// frame that missed, so before the next SOF that frame is `now`, after
+/// it the one before (#973).
+#[inline(always)]
+pub fn missed(now: u16, sof_pending: bool) -> u16 {
+    now.wrapping_sub(u16::from(sof_pending)) & FRAME_MASK
+}
 
 /// One frame's DAC words (each sample in bits 31..8, `DacSample`) as the
 /// stream's six bytes, little-endian.
