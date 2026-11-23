@@ -835,6 +835,8 @@ struct SettingsCopy {
     last: [Bits; SETTINGS_SLOTS],
     project: LineSeen,
     sounds: [LineSeen; PartId::ALL.len()],
+    /// Each Part's engine as last said (`settings::engine_line`).
+    engines: [LineSeen; PartId::ALL.len()],
     toast: LineSeen,
     /// The listing's revision as last reported.
     listing: Option<u16>,
@@ -931,6 +933,7 @@ impl EdSince {
                 last: [Bits(0); SETTINGS_SLOTS],
                 project: LineSeen::NONE,
                 sounds: [LineSeen::NONE; PartId::ALL.len()],
+                engines: [LineSeen::NONE; PartId::ALL.len()],
                 toast: LineSeen::NONE,
                 listing: None,
             },
@@ -1120,6 +1123,14 @@ impl EdSince {
             }
             *was = now;
         }
+        let mut engines = c.engines;
+        for (p, was) in PartId::ALL.into_iter().zip(&mut engines) {
+            let now = LineSeen::of(|w| settings::engine_line(ui, p, w))?;
+            if whole || now != *was {
+                settings::engine_line(ui, p, w)?;
+            }
+            *was = now;
+        }
         // A toast is said once, when it goes up: one gone says nothing.
         let toast = match crate::ui::ed_cue::toast(ui) {
             Some(t) => {
@@ -1143,6 +1154,7 @@ impl EdSince {
             c.seen = Some(now);
             c.project = project;
             c.sounds = sounds;
+            c.engines = engines;
             c.toast = toast;
             c.listing = Some(rev);
         }

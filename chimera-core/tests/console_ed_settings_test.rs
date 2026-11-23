@@ -24,6 +24,7 @@ use chimera_core::ui::settings::CardCx;
 use chimera_core::ui::settings::tree::{Kind, ROOT, Row};
 use chimera_core::ui::theme_settings::palette;
 use chimera_core::ui::view;
+use chimera_engine::block::DiskCode;
 use chimera_hal::testkit::MemStore;
 
 const P1: PartId = PartId::ALL[0];
@@ -340,6 +341,33 @@ fn since_answers_settings_whole_then_its_diff() {
     let d = since(&mut f, n + 1);
     assert!(d.starts_with("val THEME.ACCENT "), "{d}");
     assert_eq!(d.lines().count(), 2, "{d}");
+}
+
+/// Every Part's engine, not the followed Part's alone: `engine <n>
+/// <ENGINE>` in SETTINGS whole, then said again only when it changes, as
+/// an unfollowed Part's load to another engine does.
+#[test]
+fn since_says_every_parts_engine_and_its_change() {
+    let mut f = Fake::new();
+    let a = since(&mut f, 0);
+    let s = section(&a, "settings");
+    for p in PartId::ALL {
+        let e = f.ui.project().part(p).sound.engine().disk_ident();
+        assert!(s.contains(&format!("\nengine {} {e}\n", p.number())), "{s}");
+    }
+    let mut n: u32 = a.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+    assert_eq!(f.ui.active_part, P1);
+    let p3 = PartId::ALL[2];
+    screen::init_part_engine(&mut f.ui, p3, chimera_core::params::EngineType::Modal);
+    assert_eq!(f.ui.active_part, P1, "Part 3 is not followed");
+    let mut said = String::new();
+    for _ in 0..8 {
+        let d = since(&mut f, n);
+        n = d.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+        said.push_str(&d);
+    }
+    assert_eq!(said.matches("engine ").count(), 1, "{said}");
+    assert!(said.contains("engine 3 MODAL\n"), "{said}");
 }
 
 /// An edit marks the project and the Sound edited within a few answers:

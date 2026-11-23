@@ -6,7 +6,7 @@
 //! crumbs, a static built from `settings::tree::ROOT` at compile time, in
 //! bank 2: the editor lays SETTINGS out as the box's lists from the
 //! crumbs, with no list of its own. And `since`'s SETTINGS lines: the
-//! project's and each Part's state, the toast, the listing.
+//! project's and each Part's state and engine, the toast, the listing.
 
 use core::fmt::{self, Write};
 
@@ -205,6 +205,22 @@ pub(super) fn sound_line(
     w.write_char('\n')
 }
 
+/// `engine <n> <ENGINE>`: Part `p`'s engine by its disk token, every
+/// Part's, so the editor names a Part it doesn't follow (`part <n>
+/// <ENGINE>` is the followed one's alone).
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.settings.engine_line")
+)]
+pub(super) fn engine_line(ui: &UiState, p: PartId, w: &mut dyn Write) -> fmt::Result {
+    use crate::block::DiskCode;
+    w.write_str(ENGINE.get())?;
+    uint(w, u32::from(p.number()))?;
+    w.write_char(' ')?;
+    w.write_str(ui.project().part(p).sound.engine().disk_ident())?;
+    w.write_char('\n')
+}
+
 /// `toast "<text>"`.
 #[cfg_attr(
     target_os = "none",
@@ -259,6 +275,10 @@ lit!(GEN = " gen ");
 lit!(
     /// A Part's Sound's line's head.
     SOUND = "sound "
+);
+lit!(
+    /// A Part's engine's line's head.
+    ENGINE = "engine "
 );
 lit!(CLEAN = "clean");
 lit!(EDITED = "edited");
