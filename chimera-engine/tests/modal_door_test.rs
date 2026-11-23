@@ -272,7 +272,10 @@ fn hashes() -> Vec<(String, u64, u64)> {
 
 /// Taken on main before the move (bc20ae7c; the six "alone" rows on
 /// 5ec76841, where the first 60 match too), bank 1's own path: the DAC's
-/// hash and Part 1's bus's.
+/// hash and Part 1's bus's. The four rows whose note-on PITCH is bent
+/// (STRING's and SYMP's "moving bent" and "pitch alone") re-taken when the
+/// routed pitch re-plucks at its length from the first pluck's noise (#233,
+/// ADR 0310).
 const BEFORE: &[(&str, u64, u64)] = &[
     ("String init", 0x2945be550b3e07b5, 0x552b36dadf56e7ca),
     ("Modal init", 0x8b5eefc284bee8d5, 0xa4ee49337f312386),
@@ -385,9 +388,9 @@ const BEFORE: &[(&str, u64, u64)] = &[
         0x9a2fedb4a097dac9,
         0x6506bdfa86ff7b94,
     ),
-    ("res M48 bright", 0x0546d0eea64836b9, 0xedacf072f0413d61),
-    ("String moving", 0x7eee1e2f450a9375, 0xeff4fd3c104ccabc),
-    ("String moving bent", 0x9a6d72c398e6fc41, 0xcc1c4aaac451f4f8),
+    ("res M48 bright", 0x53c50acf6c337071, 0x0f2ad3729a1d1d6e),
+    ("String moving", 0x402a7255058060bd, 0x5cadee53687eb150),
+    ("String moving bent", 0x2451b8fdae46eda1, 0xbdc8b874d08569a0),
     ("String long", 0x92a98d981b6c5bdd, 0xc696ce8a284a471b),
     ("String high", 0x377459bbf7ffe955, 0xca3b387165bd73d3),
     ("Bowed moving", 0x7826438523240e69, 0x57177817f1206522),
@@ -397,8 +400,8 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ("Sympathetic moving", 0x8b754d5c050fa519, 0x5cf765376996b9d3),
     (
         "Sympathetic moving bent",
-        0xc0cce85a1831c399,
-        0x46e81e8dfeb57c0a,
+        0x29fb6abe3686b3cd,
+        0x2ad3c46cf6cdf3fd,
     ),
     ("Sympathetic long", 0x2de8c24df4eecc49, 0x9d6d167e4a0669d0),
     ("Sympathetic high", 0xae5539d74b0b3875, 0xd16f7d128abe9d8c),
@@ -409,15 +412,15 @@ const BEFORE: &[(&str, u64, u64)] = &[
     ),
     (
         "Sympathetic pitch alone",
-        0x2b49aed8bf1b939d,
-        0x3b8e571aaf12f16b,
+        0x3e59e0f25c3da709,
+        0x6d5ebb9c71702375,
     ),
     (
         "String structure alone",
         0x0f2c61d626fddd39,
         0x54c693feb4018582,
     ),
-    ("String pitch alone", 0x3e01c3bf5d470d45, 0x7895aad8852b7301),
+    ("String pitch alone", 0x6fe41e76cff5e77d, 0xfb33403a3543dfef),
     (
         "Bowed structure alone",
         0x7e5effbe95300b81,

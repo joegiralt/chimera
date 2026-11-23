@@ -172,6 +172,17 @@ pub(super) fn word(w: W) -> &'static str {
     super::pick(&WORDS, w as u8)
 }
 
+/// A layer edit refused: another map job waits for the card (CARD BUSY).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::ui) struct Busy;
+
+impl From<Busy> for Line {
+    /// What the box says: CARD BUSY, as for a hand's save.
+    fn from(_: Busy) -> Line {
+        Line::new(StoreError::Busy.message())
+    }
+}
+
 impl Layers {
     /// Part `i`'s layer.
     pub fn layer(&self, i: usize) -> &MidiMap {
@@ -180,12 +191,18 @@ impl Layers {
 
     /// Row `i` of Part `p`'s layer, `was`, made `to` here and, by the next
     /// card work, in the map; an edit of the row waiting takes it on.
-    /// `false`: another job waits, nothing changed.
+    /// `Err(Busy)`: another job waits, nothing changed.
     /// Inlined: MIDI MAP's keys and the editor's (`ed_cue`) call it, in
     /// two bank-2 groups.
     #[cfg(feature = "midi-map")]
     #[inline(always)]
-    pub(in crate::ui) fn edit(&mut self, p: PartId, i: usize, was: Binding, to: Binding) -> bool {
+    pub(in crate::ui) fn edit(
+        &mut self,
+        p: PartId,
+        i: usize,
+        was: Binding,
+        to: Binding,
+    ) -> Result<(), Busy> {
         let first = match self.job {
             None => was,
             // The same row: the whole binding, as two rows may share a
@@ -195,13 +212,13 @@ impl Layers {
             {
                 first
             }
-            Some(_) => return false,
+            Some(_) => return Err(Busy),
         };
         self.job = Some(CtlJob::Edit(p, first, to));
         if let Some(l) = self.layers.get_mut(p.index()) {
             l.set(i, to);
         }
-        true
+        Ok(())
     }
 
     /// The maps listed, `None` before a listing. Inlined, as `edit`.
@@ -629,19 +646,19 @@ mod tests {
             span: crate::midi_map::Span { min: 9, max: 255 },
             ..a
         };
-        assert!(l.edit(p, 0, a, a2));
+        assert_eq!(l.edit(p, 0, a, a2), Ok(()));
         let b2 = Binding {
             span: crate::midi_map::Span { min: 7, max: 255 },
             ..b
         };
-        assert!(!l.edit(p, 1, b, b2), "another row's edit waits");
+        assert_eq!(l.edit(p, 1, b, b2), Err(Busy), "another row's edit waits");
         assert_eq!(l.layers[0].entries(), &[a2, b]);
         // The first row again: merged, from the card's row.
         let a3 = Binding {
             span: crate::midi_map::Span { min: 3, max: 255 },
             ..a
         };
-        assert!(l.edit(p, 0, a2, a3));
+        assert_eq!(l.edit(p, 0, a2, a3), Ok(()));
         assert!(matches!(l.job, Some(CtlJob::Edit(_, x, y)) if x == a && y == a3));
     }
 }

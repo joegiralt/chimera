@@ -24,7 +24,7 @@ use crate::glyph::{FocusGlyph, VaGlyph, VaOsc};
 use crate::hw::Cost;
 use crate::project::PartId;
 use crate::voice_alloc::VoiceIdx;
-use combine::{Crusher, MaxKink, Operator, Peaks, am_gain, am_reach, ring_gain};
+use combine::{AmKinks, Crusher, MaxKink, Operator, Peaks, am_gain, am_reach, ring_gain};
 use noise::Noise;
 pub use noise::{KIND_NAMES, NoiseKind};
 use osc::solo::SoloRun;
@@ -423,8 +423,16 @@ pub const COST_FM: Cost = Cost(580);
 /// rev V at 480 MHz): +130.
 pub const COST_LOOPFM: Cost = Cost(480);
 /// AM: 158.2 + 134.4 + 41.0 + 3.3 (the sub) + 72.6 (with `am_reach` at the
-/// BLEND ramp's two ends a block, ADR 0176) + 29.9 + 95 = 534.3.
-pub const COST_AM: Cost = Cost(550);
+/// BLEND ramp's two ends a block, ADR 0176) + 29.9 + 95 = 534.3; the unit
+/// read 550. Its product's corrector (#660, ADR 0321) adds, by
+/// `tools/loop_count.py` on `render_am_kinks` in the release ELF, in
+/// cycles (instructions × 1.606, MAX's convention): the operator's round,
+/// 55.25 instructions a sample against today's 25.5, +29.75 = +47.8; a
+/// sample where both waves step, 80 instructions more (128.5 cycles), six
+/// a block at the worst voice = +12.0; both oscillators' listing
+/// instances, 8.5 each as PHASE's OSC 2, +17. 550 + 76.8 = 626.8, rounded
+/// up.
+pub const COST_AM: Cost = Cost(630);
 /// MAX: 158.2 + 134.4 + 50.6 (the operator's loop, with the step test) +
 /// 3.3 + 37.7 (a kink a sample at the worst: one sign change, its divide and
 /// the BLAMP) + 75.3 + 29.9 + 95 = 584.4.
@@ -483,6 +491,9 @@ enum PlainMode {
     Ring,
     Xor,
     Bits,
+    /// AM's uncorrected product: bank 1's with bank 2's door closed only
+    /// (#660).
+    #[cfg_attr(not(feature = "bank2"), allow(dead_code))]
     Am,
     Max,
 }
@@ -589,6 +600,9 @@ pub const SYNC_MASTER_HZ: f32 = 7_000.0;
 type Gain = Option<&'static [f32; BLOCK_SIZE]>;
 
 /// `render_loopfm` as the door carries it (ADR 0163, LOOPFM's whole render).
+/// AM's render as the door carries it (`VaEngine::render_am_kinks`).
+pub type AmRender = fn(&mut VaEngine, &mut [f32; BLOCK_SIZE], &Lanes, Gain);
+
 pub type LoopFmRender = fn(&mut VaEngine, &mut [f32; BLOCK_SIZE], &Lanes, Gain, f32, [f32; 2]);
 
 /// The MODE duck's length each way, two blocks.
@@ -752,6 +766,8 @@ pub struct VaEngine {
     nz: Ramp,
     /// MAX's corrector.
     max: MaxKink,
+    /// AM's product corrector (#660).
+    amk: AmKinks,
     /// PHASE's offset (cycles) at the last sample, `D·b/pk`; NaN: none yet.
     pm_prev: f32,
     /// OSC 2's steps at the last block's last sample (`door::osc2_steps`'
@@ -804,6 +820,7 @@ impl VaEngine {
             noise: Noise::new(1),
             nz: Ramp::default(),
             max: MaxKink::NEW,
+            amk: AmKinks::NEW,
             pm_prev: 0.0,
             pm_step: [0.0; 2],
             note: 60,
@@ -888,6 +905,7 @@ impl VaEngine {
             }
             // the corrector's memory goes with the voice, at any STABILITY
             self.max.reset();
+            self.amk.reset();
             (self.playing, self.duck) = (p.mode, Duck::Steady);
             // a note starts PHASE's offset from 0, so it ramps in; a MODE
             // switch (NaN) starts it where it already is
@@ -1171,8 +1189,9 @@ impl VaEngine {
             Duck::Down(0) => Duck::Down(1),
             Duck::Down(_) => {
                 self.playing = p.mode;
-                // MAX starts from nothing under the duck
+                // MAX and AM's corrector start from nothing under the duck
                 self.max.reset();
+                self.amk.reset();
                 // FM's index and PHASE's depth start on their value; PHASE's
                 // offset starts at the first sample's (the read is the clock
                 // after `settle`, and an offset's jump would click)
@@ -1191,6 +1210,17 @@ impl VaEngine {
                 for o in &mut self.osc {
                     o.settle();
                 }
+                // SYNC's slave starts where the master's sync would have
+                // put it, under the duck's silence: its first reset never
+                // jumps on the way up (#670)
+                if self.playing == VaMode::Sync {
+                    let end = |r: &Ramps| r.inc.0 + r.inc.1 * BLOCK_SIZE as f32;
+                    let (m, s) = (end(&l.osc[0]), end(&l.osc[1]));
+                    if m > 0.0 {
+                        let at = self.osc[0].phase() * s / m;
+                        self.osc[1].set_phase(at);
+                    }
+                }
                 Duck::Up(0)
             }
             Duck::Up(0) => Duck::Up(1),
@@ -1208,9 +1238,55 @@ impl VaEngine {
         self.run(out, l, PlainMode::Sync, gain);
     }
 
+    /// AM: bank 2's, its product's steps and slope kinks corrected
+    /// (`render_am_kinks`, #660); closed, the uncorrected product.
     #[inline(never)]
     fn render_am(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
-        self.run(out, l, PlainMode::Am, gain);
+        #[cfg(feature = "bank2")]
+        if osc::solo::through_am(|t| t.am(self, out, l, gain)).is_none() {
+            self.run(out, l, PlainMode::Am, gain);
+        }
+        #[cfg(not(feature = "bank2"))]
+        self.render_am_kinks(out, l, gain);
+    }
+
+    /// AM with its product corrected (#660, ADR 0321): both oscillators
+    /// leave their steps naive and list them (OSC 2 first, so OSC 1's own
+    /// marks, its wraps and sub flips, are the block's), and the operator's
+    /// corrector (`AmKinks`) steps and bends the product at each, one
+    /// sample late. Bank 2's (`*8VaEngine15render_am_kinks*`), reached
+    /// through the solos' table (`osc::solo::through_am`).
+    #[inline(never)]
+    pub fn render_am_kinks(&mut self, out: &mut [f32; BLOCK_SIZE], l: &Lanes, gain: Gain) {
+        let Self {
+            osc: [o1, o2],
+            stab,
+            jit,
+            osc2: b,
+            marks: mk,
+            ..
+        } = self;
+        let js = JitterScale::new(l.d);
+        osc::door::osc2_steps(
+            o2,
+            b,
+            mk,
+            &l.osc[1],
+            &mut jit[1],
+            stab,
+            js,
+            &ZEROS,
+            (0.0, 0.0),
+        );
+        osc::am::osc1_steps(o1, out, mk, &l.osc[0], &mut jit[0], stab, js);
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            self.played = [Some(Played::Pair); 2];
+        }
+        match gain {
+            Some(g) => self.operator_in::<true, true>(out, l, VaMode::Am, g),
+            None => self.operator_in::<false, true>(out, l, VaMode::Am, &DUCK_UP[1]),
+        }
     }
 
     #[inline(never)]
@@ -1570,14 +1646,41 @@ impl VaEngine {
         mode: VaMode,
         g: &[f32; BLOCK_SIZE],
     ) {
+        self.operator_in::<DUCKED, false>(out, l, mode, g);
+    }
+
+    /// `operator`, and with `KINKS` (AM, bank 2's) AM's product corrected
+    /// at the oscillators' listed steps (`AmKinks`).
+    #[inline(always)]
+    fn operator_in<const DUCKED: bool, const KINKS: bool>(
+        &mut self,
+        out: &mut [f32; BLOCK_SIZE],
+        l: &Lanes,
+        mode: VaMode,
+        g: &[f32; BLOCK_SIZE],
+    ) {
+        // each oscillator's listed steps, the last block's carry first
+        let (sa, sb) = if KINKS {
+            let [ca, cb] = &mut self.amk.carry;
+            (
+                AmKinks::list(ca, self.osc[0].listed_steps(), BLOCK_SIZE),
+                AmKinks::list(cb, self.osc[1].listed_steps(), BLOCK_SIZE),
+            )
+        } else {
+            let none = [combine::Step::end(BLOCK_SIZE); combine::STEPS];
+            (none, none)
+        };
+        let (mut ia, mut ib) = (0usize, 0usize);
         let Self {
             sub,
             max,
+            amk,
             crusher,
             osc2: b,
             marks: mk,
             ..
         } = self;
+        let mut am = *amk;
         // RING and XOR run at twice their level (`Operator`), the chain
         // gain halved: the same bits out
         let op = Operator::new(mode, l.pk, crusher);
@@ -1596,9 +1699,22 @@ impl VaEngine {
                 x += dx;
                 k += dk;
                 sl += ds;
-                // MAX plays one sample late, the sub on the clock
+                // MAX and AM's corrector play one sample late, the sub on
+                // the clock
                 let c = if mode == VaMode::Max {
                     kink.step(out[i], b[i], x)
+                } else if KINKS {
+                    let at = |l: &combine::Steps, n: &mut usize| {
+                        let s = l[*n];
+                        (s.slot == i).then(|| {
+                            *n += 1;
+                            (s.t, s.d)
+                        })
+                    };
+                    let (ea, eb) = (at(&sa, &mut ia), at(&sb, &mut ib));
+                    let (c0, c1) = op.am_terms(x);
+                    let c = op.at(out[i], b[i], x, k);
+                    am.step((out[i], b[i], c), (k, c0, c1), ea, eb)
                 } else {
                     op.at(out[i], b[i], x, k)
                 };
@@ -1619,6 +1735,7 @@ impl VaEngine {
         }
         *sub = s;
         *max = kink;
+        *amk = am;
     }
 
     /// A glide steal's ratio now, 1 at rest.
@@ -1633,10 +1750,12 @@ impl VaEngine {
         self.max.off = true;
     }
 
-    /// Both oscillators uncorrected (and MAX's kinks): the alias gate's baseline.
+    /// Both oscillators uncorrected (and MAX's and AM's kinks): the alias
+    /// gate's baseline.
     #[cfg(any(test, feature = "test-support"))]
     pub fn uncorrected(&mut self) {
         self.max.off = true;
+        self.amk.off = true;
         self.osc = self.osc.map(|o| o.with_correction(Correction::Off));
     }
 
@@ -1891,6 +2010,8 @@ mod tests {
     /// Every MODE's output bits, hashed (FNV-1a): two notes, STABILITY's
     /// jitter, SUB, a SHAPE and a MODE change under way. The constant is
     /// main's before NOISE (ADR 0197): LEVEL 0 must leave every bit as it was.
+    /// Re-pinned when SYNC's slave started on the master's phase at the
+    /// swap (#670), and for AM's corrected product (#660, ADR 0321).
     #[test]
     fn noise_off_is_bit_identical() {
         let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -1924,6 +2045,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(h, 0xefdb_13e5_776a_536c, "hash {h:#018x}");
+        assert_eq!(h, 0x822e_87e3_5cd8_723d, "hash {h:#018x}");
     }
 }

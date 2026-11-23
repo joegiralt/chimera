@@ -264,7 +264,7 @@ fn vca_rule_reads_the_fixed_vca_column() {
                 &EnvMods::NONE,
                 b < 20,
                 common::SR,
-                Some((&mut g, 1.0)),
+                Some((&mut g, (1.0, 1.0))),
             );
             env.is_idle()
         })

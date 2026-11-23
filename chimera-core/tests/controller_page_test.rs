@@ -52,6 +52,9 @@ fn put_map(s: &mut MemStore, n: &str, rows: &[(u8, ParamAddr)]) {
 
 /// Part 1 on INIT ALGO, its map the default's.
 fn ui() -> Box<UiState> {
+    // MIDI MAP is bank 2's: under `bank2` it plays through the host's
+    // door, open (#902).
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
     let mut ui = Box::new(screen::stack_ui());
     screen::init_part(&mut ui, P1);
     ui
@@ -628,6 +631,38 @@ fn a_job_while_another_waits_is_refused_not_lost() {
     assert_eq!(rig.ui.project().controller(P1), Some(name("EC4")));
 }
 
+/// A turn on another layer row while one row's edit waits for the card is
+/// refused on screen (`CARD BUSY`), as a save, rename or delete is, never
+/// dropped silently (#903); the waiting edit still reaches the card.
+#[test]
+fn an_edit_while_another_row_waits_says_card_busy() {
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, CUTOFF), (22, RESO)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.bar_to(1);
+    // Keys alone, no card work between them: row 1's edit waits.
+    screen::feed(rig.ui, Key::turn(EncoderId::C, 5));
+    let _ = rig.ui.step_toast(0);
+    screen::feed(rig.ui, Key::press(ButtonId::Plus));
+    screen::feed(rig.ui, Key::turn(EncoderId::C, 7));
+    match rig.ui.step_toast(0) {
+        chimera_core::ui::busy::ToastStep::Show(l) => assert_eq!(l.as_str(), "CARD BUSY"),
+        s => panic!("no toast: {s:?}"),
+    }
+    rig.work();
+    let rows = card_rows(&mut rig.s, "EC4").expect("the map stays");
+    let min = |a| rows.iter().find(|b| b.target.addr() == a).unwrap().span.min;
+    assert_eq!(
+        (min(CUTOFF), min(RESO)),
+        (5, 0),
+        "the waiting edit reached the card"
+    );
+}
+
 /// DELETE deletes the map it named, even if the Part picks another before
 /// the card work runs.
 #[test]
@@ -650,4 +685,53 @@ fn delete_takes_the_map_it_asked_about() {
     assert_eq!(card_rows(&mut rig.s, "EC4"), None);
     assert!(card_rows(&mut rig.s, "LCXL3").is_some());
     assert_eq!(rig.ui.project().controller(P1), Some(name("LCXL3")));
+}
+
+/// A controller map's layer row on a shared target (REVERB MIX) is
+/// claimed as a Sound's own row is (#512): Part 1's layer row on CC 21
+/// and Part 2's unbound NRPN in one pass end on the last message, never
+/// alternating (#944).
+#[test]
+fn a_layer_row_on_a_shared_target_yields_to_the_last_message() {
+    use chimera_core::midi_in::CtrlEvent;
+    use chimera_core::nrpn::NrpnAddr;
+    use chimera_midi::ctl::{Ctl, DataValue, FreeCc, Sel};
+    use chimera_midi::value::U7;
+    let mix = ParamAddr::new(
+        BlockRef::Reverb,
+        chimera_core::dsp::reverb::ReverbParams::MIX,
+    );
+    let mut s = MemStore::new(1);
+    put_map(&mut s, "EC4", &[(21, mix)]);
+    let mut ui = ui();
+    let mut rig = Rig::new(&mut ui, s);
+    rig.ui.project_mut().set_controller(P1, Some(name("EC4")));
+    rig.work();
+    let p2 = rig.ui.project().part(PartId::ALL[1]).mix.channel;
+    assert_ne!(p2, rig.ui.project().part(P1).mix.channel);
+    let n = NrpnAddr::of(mix).unwrap().get();
+    let ev = [
+        CtrlEvent::Ctl(
+            MidiChannel::new(0).unwrap(),
+            Ctl::Cc {
+                cc: FreeCc::new(21).unwrap(),
+                value: U7::new(0).unwrap(),
+            },
+        ),
+        CtrlEvent::Ctl(
+            p2,
+            Ctl::Data {
+                sel: Sel::Nrpn(n),
+                value: DataValue::Coarse(U7::new(127).unwrap()),
+            },
+        ),
+    ];
+    let mut now = 100u32;
+    rig.ui.hear_ccs(ev.into_iter(), Ms(now), true);
+    for _ in 0..200 {
+        now += 4;
+        rig.ui
+            .hear_ccs(core::iter::empty::<CtrlEvent>(), Ms(now), true);
+    }
+    assert_eq!(place(rig.ui, mix), 1.0, "Part 2's, the last");
 }

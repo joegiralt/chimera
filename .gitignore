@@ -14,9 +14,5 @@ __pycache__/
 *.wav
 !/chimera-desktop/fuzz/seeds/**/*.wav
 /tools/factory-sounds/private/
-/editor/node_modules
-/editor/elm-stuff
-/editor/dist
 /target-wasm
 /tools/binaryen/
-/editor/public/screen.wasm

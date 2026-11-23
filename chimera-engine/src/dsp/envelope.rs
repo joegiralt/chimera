@@ -178,31 +178,34 @@ impl Envelope {
         clampf(raw + self.glide.at(n), self.glide_lo, 1.0)
     }
 
-    /// `gain[n] += amount · level[n] · peak[n]`, the peak ramped from `from`
-    /// to `to` across the block, so a route into LEVEL doesn't zipper the
-    /// VCA; a gliding change's leftover in the same pass.
+    /// `gain[n] += amount[n] · level[n] · peak[n]`, the peak ramped from
+    /// `from` to `to` and the route's amount from the last block's (#180)
+    /// across the block, so neither a route into LEVEL nor a turn of the
+    /// amount zippers the VCA; a gliding change's leftover in the same pass.
     fn add_ramped(
         &self,
         gain: &mut [f32; BLOCK_SIZE],
         level: &[f32; BLOCK_SIZE],
-        amount: f32,
+        (a0, a1): (f32, f32),
         from: f32,
         to: f32,
     ) {
         let step = (to - from) / BLOCK_SIZE as f32;
+        let a_step = (a1 - a0) / BLOCK_SIZE as f32;
+        let amount = |n: usize| if a0 == a1 { a1 } else { a0 + a_step * n as f32 };
         if self.glide.active() {
             for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
                 let raw = l * (from + step * (n + 1) as f32);
-                *g += amount * self.glided(raw, n + 1);
+                *g += amount(n + 1) * self.glided(raw, n + 1);
             }
-        } else if from == to {
-            let a = amount * to;
+        } else if from == to && a0 == a1 {
+            let a = a1 * to;
             for (g, l) in gain.iter_mut().zip(level) {
                 *g += a * l;
             }
         } else {
             for (n, (g, l)) in gain.iter_mut().zip(level).enumerate() {
-                *g += amount * l * (from + step * (n + 1) as f32);
+                *g += amount(n + 1) * l * (from + step * (n + 1) as f32);
             }
         }
     }
@@ -294,7 +297,7 @@ impl Envelope {
         m: &EnvMods,
         key: bool,
         sample_rate: u32,
-        vca: Option<(&mut [f32; BLOCK_SIZE], f32)>,
+        vca: Option<(&mut [f32; BLOCK_SIZE], (f32, f32))>,
     ) -> f32 {
         let kind = Kind::of(p);
         let (old, rising) = (self.output(), self.rising());

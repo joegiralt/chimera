@@ -42,6 +42,12 @@ impl Clocked {
     }
 
     fn block(&mut self, bpm: Option<f32>, jit_ms: f32) {
+        self.feed(bpm, jit_ms);
+        self.r.render(1);
+    }
+
+    /// `block` without the render: the clock and the runner only.
+    fn feed(&mut self, bpm: Option<f32>, jit_ms: f32) {
         let end = (self.runner.now() + BLOCK_SIZE as u64) as f64;
         while let Some(b) = bpm
             && self.due < end
@@ -59,7 +65,6 @@ impl Clocked {
             (self.next, self.due) = (end, end);
         }
         self.runner.block(&mut self.r.inst, &self.r.shared);
-        self.r.render(1);
     }
 }
 
@@ -70,8 +75,9 @@ fn synced(n: DelayNote) -> DelayParams {
 }
 
 /// A clock jittering ±0.5 ms a tick moves the synced delay's head once at
-/// most, when the settled average is taken (a glide, or a crossfade where
-/// the tempo is far from the 120 BPM it started on), and then never
+/// when the settled average is taken (a glide, or a crossfade where the
+/// tempo is far from the 120 BPM it started on) and a few times more,
+/// less each time, as the run's mean refines it (#1046), and then never
 /// again: no glide, no crossfade, the head on 1/8D of the tempo held. With
 /// no clock the project's 120 BPM plays, never the knob's ms; and the
 /// fold the cells read is the engine's (1/4 at 97 BPM, halved).
@@ -82,7 +88,8 @@ fn a_jittering_clock_never_moves_the_synced_delay() {
         free_ms.time_ms = 20.0;
         let mut c = Clocked::new(free_ms);
         let mut seen = vec![];
-        for b in 0..blocks(9.0) {
+        // Past 16 beats' refinement at 97 BPM, short of 32's at 128.
+        for b in 0..blocks(12.0) {
             c.block((b >= blocks(1.0)).then_some(bpm), 0.5);
             seen.push((c.r.inst.tempo(), c.r.fx.delay().head()));
         }
@@ -91,7 +98,16 @@ fn a_jittering_clock_never_moves_the_synced_delay() {
         let moves: Vec<usize> = (1..seen.len())
             .filter(|&b| seen[b].0 != seen[b - 1].0)
             .collect();
-        assert!(moves.len() <= 1, "{bpm}: {moves:?}");
+        // The settled average taken, then refined as the run doubles (2,
+        // 4, 8 … beats, #1046): each wait twice the last, never a hunt.
+        assert!(moves.len() <= 5, "{bpm}: {moves:?}");
+        for w in moves.windows(3) {
+            let (a, b) = (w[1] - w[0], w[2] - w[1]);
+            assert!(b + 4 >= 2 * a - 4, "{bpm}: the refinements slow: {moves:?}");
+        }
+        for &m in &moves[1..] {
+            assert!((seen[m].0.0 - bpm).abs() <= 0.25, "{bpm}: {:?}", seen[m].0);
+        }
         // The one move over (a 20 ms crossfade, or a glide), the head
         // stays put.
         let from = moves.last().copied().unwrap_or(0) + blocks(0.4);
@@ -111,5 +127,37 @@ fn a_jittering_clock_never_moves_the_synced_delay() {
     }
     assert_eq!(c.r.fx.delay().fold(), FoldState(1));
     assert_eq!(delay_fold(), FoldState(1));
-    assert_eq!(rev_clock().0, c.r.inst.tempo());
+    // What a cell shows: the tempo on its quarter-BPM word.
+    let t = c.r.inst.tempo().0;
+    assert_eq!(rev_clock().0, Tempo((t * 4.0).round() / 4.0));
+}
+
+/// A clock jittering ±2 ms a tick, drained a block at a time, is held to
+/// within 0.05 BPM of its tempo at 87.3, 97, 120, 133 and 141.7 BPM after
+/// 40 s, and the synced delay's 16th repeat of 1/8D lands within 1 ms of
+/// the grid (private issue #1046).
+#[test]
+fn a_jittering_clock_is_held_to_its_tempo() {
+    for bpm in [87.3f32, 97.0, 120.0, 133.0, 141.7] {
+        let mut c = Clocked::new(synced(DelayNote::DEFAULT));
+        for _ in 0..blocks(40.0) {
+            c.feed(Some(bpm), 2.0);
+        }
+        let t = c.runner.tempo();
+        assert!((t.0 - bpm).abs() <= 0.05, "{bpm}: held {t:?}");
+        for _ in 0..blocks(1.0) {
+            c.block(Some(bpm), 2.0);
+        }
+        let head = c.r.fx.delay().head().0;
+        // On the grid, halved as the engine folds it past 500 ms.
+        let fold = c.r.fx.delay().fold().0;
+        let grid = NOTES[DelayNote::DEFAULT.index()].ms(Tempo(bpm)) * SR as f32
+            / 1000.0
+            / 2f32.powi(i32::from(fold));
+        let off_ms = 16.0 * (head - grid) * 1000.0 / SR as f32;
+        assert!(
+            off_ms.abs() <= 1.0,
+            "{bpm}: the 16th repeat {off_ms} ms off"
+        );
+    }
 }

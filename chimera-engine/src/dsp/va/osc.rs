@@ -19,6 +19,7 @@
 //! the wraps, the sub's flips and the jitter. A plain instance never
 //! touches `read` but to leave it on the clock.
 
+pub mod am;
 mod anchor;
 pub mod door;
 pub mod solo;
@@ -1159,6 +1160,10 @@ pub struct VarOsc {
     sh: [Shaped; 2],
     sh_ok: bool,
     next_ok: bool,
+    /// Each listed step's mark, `[JUMP − 1 − t, Σ s]` (`listed_steps`):
+    /// AM's product corrects them (#660). Last, so the fields before keep
+    /// their places (bank 1's offsets).
+    pm_val: [[f32; 2]; PM_JUMPS as usize],
     #[cfg(any(test, feature = "test-support"))]
     log: [(f32, f32, f32); EDGE_LOG],
     #[cfg(any(test, feature = "test-support"))]
@@ -1193,6 +1198,7 @@ impl VarOsc {
         sh: [Shaped::ZERO; 2],
         sh_ok: false,
         next_ok: false,
+        pm_val: [[0.0; 2]; PM_JUMPS as usize],
         #[cfg(any(test, feature = "test-support"))]
         log: [(0.0, 0.0, 0.0); EDGE_LOG],
         #[cfg(any(test, feature = "test-support"))]
@@ -1271,6 +1277,21 @@ impl VarOsc {
     /// (`door::osc2_steps`), in order.
     pub fn pm_marks(&self) -> &[u8] {
         &self.pm_at[..usize::from(PM_JUMPS - self.pm_jumps)]
+    }
+
+    /// The steps a listing render (`am::osc1_steps`, `door::osc2_steps`)
+    /// left naive this block, in time order (slot 0: the next block's
+    /// first sample).
+    pub fn listed_steps(&self) -> impl Iterator<Item = super::combine::Step> + '_ {
+        let n = usize::from(PM_JUMPS - self.pm_jumps);
+        self.pm_at[..n]
+            .iter()
+            .zip(&self.pm_val[..n])
+            .map(|(&k, v)| super::combine::Step {
+                slot: usize::from(k),
+                t: JUMP - 1.0 - v[0],
+                d: v[1],
+            })
     }
 
     /// A jump's scale this block (PHASE's OSC 1, `door::osc1_phase`): `x`
@@ -1547,7 +1568,12 @@ impl VarOsc {
             let span = (i0, i1);
             macro_rules! run {
                 ($a:ty, $b:ty) => {
-                    if MOD || PH {
+                    if PH && FLIP && !MOD {
+                        // AM's OSC 1 (#660): its own module's, linked high
+                        am::run::<$a, $b, N, REC, SYNC, FLIP, MOD, PH>(
+                            self, &blk, span, r, out, mk, jit, draw, m, k,
+                        )
+                    } else if MOD || PH {
                         door::run::<$a, $b, N, REC, SYNC, FLIP, MOD, PH>(
                             self, &blk, span, r, out, mk, jit, draw, m, k,
                         )
@@ -2153,8 +2179,14 @@ impl VarOsc {
                 // listed, up to `PM_JUMPS` a block (past them `correct`
                 // corrects them as ever)
                 let k = (i + 1) % N;
-                mk[k] = [JUMP - 1.0 - clampf(rep[0] / rep[1], 0.0, 1.0), rep[1]];
-                self.pm_at[usize::from(PM_JUMPS - self.pm_jumps)] = k as u8;
+                let mark = [JUMP - 1.0 - clampf(rep[0] / rep[1], 0.0, 1.0), rep[1]];
+                // a FLIP instance's marks are its sub's: AM's OSC 1 lists
+                // its steps only (#660)
+                if !FLIP {
+                    mk[k] = mark;
+                }
+                let at = usize::from(PM_JUMPS - self.pm_jumps);
+                (self.pm_at[at], self.pm_val[at]) = (k as u8, mark);
                 self.pm_jumps -= 1;
             }
             out[i] = held;

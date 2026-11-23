@@ -3,7 +3,7 @@
 //! BITS alias by nature and are exempt from the alias gate.
 
 use super::VaMode;
-use super::blep::blamp_into;
+use super::blep::{blamp_into, blep_into};
 use super::osc::R;
 use crate::dsp::algo::math::exp2;
 use crate::dsp::provenance::{Patent, PatentLine, Provenance};
@@ -222,6 +222,12 @@ impl Operator {
         }
     }
 
+    /// AM's `(c₀, c₁)` at reach `x`: `at` is `ks·a·(c₀ + c₁·b)`.
+    #[inline(always)]
+    pub fn am_terms(&self, x: f32) -> (f32, f32) {
+        (1.0 - 0.5 * x, 0.5 * x * self.ib)
+    }
+
     /// `scale · combine(mode, a, b, x, k, …)`, `ks` being RING's `k ·
     /// scale`; AM's `x` is its reach (`am_reach`), mapped a block.
     #[inline(always)]
@@ -332,6 +338,147 @@ impl MaxKink {
             blamp_into(&mut self.held, &mut acc, t, 2.0 * h * x * s);
         }
         (self.d, self.s) = (d, s);
+        core::mem::replace(&mut self.held, acc)
+    }
+}
+
+/// A step a listing render left naive (`VarOsc::listed_steps`): first in
+/// `out[slot]`, `t` samples (0..=1) before it, of size `d`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Step {
+    pub slot: usize,
+    pub t: f32,
+    pub d: f32,
+}
+
+impl Step {
+    /// A list's end: a slot past the block.
+    pub const fn end(len: usize) -> Self {
+        Self {
+            slot: len,
+            t: 0.0,
+            d: 0.0,
+        }
+    }
+}
+
+/// One oscillator's listed steps for a block, in time order, ended by
+/// `Step::end`.
+pub type Steps = [Step; STEPS];
+
+/// A listed block's steps at most: `PM_JUMPS` and the last block's carry.
+pub const STEPS: usize = super::osc::PM_JUMPS as usize + 2;
+
+/// AM's product corrector (#660, ADR 0321), one sample late: the
+/// oscillators' steps come in naive and listed, so AM's product
+/// `K·a·(c₀ + c₁·b)` (`Operator::at`) is corrected here, each step at its
+/// place with the product's own step (polyBLEP) and its slope's jump
+/// (polyBLAMP): at OSC 1's step `Δa` the product steps by
+/// `K·Δa·(c₀ + c₁·b)` and its slope by `K·c₁·Δa·b'`; at OSC 2's `Δb`, by
+/// `K·c₁·a·Δb` and `K·c₁·Δb·a'` (the product rule across a step), `b` and
+/// `a` at the step from the last two samples (Esqueda, Välimäki & Bilbao,
+/// "Rounding Corners with BLAMP", DAFx-16).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AmKinks {
+    /// The sample before the newest, with its corrections so far.
+    held: f32,
+    /// The last two inputs, newest first: `[a₋₁, a₋₂, b₋₁, b₋₂]`.
+    last: [f32; 4],
+    /// Each wave's listed step at the last sample (0: none): its slope
+    /// leaves it out.
+    stepped: [f32; 2],
+    /// Each oscillator's steps at the last block's last sample, `(t, Σ)`:
+    /// this block's slot 0 (`Σ = 0`: none).
+    pub carry: [(f32, f32); 2],
+    /// The alias gate's baseline: no correction.
+    #[cfg(any(test, feature = "test-support"))]
+    pub off: bool,
+}
+
+impl AmKinks {
+    pub const NEW: Self = Self {
+        held: 0.0,
+        last: [0.0; 4],
+        stepped: [0.0; 2],
+        carry: [(0.0, 0.0); 2],
+        #[cfg(any(test, feature = "test-support"))]
+        off: false,
+    };
+
+    /// The memory cleared, the test switch kept.
+    pub fn reset(&mut self) {
+        (self.held, self.last, self.stepped) = (0.0, [0.0; 4], [0.0; 2]);
+        self.carry = [(0.0, 0.0); 2];
+    }
+
+    /// One oscillator's list for the block: the carry at slot 0, then
+    /// `listed`'s steps in slots 1.., the end marked past the block; the
+    /// last sample's (slot 0 in `listed`) the next block's carry.
+    pub fn list(carry: &mut (f32, f32), listed: impl Iterator<Item = Step>, len: usize) -> Steps {
+        let mut l = [Step::end(len); STEPS];
+        let mut n = 0;
+        if carry.1 != 0.0 {
+            l[0] = Step {
+                slot: 0,
+                t: carry.0,
+                d: carry.1,
+            };
+            n = 1;
+        }
+        *carry = (0.0, 0.0);
+        for s in listed {
+            if s.slot == 0 {
+                *carry = (s.t, s.d);
+            } else if n < STEPS - 1 {
+                l[n] = s;
+                n += 1;
+            }
+        }
+        l
+    }
+
+    /// One sample in: `a`, `b` naive at the listed steps, `c` the
+    /// operator's value of them, `ks` and `g = c₁` (`0.5·x/pk.b`) and
+    /// `c0`; OSC 1's step `ea` and OSC 2's `eb` at this sample, `(t, Σ)`.
+    /// The previous sample out, corrected.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn step(
+        &mut self,
+        (a, b, c): (f32, f32, f32),
+        (ks, c0, g): (f32, f32, f32),
+        ea: Option<(f32, f32)>,
+        eb: Option<(f32, f32)>,
+    ) -> f32 {
+        let mut acc = c;
+        let [a1, a2, b1, b2] = self.last;
+        // each wave's slope over the last two samples, less a step listed
+        // between them
+        let (sa, sb) = (a1 - a2 - self.stepped[0], b1 - b2 - self.stepped[1]);
+        self.stepped = [ea.map_or(0.0, |e| e.1), eb.map_or(0.0, |e| e.1)];
+        #[cfg(any(test, feature = "test-support"))]
+        let (ea, eb) = if self.off { (None, None) } else { (ea, eb) };
+        let kg = ks * g;
+        // each wave at the other's step: on its own last slope, past its
+        // own step if that came first (`t` samples ago: the larger, the
+        // earlier)
+        let a_at = |t: f32| {
+            let past = ea.map_or(0.0, |(ta, da)| if ta > t { da } else { 0.0 });
+            a1 + (1.0 - t) * sa + past
+        };
+        let b_at = |t: f32| {
+            let past = eb.map_or(0.0, |(tb, db)| if tb >= t { db } else { 0.0 });
+            b1 + (1.0 - t) * sb + past
+        };
+        if let Some((t, d)) = ea {
+            blep_into(&mut self.held, &mut acc, t, ks * d * (c0 + g * b_at(t)));
+            blamp_into(&mut self.held, &mut acc, t, kg * d * sb);
+        }
+        if let Some((t, d)) = eb {
+            blep_into(&mut self.held, &mut acc, t, kg * a_at(t) * d);
+            blamp_into(&mut self.held, &mut acc, t, kg * d * sa);
+        }
+        self.last = [a, a1, b, b1];
         core::mem::replace(&mut self.held, acc)
     }
 }

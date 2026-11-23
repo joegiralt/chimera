@@ -131,7 +131,10 @@ fn the_door_modes_play_through_the_door_and_are_silent_closed() {
             ..scene(48, b, VaMode::Fm)
         }
     };
-    let modes = VaMode::ALL.into_iter().filter(|m| !m.in_bank2());
+    // AM plays its corrected product open, bank 1's closed (#660)
+    let modes = VaMode::ALL
+        .into_iter()
+        .filter(|m| !m.in_bank2() && *m != VaMode::Am);
     let closed: Vec<_> = modes.clone().map(|m| print(&take(48, other(m)))).collect();
     // Closed, NOISE adds nothing: the oscillators play on, ducked by its
     // norm, never silent

@@ -114,8 +114,17 @@ struct Rig {
     link: LoadLink,
 }
 
+/// Bank 2's door open, as the unit plays it, for every test here: under
+/// `bank2` the cell is the process's, and a closed one beside an open one
+/// made these flip (#1060 item 6). The closed door's own tests are
+/// `kit_library_closed_test`.
+fn open_door() {
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+}
+
 impl Rig {
     fn new() -> Rig {
+        open_door();
         let mut st = Counted {
             inner: MemStore::new(1),
             reads: 0,
@@ -405,6 +414,7 @@ fn menu_cancels_library_naming_back_to_the_browser() {
 
 #[test]
 fn save_to_library_row_in_settings_part() {
+    open_door();
     let mut ui = UiState::new();
     screen::to_leaf(&mut ui, &["PART"]);
     for _ in 0..chimera_core::ui::settings::SAVE_TO_LIB_ROW {
@@ -1024,6 +1034,31 @@ mod console_edits {
         }
     }
 
+    /// `rm` then `put` of another Sound under the same id and name between
+    /// listing and EDIT: the put restarts the pair, and its first
+    /// generation is no longer 1 for every fresh file, so the witness
+    /// still tells the files apart (#455): FILE CHANGED, nothing loaded.
+    #[test]
+    fn a_console_rm_then_put_under_the_same_name_never_loads() {
+        let mut r = Rig::new();
+        let old = factory_sound(0);
+        let mut new = factory_sound(1);
+        new.name = old.name;
+        let id = r.library_with(&old);
+        r.open_library();
+        r.work();
+        let rm = format!(
+            "rm /CHIMERA/SOUNDS/{}\n",
+            std::str::from_utf8(&id.stem()).unwrap()
+        );
+        assert_eq!(r.console(&rm, b"", false), "OK\n");
+        assert_eq!(r.put_over(id, &stamped(&new), false), "READY\nOK\n");
+        r.press(ButtonId::Edit);
+        r.work();
+        assert_eq!(r.toast(), "FILE CHANGED");
+        loaded_neither(&r, &old, &new);
+    }
+
     #[test]
     fn a_console_put_over_after_listing_never_loads_the_other_sound() {
         let mut r = Rig::new();
@@ -1340,7 +1375,7 @@ fn ed_part_during_a_library_load_is_swallowed_as_its_key_is() {
     let at = r.ui.location();
     let mut q = chimera_core::console::EdState::new();
     q.follow(PartId::ALL[1]);
-    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    open_door();
     chimera_core::bank2::ed_apply(&mut q, &mut r.ui);
     assert_eq!(r.ui.active_part, P1);
     assert_eq!(r.ui.location(), at);
