@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay TYPEs side by side (ADR 0202): TAPE against GRAIN at several
 //! SIZE, DENSITY, PITCH and TEXTURE settings and a shimmer, on a pluck
 //! phrase, a chord stab and a percussive loop, through the real

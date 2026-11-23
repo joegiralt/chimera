@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Learn senses the kind (spec §§ 6.3, 8.1): the first control heard while
 //! armed writes the entry, and learn stays open, sensing what the control
 //! sends. Each sample feeds `classify`, and the entry's input and echo are

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A bank-2 write releases TAPE's voices first; the other engines play on.
 //! Only a gate build's `bank2 erase` closes a live door.
 #![cfg(feature = "bank2-gate")]

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed describe <SCHEMA> <page>`: one page's static schema, from the
 //! schema's chain and the box's own cell resolver (`view::view`), never the
 //! Sound. A page lists its panels, each a variant of what a cell resolves

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Takeover: how an absolute control meets a param that moved without it.
 
 use crate::ctl::Dir;

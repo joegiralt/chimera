@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Encoder feel (ADR 0279, #1005): lists and menus accelerate gentler than
 //! a parameter, and SEQ + turn steps fine with no push.
 
@@ -421,7 +424,7 @@ fn seq_turn_and_wait(ui: &mut UiState, e: EncoderId) {
     screen::feed(ui, screen::Input::held(ButtonId::Seq).at(700));
 }
 
-/// The owner's ruling: a turn during a SEQ hold cancels ORBIT, on any
+/// Ruling: a turn during a SEQ hold cancels ORBIT, on any
 /// cell of a Part's or mixer's page, a choice as well as a value (review
 /// round 2, I1: Part 1's first page, A at 200 ms, ORBIT at 700).
 #[cfg(all(feature = "orbit", feature = "tape"))]

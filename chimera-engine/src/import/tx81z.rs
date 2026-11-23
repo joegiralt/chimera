@@ -1,11 +1,14 @@
-//! The TX81Z's 32-voice VMEM bank (importer spec § 5.2), from the owner's
-//! manual's MIDI data chart: 32 × 128 B packed voices, operators stored
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The TX81Z's 32-voice VMEM bank (importer spec § 5.2), from the
+//! TX81Z manual's MIDI data chart: 32 × 128 B packed voices, operators stored
 //! OP4, OP2, OP3, OP1. A DX21, DX27 or DX100 bank is the same with zeros
 //! at 73-83, which read as W1, FINE 0, not fixed, no EG shift.
 //!
 //! Each field is masked to its own bits, then clamped to its range; a
 //! byte either step changed counts in `Warn::adjusted`. A bad checksum is
-//! a warning, never a refusal (the owner's ruling, Dexed's precedent).
+//! a warning, never a refusal (Dexed's precedent).
 
 /// `F0 43 0n 04 20 00`, 4096 B of voices, the checksum, `F7`.
 pub const BANK_LEN: usize = 4104;

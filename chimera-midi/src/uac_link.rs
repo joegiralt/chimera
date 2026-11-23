@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What the audio interrupt, the USB interrupt and the class's bank-1
 //! shims share for USB audio (ADR 0248): the frame ring and the streaming
 //! interface's alt setting. Never globbed into bank 2: the audio

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! BigViz pages in Direction A (UI refresh spec § Page types): header ·
 //! large viz with the touched value riding on it · cells · map.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What the audio thread shows the UI besides the scope: one atomic word
 //! per meter, written once per block (it never blocks), read whenever the
 //! UI draws. Each meter has its own type, so a dB never lands in a clip's.

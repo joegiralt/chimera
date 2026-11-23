@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The engine's kernels (ADR 0265) against the prototypes they port: every
 //! slice-1 machine at each of its settings, a second rendered by both, the
 //! difference's RMS at least 100 dB under the prototype's.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The demo projects' renders (spec § 4, § 5): every setting's Parts on
 //! their channels, then the listening stimuli, through the project's own
 //! effects, gated.

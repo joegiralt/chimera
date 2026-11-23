@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #366: the reverb's TAIL glyph draws the lengths the reverb plays, so
 //! under SYNC its synced ones (GATE's LENGTH in note values).
 

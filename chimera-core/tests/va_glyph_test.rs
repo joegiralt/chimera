@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's focus glyphs (ADR 0129): each oscillator's scope, MODE's operator
 //! scope, and BLEND's crossfader with its ends named by MODE.
 //!
@@ -403,7 +406,7 @@ fn va_gauges_are_still_and_keyed_on_what_they_read() {
 
 // --- The page, drawn ---
 
-/// The owner's unit: TEAL, BLACK −2, dark or INVERT.
+/// The test unit: TEAL, BLACK −2, dark or INVERT.
 fn shoot(ui: &UiState, name: &str) -> Fb {
     let fb = render_ui(ui);
     assert_eq!(fb.oob, 0, "{name}");

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FUZZ (ADR 0156): its aliasing at high notes, the tone stack's scoop, a
 //! SUSTAIN sweep's ramp, and a hot 2040 after it.
 

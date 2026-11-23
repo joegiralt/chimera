@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Long names read off their LFN runs (ADR 0259): a file copied with a
 //! long name lists with it, upper case, `?` past ASCII, its first 32
 //! characters. A run whose order or checksum is off, or one cut off from

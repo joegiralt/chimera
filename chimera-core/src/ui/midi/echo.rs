@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Value echo out of DIN and USB (spec §§ 7, 9): pulled, not pushed. Each
 //! pass every feedback binding's param, as its control would send it, is
 //! compared with what it last sent; a difference is sent on the Part's

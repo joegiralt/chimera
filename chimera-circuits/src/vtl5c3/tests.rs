@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lpg-circuit lab's vactrol checks (`validate()` §2–3, `vac_compare`,
 //! `fit_vtl5c3`) as assertions. Numbers from `docs/lpg/validation.md`
 //! (cell VTL5C3/2) and `docs/lpg/notes.md` (the VTL5C3 refit).

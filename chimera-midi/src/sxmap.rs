@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SysEx parameter messages as controls (#846): an old box that edits a
 //! synth by SysEx sends one fixed message a parameter with its value in
 //! one byte (or two, MSB first), often followed by a checksum. Learn

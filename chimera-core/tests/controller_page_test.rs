@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's controller map on the unit (#807, ADR 0226): read from the card
 //! when picked, played under the Sound's own rows, picked and saved on
 //! MIDI MAP's row 0, its rows shown and dropped there.

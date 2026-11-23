@@ -1,6 +1,9 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sympathetic slot pool through the `Instrument` (exclusive-state
 //! spec § 4): at most four Sympathetic notes ring a set; one with no slot
-//! free plays bare and nothing is stolen (the owner's rule, 2026-09-29),
+//! free plays bare and nothing is stolen (the rule, 2026-09-29),
 //! every lease comes home, and a note on a pool slot sounds as it would
 //! alone.
 mod common;

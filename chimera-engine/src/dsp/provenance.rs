@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Where a technique comes from (ADR 0114): each DSP module declares a
 //! `PROVENANCE` and a `PATENT` list so the sourcing is auditable.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STRING's and SYMP's ensemble (ours, #50): two read heads on the
 //! string's own line, near the write, swung by one quadrature LFO at 0°
 //! and 90°, mixed on the output. The heads' Doppler is the detune. Not

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Card work the keys ask for: queued by `handle_input`, run by
 //! `card_work` after it, under BUSY. A frame never touches the card.
 

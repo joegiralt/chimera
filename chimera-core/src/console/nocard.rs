@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `NoCard`: the card type of a unit whose console has none.
 
 use chimera_hal::store::{

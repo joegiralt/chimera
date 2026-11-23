@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's LOOP (spec § 2 The macros and the window, LOOP, Parameters never
 //! snap): the pitch law, the folded crossfade, bounds latched at a wrap,
 //! the note-on ramp, the macros' easing and MOTION's walk. Precedent:

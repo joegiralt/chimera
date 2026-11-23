@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The built-in layer (ADR 0263): GM's and RP-021's CCs on each Part's own
 //! channel, under the Part's map, gliding through the canonical path.
 //! The chart is `docs/guide/MIDI.md`'s.

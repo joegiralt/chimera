@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's seal and door check (ADR 0137): the build's two halves are tied
 //! by one 8-byte seal, and nothing in bank 1 may reach bank 2 but the door.
 

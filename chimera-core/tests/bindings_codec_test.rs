@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The `Bindings` record `0x001F` (spec § 6.4): a version byte, then 8 B an
 //! entry `[tag:3 | kind:5] [number hi] [number lo] [block] [param] [min]
 //! [max] [flags]`. `0x001E` is read as JUMP without echo and never encoded

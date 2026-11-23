@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Converting `Instrument::render`'s float output into DMA-ready DAC words,
 //! and the pure planning behind the SAI DMA circular-buffer interrupts
 //! (instrument-on-chip spec).

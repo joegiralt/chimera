@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The algorithmic engine (spec 2026-09-26-algo-engine-design): six
 //! phase-modulation operators on 32 algorithms, morphing between two.
 

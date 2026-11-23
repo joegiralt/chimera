@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The seven operators and the sub's mix (spec § Combine). Each sees its
 //! inputs within their block peak bounds and stays within 0.9; XOR and
 //! BITS alias by nature and are exempt from the alias gate.

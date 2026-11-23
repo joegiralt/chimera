@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB MIDI 1.0 (spec § 4), its descriptors `chimera_midi::usb_class`'s:
 //! cable 0 "Chimera" both ways, and into Chimera a cable a Part, "Chimera
 //! Part 1" to 6 (ADR 0243). In-tree, not

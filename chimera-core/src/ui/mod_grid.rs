@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mod matrix: routing state (cursor, amounts, sources, destinations), its
 //! amount grid and the route readout (UI refresh spec § Page types, #161).
 

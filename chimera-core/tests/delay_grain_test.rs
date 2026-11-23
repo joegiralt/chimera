@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! GRAIN, the delay's Beads-style TYPE (ADR 0202): the engine against an
 //! f64 reference of the port, its clock at several densities, the pitch
 //! shift's accuracy, feedback that never runs away, TYPE and TIME changes

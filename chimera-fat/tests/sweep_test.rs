@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lost-cluster sweep (#360): a 128-slot project save cut at every
 //! write leaves nothing a sweep can't free; a dry run writes nothing; a
 //! computer's tree beside `/CHIMERA` keeps every byte; every doubt stops

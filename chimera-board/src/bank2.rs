@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2 from bank 1 (ADR 0137): the MPU's view of it, its live reads,
 //! its flash controller and the boot's judgement. Region 2 maps all of it,
 //! S0–S7 (0x08100000..0x081FFFFF): the image, with the stock bootloader's

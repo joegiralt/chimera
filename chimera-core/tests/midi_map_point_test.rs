@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI MAP's pointing (ADR 0288, chimera-releases#18): `+ NEW BINDING`
 //! ends the list; EDIT on it walks the box's own pages, a turn points at a
 //! cell and EDIT binds it, on the first CC no row uses; EDIT on a Sound row

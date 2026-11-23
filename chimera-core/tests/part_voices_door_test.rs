@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MAX VOICES and RESERVE behind bank 2's door (`UiDoor::voices`, ADR
 //! 0281), under `bank2` on a host, where the table answers only while the
 //! door cell is open. Closed, both cells say the rule is off and an edit

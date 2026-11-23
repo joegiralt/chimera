@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The built-in layer's relative CCs and resets (ADR 0263): CC 73 and 72
 //! shift the Sound's own envelope times RP-021's way, 64 the Sound as it
 //! is; Reset All Controllers brings expression back.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Typed overwrite and delete confirmations (#257): a confirmation holds the
 //! file's newest generation as listed, and a file that moved since refuses
 //! it. NEW streams without a second project in RAM.

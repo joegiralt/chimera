@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pure ramp, bin and budget core (spec §§ 5-6, ADR 0139). A
 //! continuous target ramps over the gap between its messages so a slow
 //! sweep is never a staircase; a stepped one bins with hysteresis; the

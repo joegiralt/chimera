@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Sound library on the card (library spec § Save): a Part's Sound to
 //! `/CHIMERA/SOUNDS/S#######.A`, stamped with the build.
 

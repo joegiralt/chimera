@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's SOURCE cell (spec § 3): turned in place through the pool's
 //! sources, a divider, then the card's `/CHIMERA/TAPES` files the pool
 //! doesn't hold, each with its cost. MIX + PLUS loads a card row, 4 KiB a

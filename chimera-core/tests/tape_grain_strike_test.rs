@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #777, ADR 0211: STRETCH GRAIN's own-period search runs once a block at
 //! most, so a chord struck on eight windows in one block stays inside it.
 //! Judged by the searches counted against the unit's readings (bench STRIKE,

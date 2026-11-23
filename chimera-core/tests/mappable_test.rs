@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-Part MIDI map's types (spec §§ 2-3): the whitelist, learn, the
 //! place law and the reserved CCs.
 

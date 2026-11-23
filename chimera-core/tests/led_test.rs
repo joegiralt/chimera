@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The front-panel LED: ORBIT's beat, longer on the downbeat (#307).
 
 use chimera_core::ui::led::{BEAT_TICKS, DOWNBEAT_TICKS, Led, Pulse};

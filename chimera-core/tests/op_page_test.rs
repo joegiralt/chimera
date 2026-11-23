@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! OP1–OP6 are OSC sub-pages after the twelve group pages (ADR 0130).
 
 mod common;

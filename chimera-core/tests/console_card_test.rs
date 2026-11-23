@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::console::{
     CYCLE_SPAN_MS, CardArg, CardKind, CardSpeed, Console, FILE_BLOCKS, FILES, Latency,
     MIN_APART_PER_MILLE, RANDOM_READS, READ_BLOCKS, Refusal, Request, STREAM_BYTES_PER_S,

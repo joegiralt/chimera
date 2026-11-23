@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's UI with bank 2 closed (ADR 0175), under `bank2` on a host, where
 //! the UI's table answers only while the door cell is open: SOURCE reads
 //! NEEDS UPDATE, its turn and MIX + PLUS queue nothing, a job queued while

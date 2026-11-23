@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Every parameter the Part's knobs glide is smooth, never steppy (ADR
 //! 0112, #419): each of `KNOBS`, the registry's own list, turned through
 //! the real path (the panel's acceleration, `Block::nudge`, a publish, the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Seeded xorshift32, one per ring: the same seed plays the same music.
 
 use super::RingIdx;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FX refactor lock (ADR 0011, ADR 0014): chorus, delay and reverb output
 //! frozen bit-for-bit before their buffers were trimmed to what their ranges
 //! need. Re-record only for an intended sound change (`common::golden`).
@@ -181,7 +184,7 @@ const MV2_GATE: &[(u8, &str, [f32; 7])] = &[
     ), // Fast Gate 75
 ];
 
-/// REVERSE likewise, judged close at the owner's relaxed tolerances:
+/// REVERSE likewise, judged close at relaxed tolerances:
 /// (program, name, LENGTH, REGEN, TONE, DENSITY, CURVE, ONSET).
 const MV2_REVERSE: &[(u8, &str, [f32; 6])] = &[
     (

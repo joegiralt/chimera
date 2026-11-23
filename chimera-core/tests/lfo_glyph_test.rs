@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LFO page's scope and glyphs (#649, ADR 0177): the scope draws one
 //! cycle of the LFO with the newest voice's playhead; each control has a
 //! glyph of what it does, keyed on quantised set values only, so nothing
@@ -422,7 +425,7 @@ fn the_scope_draws_one_cycle_of_the_lfo() {
 
 // ── The page ─────────────────────────────────────────────────────────
 
-/// The page's states the owner sees, dumped (`lfo_*`).
+/// The page's states shown, dumped (`lfo_*`).
 #[test]
 fn page_states_render() {
     // Each focuses its cell first (a step there and back), then sets.

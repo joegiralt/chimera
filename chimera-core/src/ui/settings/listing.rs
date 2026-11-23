@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card's projects as LOAD PROJECT and MANAGE PROJECTS list them: read
 //! by `card_work`, never by a frame. A row resolves to a `Pick` holding the
 //! entry by value, so nothing keeps a row index past a re-list but the

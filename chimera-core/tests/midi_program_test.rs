@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #515, ADR 0224: a program change loads a Sound into every Part on its
 //! channel. Bank 0 is the project's pool, bank 1 the INITs by engine disk
 //! code; CC 0 / CC 32 select the bank and it stands till changed. An

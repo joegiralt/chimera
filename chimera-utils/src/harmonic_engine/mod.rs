@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! HARMONIC engine (0.4), host prototype: the design of
 //! docs/superpowers/specs/2026-11-12-harmonic-engine-design.md grown from
 //! `macro_osc::harmonic` (24 partials by phasor and recurrence).
@@ -10,7 +13,7 @@
 //! corner variations of the module knobs morphed by the same X/Y; PATH;
 //! ENV → X; VARIETY; and a plain ADSR standing in for the voice chain.
 //!
-//! BRIGHT (`Bright`, after the owner's "darker than Loom"): a brighter map
+//! BRIGHT (`Bright`, after the listening note "darker than Loom"): a brighter map
 //! and taper, PHASE (aligned to Schroeder), BRIGHT TAIL (`tail`: VA's saw
 //! through CLEAN above the last partial) and LOG spacing on low notes.
 //! `Bright::ON` is the default; `Bright::DARK` the first prototype.

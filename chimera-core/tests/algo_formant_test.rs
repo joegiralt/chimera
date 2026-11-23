@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The FRMT operator in the engine (spec § 3): a two-lane grain train on
 //! the operator's unmodulated clock, each grain latched at its start.
 

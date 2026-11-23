@@ -1,4 +1,7 @@
-//! VOX's first cut, vowel first (kept as model work: the owner heard a
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! VOX's first cut, vowel first (kept as model work: it sounded like a
 //! synth singing vowels, not a mouth; `vox` is the consonant-first
 //! rebuild). Renders only as the `vox-before_*` hits; its groove and demo
 //! stay buildable but are not rendered.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The `Build` record (library spec § Files): the stamp, the stamped
 //! encoder, and a `Build` skipped in every file kind.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sim's frame loop by key script: `main`'s boot and per-frame order
 //! (keys, `handle_input`, card work, SYSTEM sync, `update`) on a
 //! `DirStore`, with no window. Desktop QA for what the window would show.

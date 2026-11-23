@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! One card operation's time budget, ticked once per bus transaction: an
 //! idle limit that restarts whenever a block moves, and a cap that never
 //! does. Pure: the shell feeds it the cycle counter, or counts

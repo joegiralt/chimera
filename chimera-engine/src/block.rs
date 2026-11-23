@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Parameter description and access, implemented once per block type.
 //!
 //! Spec: docs/superpowers/specs/2026-09-23-engine-refactor-design.md §1.

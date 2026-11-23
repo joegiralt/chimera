@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI CONFIG › CONTROL (ADR 0254): the MIXER and SEQUENCER channels'
 //! fixed maps, and AUTO's route for the pipes. A channel a Part's own
 //! takes is the Part's: CONTROL's is heard only where none does, MIXER

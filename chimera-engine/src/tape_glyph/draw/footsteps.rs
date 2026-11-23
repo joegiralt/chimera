@@ -1,4 +1,7 @@
-//! WALK's other step styles: the owner's footsteps, signal and treadmill
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! WALK's other step styles: the footsteps, signal and treadmill
 //! mockups (ADR 0203's listening page). Kept, never shipped: they link
 //! only into tests and `walk-styles` builds; the firmware draws STRAIGHT
 //! (`super::straight`).

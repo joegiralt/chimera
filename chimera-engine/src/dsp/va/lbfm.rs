@@ -1,3 +1,7 @@
+// After Tamara Smyth, Loopback Frequency Modulation, DAFx-26 (CC BY 4.0; see THIRD_PARTY.md)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LOOPFM's oscillator: loopback FM in its closed form, one divide a
 //! sample. The wave is the sum of harmonics `(1 − b0²)·(−b0)^(k−1)`, a
 //! cosine at `b0 = 0` growing to a pulse as `|b0|` nears 1, always at

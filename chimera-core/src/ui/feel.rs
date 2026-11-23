@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The encoders' feel (ADR 0279): the curve a turn takes, whether SEQ +
 //! turn steps a cell fine, the band saying so, and CLASSIC RATE's
 //! semitone tick. Bank 2's (`bank2.x`'s
@@ -75,7 +78,7 @@ pub fn takes(v: &View, w: Words) -> bool {
 /// The frame's turns from `c`, with SEQ's and MIX's keys: each encoder's ticks
 /// by its cell's curve, or a tick a detent (`Fine`) where SEQ is down on a
 /// cell that `takes` it; and a turn with SEQ down on a Part's, mixer's or
-/// FX page cancels SEQ's tap and ORBIT (the owner's ruling), except while
+/// FX page cancels SEQ's tap and ORBIT (by design), except while
 /// a card row loads, the library works, a prompt is up or learn is armed
 /// (they take the turn), and never in SETTINGS, the browser or ORBIT.
 pub fn frame(ui: &UiState, c: &dyn Controls) -> FrameTurns {

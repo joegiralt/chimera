@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter is smooth, never steppy (owner, 2026-10-07; ADR 0107).
 //!
 //! Turns go through the real path: the panel's acceleration

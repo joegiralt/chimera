@@ -1,3 +1,7 @@
+// Copyright (c) 2001-2002 Enthought, Inc., 2003 SciPy Developers (SciPy, BSD-3-Clause; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND BSD-3-Clause
+
 //! Signal primitives the circuit labs share, each matching the numpy/scipy
 //! call the Python harness made (named on each), in f64. Copied from
 //! `chimera-utils/src/sig.rs`.

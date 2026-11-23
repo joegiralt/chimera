@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The synth's model and everything the audio runs, in the fast profile
 //! (ADR 0108). `chimera-core` re-exports every module here under its own
 //! name and adds the UI and the console, which build for size.

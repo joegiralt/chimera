@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The FLT pages are honest (filter-routing spec § Tests "Knobs are
 //! honest", "Route knobs").
 mod common;

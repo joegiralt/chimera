@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STRETCH's CLASSIC TYPE (ADR 0204; spec § 2 STRETCH, Why period-locking): the Akai S950's
 //! time-stretch (S950 Operator's Manual p. 32: TIMESTRETCH, D-TIME, MONO
 //! and POLY) run in real time, as the JUCE forum's Akai-style two-grain

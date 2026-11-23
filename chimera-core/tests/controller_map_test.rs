@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Controller maps (#807, ADR 0226): a map's sections, the layer a Part on
 //! an engine plays, a Part's rows saved into it, and its file on the card
 //! (`/CHIMERA/MAPS`, named in the header, its stem from the name).

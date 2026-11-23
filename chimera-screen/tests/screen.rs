@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The mirror against the unit's own paths: its values as `ed set`'s, its
 //! pages as `ed describe`'s, its pixels as the desktop simulator's.
 

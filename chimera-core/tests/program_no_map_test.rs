@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #515, review of #891: a build without the MIDI map (the bench's) hears
 //! no program change: the door's `hear` is `deaf`, so PROGRAM IN on, a
 //! change still loads nothing and the pipes are never told to hold.

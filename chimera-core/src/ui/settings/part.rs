@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PART's actions on the active Part: one `Offer`, from
 //! `part_actions`, that both the dimming and the run read.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LPG labs' stimuli and gate measures, shared by the 292B and Plaits
 //! tests: bright tones (lpg-circuit lab, `lpg_gate.rs`), the ping, an ADSR
 //! (lpg-lab, `lpg.rs`), and the behaviour checks a gate must pass.

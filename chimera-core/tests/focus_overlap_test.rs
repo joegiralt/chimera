@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The focus band's gauge never touches its value: for every param's
 //! widest formatted value (each unit, ratio and word), no pixel of the
 //! value and of the gauge the band shows coincide, and every gauge keeps

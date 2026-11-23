@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `just tape-listen <model>… [--src chimera|<path.wav>]…`: each model on
 //! (LOOP and STRETCH also with END before START, LOOP with WOW WARBLE,
 //! ONESHOT at SLICE NOTE; `reverse` is LOOP's END-before-START renders)

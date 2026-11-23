@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STRETCH's quantities (ADR 0204), each its own type, held in its range
 //! as it is made: a value the DSP reads can't be out of it, nor NaN.
 

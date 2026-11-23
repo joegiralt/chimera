@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Property-based tests: verify invariants hold for random parameter combinations.
 //! Uses a simple xorshift PRNG instead of proptest (no_std compatible).
 

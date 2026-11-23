@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI trust boundary (spec §3, Review Focus 4): only valid notes and
 //! note-on velocities are representable. The parser that builds them is
 //! `chimera_midi::stream`'s (its tests).

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `circuit list|render`: audition any `chimera-circuits` model (ADR 0196)
 //! on unitab's scripts, through unitab's lab source (a saw at ½ gated by
 //! note, CUTOFF and RES from the script's CCs), so its files line up with

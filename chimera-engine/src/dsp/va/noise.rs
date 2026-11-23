@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA NOISE (ADR 0197): one source a voice, mixed after MODE beside SUB,
 //! before the filter. KIND picks the colour, LEVEL the amount.
 //!
@@ -96,7 +99,7 @@ pub fn level(l: f32, k: NoiseKind) -> f32 {
 
 /// Each KIND's RMS at full LEVEL, a share of `R`, set by loudness (BS.1770
 /// LUFS, a held note, filter open): at full the noise is as loud as INIT
-/// VA's two saws (within 0.3 LU) and 4 to 5 LU under the owner's brighter
+/// VA's two saws (within 0.3 LU) and 4 to 5 LU under the brighter
 /// single oscillator, never over them (ADR 0197). Mixed like SUB, the
 /// oscillators give way by `1/√(1 + SUB² + z²)`, so the filter's input
 /// stays within 1.7 LU of LEVEL 0.

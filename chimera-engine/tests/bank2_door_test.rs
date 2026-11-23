@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The bank-1 state of the door: closed until a judged `Door` at this link's
 //! door address opens it. A host has no bank 2, so nothing here is ever
 //! dereferenced: `with` is only called closed.

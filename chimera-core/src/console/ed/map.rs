@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI MAP (ADR 0289, slice 4): `ed describe MAP` from the binding
 //! model's tables, `since`'s MAP section, `ed map …`, `ed maps` and
 //! `ed learn`. A row is ADR 0217's `Binding`; the Part's own rows are its

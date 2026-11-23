@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A card for the host's tests (slice 1 § 10.2): it serves Wanted slots
 //! from a source held in memory, a read at a time, after a scripted
 //! latency in blocks, through the one `CardSide` as the card interrupt

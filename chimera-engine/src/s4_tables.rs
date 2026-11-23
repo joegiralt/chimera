@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // The tables at the head of bank 2's S4 groups (ADR 0283, 0284), the one
 // source: `bank2` includes this file, and chimera-stm32's build.rs includes
 // it too and writes `bank2.x`'s placement and asserts from these values.

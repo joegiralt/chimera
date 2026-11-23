@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Scala tunings (`.scl` steps, `.kbm` keyboard maps) as a table of
 //! per-key pitch offsets from 12-TET. Pure, fixed-size, never panics: a
 //! malformed file is refused, never half read. Runs where a file loads,

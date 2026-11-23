@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pool meter (ADR 0087, sound-pool spec § The meter, and the UI):
 //! the bar's percentage, its preview, the browser's line, its byte-bearing
 //! hints, and the refusal a save past free space gets.

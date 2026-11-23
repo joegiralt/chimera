@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ADR 0211: LOOP, TRON and PING-PONG bill their loop by the output samples
 //! a pass takes, each band at or over the unit's reading (TAPE COLD bench,
 //! 2026-10-22; 2026-10-26 for 0.3, ADR 0218), and admission books it at

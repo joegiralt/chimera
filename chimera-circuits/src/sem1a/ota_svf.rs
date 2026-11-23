@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The first SEM lab (#720, `sem-lab` def4f753): the Oberheim SEM's 12 dB
 //! OTA state-variable as simplified equations. Superseded by the circuit
 //! lab (`reference`, `fw`) but not rejected: kept as the cheaper model (80–90

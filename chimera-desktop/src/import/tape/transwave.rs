@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A transwave from a recording (TAPE spec § 6 step 5): whole cycles cut
 //! from across it, each built into octave levels, nominal `N` from the top
 //! down to 16, each keeping harmonics `1..=wave::harmonics` (⌊0.35 N⌋, 42

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The encoders' feel behind bank 2's door (`UiDoor::feel`, ADR 0279),
 //! under `bank2` on a host, where the table answers only while the door
 //! cell is open. Closed: a SEQ + turn is a plain, accelerated turn, the

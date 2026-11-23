@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bindings move the Sound (spec §§ 5-7, ADR 0217): each Part's map heard
 //! on its channel, an absolute place ramped over the gap between messages
 //! (or binned, for a stepped target), a relative turn through the

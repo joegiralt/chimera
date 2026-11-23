@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! How the shipped SEM's constants and fixtures were made (`sem-circuit-lab`
 //! 9582667d, the `semc-consts` and `semc-fixtures` commands): `consts()`
 //! derives every constant `chimera-engine/src/dsp/filter/sem.rs` holds from

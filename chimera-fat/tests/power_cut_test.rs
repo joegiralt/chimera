@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A/B saves on our FAT layer, the card pulled at every block (ADR 0045,
 //! ADR 0048): a generation always loads, the kept side is never touched,
 //! and nothing is cross-linked or longer than its chain. FAT16 images: they

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SCRUB's units (ADR 0205): where the finger sits in its room, and the
 //! loop behind it as a time. Bank 2's, with the deck (`bank2.x`).
 

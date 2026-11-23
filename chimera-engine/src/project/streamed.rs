@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Streamed loads (slice 1 § 5.6): a source too big for the arena loads
 //! as its descriptor, head table and heads; the rest stays on the card,
 //! its runs in the stream registry for the card interrupt. The SOURCE

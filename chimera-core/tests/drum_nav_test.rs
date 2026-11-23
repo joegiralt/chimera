@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's chain (ADR 0265, slice 1 Task 8): KIT · MCH · FLT · AMP · MOD,
 //! KEYS under KIT and MORE under MCH. MIX + MINUS / PLUS steps the pad on
 //! the pad's pages only; MTX keeps it for deleting a route. A live hit

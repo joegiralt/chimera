@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! QUAD's SMEAR (reverb TYPEs spec § SMEAR, § Pitch bounds) and GRIT's
 //! retirement (§ GRIT is retired).
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's pages (spec § Pages, ADR 0112 point 8, ADR 0197): VA, OSC 1, OSC 2,
 //! NOISE.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Chimera's devices as the A/B sees them: a name, its knobs and a render
 //! through the real DSP. Add one here when a comparison needs it.
 

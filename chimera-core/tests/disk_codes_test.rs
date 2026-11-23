@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Frozen disk codes (ADR 0045): every stored enum's code is permanent.
 //! So are `Sound::neutral`'s values: a sparse Sound omits each param at
 //! neutral (ADR 0087), and `neutral_is_a_contract` pins them.

@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Bank 1 is frozen (ADR 0198): fail a firmware set whose bank-1 .bin
 outgrows its line in tools/bank1-budget.txt (standard library only).
 

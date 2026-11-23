@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT in a project file (spec § 8, ADR 0078), after the six Parts: per
 //! scene, the slots holding one and then `live` (8), its blocks, each
 //! ring's notes, each segment's chord and its CUSTOM set; then the playing

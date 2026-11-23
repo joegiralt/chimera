@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's PING-PONG and SCRUB, and LOOP reversed (spec § 2 The models;
 //! END before START, `tape_machines_test`). Precedent:
 //! Digitakt II manual § Playback modes (REVERSE LOOP); Polyend Tracker

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE slice 1's unit proof (spec § 12), its files: four CC0 beds this
 //! tool synthesises, then, once `just tape` has sealed them into
 //! `$PROOF_DIR` (as `CHIMERA_CARD`), a project with PLAY LOOP on each in

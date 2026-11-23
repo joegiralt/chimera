@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ADR 0091: an ALGO note-on reads its envelope coefficients from tables
 //! built at compile time for `SAMPLE_RATE`, bit for bit what `exp2` and the
 //! divisions give. Its own binary, and one test: `COMPUTED` is a

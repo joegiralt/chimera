@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Design sketches. A new reverb structure (or any DSP idea measured
 //! against a reference) is prototyped here, in Rust, against the same
 //! metrics as the real devices.

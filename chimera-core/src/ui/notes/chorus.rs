@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The chorus's FLANGER and PHASER glyphs (ADR 0324), objects in the
 //! braid's box: FLANGER a moiré, a fixed back comb of bars and a front
 //! comb sliding and stretching over it, bright where their bars line up;

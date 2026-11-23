@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A pad's sound (ADR 0269): its FILTER, its AMP, one mod envelope, one
 //! LFO and four routes, laid over the voice's `played` snapshot. Every
 //! value a newtype or an enum, built clamped or as an `Option`.

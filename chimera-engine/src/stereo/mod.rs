@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Sound's stereo (ADR 0294): OUT PAN places each note of ALGO, MODAL,
 //! VA and TAPE in its Part's stereo (`VoicePan`, a per-voice destination,
 //! split into the Part's mid and side as a DRUM pad's PAN is), and WIDTH

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ALGO's 0.4 UI tickets (ADR 0298): the envelope pages' order, names and
 //! wiring (#987, #956), RATE SCALE's hint (#988), the ratio readout
 //! (#986), FDBK in tenths of the TX81Z's steps (#990, ADR 0299) and the
@@ -713,7 +716,7 @@ fn a_loop_stays_inside_the_band_and_off_the_links() {
     }
 }
 
-/// FBK's page keeps the live scope (the owner's call); back on ALG's
+/// FBK's page keeps the live scope (by design); back on ALG's
 /// page the chart wears the loop of the operator just turned.
 #[test]
 fn the_loop_is_on_the_chart_after_fdbk_is_turned() {

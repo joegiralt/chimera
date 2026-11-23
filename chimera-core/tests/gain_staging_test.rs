@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Gain staging (ADR 0050, #190; ADR 0109): everything before the limiter
 //! is main's mix, untouched; the limiter gains it by `OUTPUT_GAIN` at rest
 //! and bends it along a soft knee to −1 dBFS, the only stage that bends

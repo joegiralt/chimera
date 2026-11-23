@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Where a streamed source's heads go (slice 1 § 5.6): START's, and in
 //! LOOP the loop's. Each starts a frame before its first read, made even
 //! (a read takes the frame before: `stream::cursor`), and ends just past

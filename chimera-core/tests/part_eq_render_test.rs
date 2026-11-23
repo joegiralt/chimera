@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-Part EQ in the Instrument (ADR 0284): after the Sound, before
 //! LEVEL, PAN and the sends; flat and off, not there at all.
 

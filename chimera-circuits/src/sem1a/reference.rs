@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The SEM-1A VCF as built, solved by nodal Newton in f64 (#720 circuit lab,
 //! `sem-circuit-lab` aa4cb6a2).
 //!

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `UiState` on one `Location`: MENU opens SETTINGS, taps act on release,
 //! and a leaf edits what it names (ADR 0066).
 

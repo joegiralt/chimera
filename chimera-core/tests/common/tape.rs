@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sources for TAPE's tests: `held` bytes as the arena holds them (a
 //! descriptor, then packed 12-bit samples) and the signals put in them.
 #![allow(dead_code)]

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed` on MIDI MAP (ADR 0289, protocol 4's slice 4): `ed describe MAP`
 //! from the binding model's own tables, `since`'s MAP section (the Sound's
 //! rows, the controller map's, learn, the card's maps), the `ed map`

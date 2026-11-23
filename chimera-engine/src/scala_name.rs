@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Scala file a Part names (ADR 0259): its short stem, and the identity
 //! of the name it shows, the file's long name if it was copied with one.
 //! Bank 1's, out of `tuning` (bank 2's link section): the project codec,

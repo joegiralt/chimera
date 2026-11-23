@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The TAPE factory set (spec § 7, TAPE Task 19): `tools/factory-tapes/
 //! recipes.toml`'s sources, each built as `just tape` builds one, and the
 //! factory TAPE Sounds on them. Chimera's renders and the tool's own synths

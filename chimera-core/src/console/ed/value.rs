@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed get <addr>`: `val <addr> <normalized> <stored> "<text>"`. The text
 //! is the box's own (`cell_text::value_text`) from the cell that shows the
 //! param under the Sound's panels now, a pad's under its own; a param no

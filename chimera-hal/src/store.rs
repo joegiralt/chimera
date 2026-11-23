@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Card storage vocabulary.
 
 use core::ops::ControlFlow;
@@ -45,7 +48,7 @@ pub enum Dir {
     /// `/CHIMERA/SYSTEM`: bank 2's staged image (ADR 0137). The stock
     /// bootloader reads only `.bin` files in the root.
     System,
-    /// `/CHIMERA/TUNINGS`: Scala tunings the owner copies over, read only
+    /// `/CHIMERA/TUNINGS`: Scala tunings copied over, read only
     /// (ADR 0240).
     Tunings,
     /// `/CHIMERA/MAPS`: controller maps (#807), one A/B pair each.

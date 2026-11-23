@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The noise operator's pure laws (spec § 4): two one-poles on scaled
 //! uniform noise, ring-modulated up to FC.
 

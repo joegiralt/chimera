@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The master compressor's KEY (ADR 0303): FULL is the compressor as it
 //! was; LOW, HIGH and HIT filter the detector and never the audio; PART n
 //! keys from a Part's bus and passes that Part unducked.
@@ -90,7 +93,7 @@ fn pair1(x: Vec<f32>) -> [Vec<f32>; 2 * DAC_PAIRS] {
     ch
 }
 
-/// The codes are frozen and the names read as the owner approved them.
+/// The codes are frozen and the names read as approved.
 #[test]
 fn the_keys_are_full_the_ranges_then_the_parts() {
     assert_eq!(

@@ -1,5 +1,8 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The formant demo Sounds (spec § Demo clips): a phrase of each through
-//! the sweep's `Bench`, checked clean, and rendered to WAVs for the owner.
+//! the sweep's `Bench`, checked clean, and rendered to WAVs for listening.
 
 mod common;
 
@@ -271,7 +274,7 @@ fn the_wav_header_is_well_formed() {
     assert_eq!(&w[44..], [0, 0, 255, 127, 1, 128, 255, 127]);
 }
 
-/// The owner's auditions (spec § Demo clips, UAT items 4 and 5), each
+/// The auditions (spec § Demo clips, UAT items 4 and 5), each
 /// with its peak, gated loudness, clicks and held-note alias.
 struct Clip {
     file: &'static str,

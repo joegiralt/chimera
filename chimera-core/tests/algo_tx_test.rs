@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Voice model: TX81Z ratios and FINE steps, the 0.75 dB LEVEL step
 //! with level 0 silent, D1L, FEEDBACK and DETUNE; and the `f32` math.
 

@@ -1,4 +1,7 @@
-//! TX81Z operator facts from the owner's manual, re-implemented (ADR 0023).
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! TX81Z operator facts from the TX81Z manual, re-implemented (ADR 0023).
 
 use super::math::clampf;
 use crate::dsp::algo::math::exp2;

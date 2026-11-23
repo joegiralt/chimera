@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT through bank 2's door (ADR 0208): its event output, its view
 //! and the whole engine's audio, step for step, hashed over several songs.
 //! The hashes were taken from main before ORBIT moved, so a build without

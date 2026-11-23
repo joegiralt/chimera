@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Sound as card records: `Engine` first, a `Block` per voice block, then
 //! `Registry`, `ModDests` and `Routes` (ADR 0045).
 

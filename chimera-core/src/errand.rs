@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The proof the UI loop is on an errand: long work (card work, SYSTEM's
 //! sync, a sweep's ask, bank 2's install) takes `&Errand`, so the board
 //! can't run it outside the scope that puts its USB guard's service test

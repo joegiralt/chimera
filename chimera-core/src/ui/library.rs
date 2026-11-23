@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Sound rung's LIBRARY and FACTORY tabs (library spec § Browser,
 //! § Load; showcase spec § 2): the page as listed, the tab B turns, and a
 //! load in flight. A pending load holds the pool's scratch and maybe its

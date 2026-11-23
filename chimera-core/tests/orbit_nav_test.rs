@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT as a place (ADR 0044, amended 2026-10-02): SEQ hold goes in,
 //! MENU leaves to where it came from, and its keys are their own type.
 

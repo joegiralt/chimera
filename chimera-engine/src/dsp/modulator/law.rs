@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Slider laws (spec § 1 "Sliders are positions") and the RC constants.
 
 use crate::dsp::fast_exp2;

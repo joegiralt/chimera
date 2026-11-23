@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A source's descriptor (spec § 1 What the arena holds): the 16 B at the
 //! start of `held`. Bank 1's with `bank2` (storage and the pool read it),
 //! as `read` re-exports it; `read`'s decode is bank 2's.

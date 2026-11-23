@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The NRPN address space (ADR 0216), derived from the frozen disk identity
 //! (ADR 0045), never a second table: MSB = the block's disk code, LSB = the
 //! `ParamId`. `tests/fixtures/nrpn_v1.txt` pins the chart. Bank 2.

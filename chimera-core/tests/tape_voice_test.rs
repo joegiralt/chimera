@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE in the engine slot (spec § 2 Structure, § 3 neutral and INIT): its
 //! size against the slot and D2, its neutral, INIT's ENV 1 into VCA, the
 //! slot's kinds, a fresh note's ramp from silence, the source it latches,

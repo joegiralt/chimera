@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Reading a source (spec § 1 What the arena holds, § 2 Reading a source):
 //! the 16 B descriptor at the start of `held`, the 12-bit decode, a 32.32
 //! head position and the 4-point, 3rd-order Hermite in Niemitalo's x-form

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! External references: programs built outside the repo, run as
 //! subprocesses (ADR 0098). No reference code is linked into this tool.
 //!

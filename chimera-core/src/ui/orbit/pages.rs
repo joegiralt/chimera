@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's pages: ORB (with CUSTOM), RING (RHYTHM, with VOICE and NOTES),
 //! CHRD and SCN, a chain of its own that `Loc::Orbit` walks (ADR 0044).
 

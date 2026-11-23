@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Focus glyphs: each param's hand-assigned gauge, the focus band's
 //! dispatch, the UI clock and DEMO's glyph pages.
 

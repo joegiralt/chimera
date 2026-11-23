@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The project model (projects spec § Model): typed ids, the pool's
 //! generations, NEW's contents and the Part origins.
 

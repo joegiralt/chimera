@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A kit's voice groups (ADR 0280): each choke group in use counts once,
 //! each pad with choke OFF once. DRUM plays in the 8-voice pool by
 //! keeping a kit to 8 groups, so a choke edit never grows a kit past

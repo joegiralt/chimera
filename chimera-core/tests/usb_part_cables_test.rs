@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB's Part cables (#840): each pass the UI hands USB's poll the Parts'
 //! channels, so a Part cable plays on its Part's channel as it is now.
 //! One test: `PART_CHANNELS` is a process-wide static.

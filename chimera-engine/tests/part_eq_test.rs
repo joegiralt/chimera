@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-Part EQ's settings (ADR 0284): TILT and LO CUT in one byte.
 
 use chimera_engine::dsp::{Db, Unit};

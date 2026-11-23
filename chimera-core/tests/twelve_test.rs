@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 12-bit packing (ADR 0087, pool constraint): two samples in three bytes.
 
 mod common;

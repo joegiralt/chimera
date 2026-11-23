@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A raw tree writer for the sweep's tests: directories, files and lost
 //! chains written as raw 32-byte entries and FAT values into both FATs of
 //! any FAT16 or FAT32 image (`mkfs.fat`'s or `image`'s). Nothing passes

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `put` takes a tuning (#217, ADR 0240, 0259): `/CHIMERA/TUNINGS/<stem>.SCL`
 //! or `.KBM`, any 8.3 stem, a whole file of at most 4 KiB, replacing an old
 //! one; the card is inside the case, so this is how a Scala file gets there.

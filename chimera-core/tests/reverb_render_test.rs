@@ -1,4 +1,7 @@
-//! The owner's SMEAR A/B renderer (reverb TYPEs spec § A/B):
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The SMEAR A/B renderer (reverb TYPEs spec § A/B):
 //! `tools/ab/render.sh` drives it.
 //!
 //! - `stimuli` plays the strings (Modal BOWED), the pad (factory MORPH PAD)

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each Part's tuning (ADR 0240): a table of 128 per-key pitch offsets
 //! from 12-TET, semitones, read once at a voice's note-on and retune.
 //! Global, as `played`'s: the UI writes a Part's table when its TUNING

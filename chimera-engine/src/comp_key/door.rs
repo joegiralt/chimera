@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! KEY's table (ADR 0303): `kern::run` links into an S4 group, reached
 //! through `KeyDoor` at its own address a stride after the stereo's
 //! (`COMP_KEY_DOOR_ADDR`). Without `bank2` it is bank 1's, called

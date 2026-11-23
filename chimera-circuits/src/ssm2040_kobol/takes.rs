@@ -1,4 +1,7 @@
-//! The measures, fits and stimuli the Kobol lab read the owner's takes
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The measures, fits and stimuli the Kobol lab read the recorded takes
 //! with (`kobol.rs`, `kab.rs`, `kexp.rs` on `exp-circuit-lab`): harmonic
 //! analysis, the Kobol's own VCO as a wave table, response-shape fits, the
 //! self-oscillation note finder, the drive steps, the phrases' sequences
@@ -28,7 +31,7 @@ pub const SWEEPS_MD: &str = include_str!("../../docs/ssm2040_kobol/compare-sweep
 /// The phrases' fitted patches (`kobol phrases`).
 pub const PHRASES_MD: &str = include_str!("../../docs/ssm2040_kobol/compare-phrases.md");
 
-/// The takes' directory, from `KOBOL_DIR` (the owner's is
+/// The takes' directory, from `KOBOL_DIR` (the maintainer's is
 /// `.superpowers/ledgers/kobol-session`), if it is set and exists.
 pub fn session() -> Option<PathBuf> {
     let p = PathBuf::from(std::env::var_os("KOBOL_DIR")?);

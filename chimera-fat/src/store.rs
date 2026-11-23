@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `Store` over the FAT core: the card is mounted per operation, its
 //! `VolumeId` checked, and every block bounded to the partition. Errors are
 //! mapped here, and a device error re-inits the card.

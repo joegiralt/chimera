@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Macro oscillator KINDs for VA (design note 2026-11-12): host prototypes
 //! of HARMONIC, SWARM and PARTICLE, after Mutable Instruments Plaits'
 //! macro oscillator (MIT). Our own code from its published structure and

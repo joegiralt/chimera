@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PART › MIDI MAP's rows, keys and words (spec § 8.2, ADR
 //! 0226), and the pickup hint's reading (§ 8.3). Row 0 is the Part's
 //! controller map: B picks it, MIX+EDIT renames it, MIX+MINUS deletes it.

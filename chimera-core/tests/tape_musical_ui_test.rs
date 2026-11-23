@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's musical UI fixes (#698): START and END turn in time and MIX
 //! snaps them to onsets (finding 6), a streamed source shows its
 //! polyphony (1), refuses machines on MODEL where the player is (5), and

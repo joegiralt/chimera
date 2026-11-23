@@ -1,3 +1,6 @@
+/* Copyright (C) 2026 Joe Giralt */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 MEMORY
 {
     FLASH (rx) : ORIGIN = 0x08020000, LENGTH = 896K

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The UI and the console, built for size (ADR 0108), over
 //! `chimera-engine`, whose modules are re-exported here under their own
 //! names: `chimera_core::dsp` is `chimera_engine::dsp`.

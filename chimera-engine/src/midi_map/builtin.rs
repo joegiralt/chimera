@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The built-in layer (ADR 0263): GM's and RP-021's sound controllers on
 //! each Part's own channel, below the Part's map. A fixed CC → canonical
 //! NRPN table, so each move ramps as an unbound NRPN does. Bank 1's (ADR

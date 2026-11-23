@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_fat::sd::{CMD0, NCR_BYTES, r1_within_ncr};
 
 #[test]

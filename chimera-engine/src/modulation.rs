@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Compact modulation state shared between UI and audio thread.
 //!
 //! Built only from the destination registry (`from_registry`) or the UI's

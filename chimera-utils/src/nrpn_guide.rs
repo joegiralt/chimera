@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `docs/guide/NRPN.md` (#926): every writable NRPN address (ADR 0216),
 //! grouped by engine and block, with the cell's screen name, its MSB:LSB
 //! and the values it takes, written from `nrpn::chart`, the same code the

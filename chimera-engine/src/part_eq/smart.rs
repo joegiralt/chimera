@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ (ADR 0296, #396): each Part's ROLE and the master's SMART EQ
 //! and AMOUNT, and the state of the four fixed cut bands it adds to every
 //! Part's EQ. A lower role is cut where a higher one plays; FRONT never

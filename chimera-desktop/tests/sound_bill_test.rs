@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Every factory Sound's bill is an upper bound of what the unit read it
 //! costs (#448, #883, ADR 0249): `Voice::cost` at or over a model built
 //! only from the worst-block readings (`~/dev/unit-bench-883b/`,
@@ -405,7 +408,7 @@ fn factory() -> Vec<(String, Sound)> {
 
 /// Sounds the model reads over their bill, each with the margin it may
 /// not fall under: VOWEL BUZZ and THROAT SING (a 2040 tapped and routed)
-/// and MORPH BASS, 1 or 2 under, left as the owner chose (ADR 0262). A bill
+/// and MORPH BASS, 1 or 2 under, left as chosen (ADR 0262). A bill
 /// cut that widens one fails here; closing one moves it out.
 const KNOWN_UNDER: &[(&str, i64)] = &[("VOWEL BUZZ", -2), ("THROAT SING", -2), ("MORPH BASS", -1)];
 

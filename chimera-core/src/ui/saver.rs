@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The oscilloscope screensaver: after SCREENSAVER's idle time the screen
 //! shows the master scope large, with the last note in, the pitch it
 //! sounds at, the pitch measured off the scope, and the keys held with

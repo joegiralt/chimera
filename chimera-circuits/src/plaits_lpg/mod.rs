@@ -1,3 +1,7 @@
+// Copyright 2014-2016 Emilie Gillet (Mutable Instruments Plaits and stmlib, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 //! Plaits' low-pass gate, ported as a behaviour reference for the 292B
 //! (lpg-circuit lab, `lpg_gate.rs`): `plaits/dsp/fx/low_pass_gate.h` and
 //! `plaits/dsp/envelope.h` (LPGEnvelope), with the parameter mapping of

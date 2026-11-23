@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-sample loop: six phase-modulation operators on an `EvalPlan`.
 
 use crate::dsp::algo::env::{EnvRun, OpEnv};

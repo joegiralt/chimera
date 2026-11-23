@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::ui::animation::AnimatedValue;
 use chimera_core::ui::block_registry as reg;
 use chimera_core::ui::components::HeaderStatus;

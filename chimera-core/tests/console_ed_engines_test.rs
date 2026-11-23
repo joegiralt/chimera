@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed` on every engine (ADR 0285): addresses with pads, describe, get,
 //! set and since on MODAL, VA, TAPE and DRUM, and protocol 3's scale and
 //! `#n`.

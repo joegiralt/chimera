@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The console on a local socket: the unit's protocol, one client at a
 //! time, polled at the top of the sim's frame. An answer never holds it past its `AnswerClock`.
 

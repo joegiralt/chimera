@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Earliest deadline first: which voice's chunk the card reads next.
 
 use super::ring::Rings;

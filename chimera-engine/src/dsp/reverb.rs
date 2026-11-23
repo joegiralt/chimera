@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb's settings (reverb TYPEs spec § Parameters): one block of
 //! semantic slots, read per TYPE. `knobs` maps them to what the engine
 //! plays; the engines and the panel's value text share it.

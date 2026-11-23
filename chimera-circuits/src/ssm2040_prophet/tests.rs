@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use super::*;
 use crate::util::harness::{cutoff_sweep, probe, res_sweep, tail};
 use crate::util::measure::{db, lsd, null_db, tone};

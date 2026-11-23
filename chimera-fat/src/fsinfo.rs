@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FAT32's FSInfo sector: advisory, so checked and never trusted.
 
 use crate::blocks::BLOCK;

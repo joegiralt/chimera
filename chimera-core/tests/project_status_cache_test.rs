@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The project's status is cached on a revision every edit bumps (#257):
 //! no frame hashes the project, and no frame bumps it.
 

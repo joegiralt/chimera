@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LFO page's pictures (#649, ADR 0177): each control's glyph in the
 //! focus band's gauge box, and the scope's one cycle of the LFO with the
 //! newest voice's playhead on it. The engine draws them

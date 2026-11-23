@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The parameter dump (#984, ADR 0301): a controller asks with Chimera's
 //! own SysEx and reads the Sound's values back as the NRPNs PARAM OUT
 //! sends, on the Part's channel, out of the port that asked, paced by

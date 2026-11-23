@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's SOURCE cell (spec § 3, ADR 0093, TAPE Task 17): turned through
 //! the pool's sources, a divider, then the card's; MIX + PLUS loads a card
 //! row 4 KiB a UI pass behind BUSY, and MENU cancels it; per-source memory

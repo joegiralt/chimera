@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STABILITY's spirit level (#593): one glyph for VA's oscillator STAB and
 //! the filter's (ADR 0168). The bubble rests between the marks at 1 and
 //! leaves them by VA's depth law, `(1 − STAB)²`, to half the vial's travel at

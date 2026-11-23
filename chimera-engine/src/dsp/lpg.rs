@@ -1,3 +1,7 @@
+// Copyright 2014-2016 Emilie Gillet (Mutable Instruments Plaits and stmlib, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 //! LPG: Plaits' low-pass gate (ADR 0195), ported from Mutable Instruments
 //! Plaits, `plaits/dsp/fx/low_pass_gate.h` (LowPassGate), the LPGEnvelope
 //! of `plaits/dsp/envelope.h`, the decay and colour mapping of

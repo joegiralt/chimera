@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Streaming a sample from the card.
 
 /// TAPE is in the build: a voice may stream. Without it the shells run

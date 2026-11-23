@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What a project save, load, list or delete tells the screen (projects
 //! spec § Errors reach the screen): one line, naming the project or its
 //! file.

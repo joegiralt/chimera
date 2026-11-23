@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `Probe`, a card in a slot the test can empty, recording what `FatStore`
 //! does to it; and the checks every store test makes of a card.
 // Each test binary uses its own part of this module.

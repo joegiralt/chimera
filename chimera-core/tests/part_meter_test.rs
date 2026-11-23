@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIXER › PRT's meters (ADR 0293): each Part's bus peak after its EQ and
 //! before LEVEL, measured only while the page is up and never touching the
 //! sound; the key mark from the held keys on the Part's channel (an MPE

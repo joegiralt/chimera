@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The stream registry (slice 1 § 5.5): a row per streamed source, its
 //! `SourceId` and `StreamFile`. The UI writes rows; the card IRQ and the
 //! audio read them.

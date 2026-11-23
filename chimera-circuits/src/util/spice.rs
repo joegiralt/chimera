@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ngspice, the labs' transistor-level reference: an external tool, never
 //! shipped, never linked (ADR 0196). `NGSPICE` names the binary (default
 //! `ngspice` on `PATH`). Tests that need it are `#[ignore]`d.

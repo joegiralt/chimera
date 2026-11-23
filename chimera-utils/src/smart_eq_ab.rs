@@ -1,6 +1,9 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `smart-eq-ab`: SMART EQ's A/B on a MODAL pad against a bass (ADR 0296):
 //! the full `Instrument`, SMART EQ off, at AMOUNT 64 and at 127. Reports
-//! how much the Parts overlap in 250 Hz – 2 kHz (the mud the owner hears)
+//! how much the Parts overlap in 250 Hz – 2 kHz (the mud heard in a mix)
 //! and what SMART EQ cut while the pad's tail rang. `overlap` is the
 //! measure the teaser's vignettes are judged by too.
 
@@ -19,7 +22,7 @@ use chimera_core::{MidiNote, Velocity};
 use chimera_hal::{BLOCK_SIZE, SAMPLE_RATE};
 use rustfft::num_complex::Complex64;
 
-/// The overlap's band: where the owner hears the mud.
+/// The overlap's band: where the mud is heard.
 pub const MUD_LO: f64 = 250.0;
 pub const MUD_HI: f64 = 2_000.0;
 const N: usize = 4096;

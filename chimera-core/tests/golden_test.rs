@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Refactor lock (spec 2026-09-23 § Testing).
 //!
 //! Goldens freeze today's output, good or bad — they are not a quality claim.

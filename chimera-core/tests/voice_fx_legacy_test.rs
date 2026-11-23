@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Old Sounds load into the voice's FX slot (#614, spec § Loading old
 //! Sounds): DRV's block 9 as SOFT PRE, the folder's block 11 as FOLD POST,
 //! DRV first when both ran. Each file is written byte for byte as the old

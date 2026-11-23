@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay's tempo sync on the box (ADR 0302): the TIME cell's note as
 //! it plays, MIX + turn flipping SYNC with its hint, and the band's
 //! words. Bank 2's (`bank2.x`'s `ui::delay_sync` group, S4), reached

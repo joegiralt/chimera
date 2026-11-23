@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Snap points of the value formats (shift + encoder).
 
 use chimera_core::ui::page::ValFmt;

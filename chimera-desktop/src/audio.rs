@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Desktop audio: the same `Instrument` the firmware runs (ADR 0013),
 //! fed by `NoteSources` (the keyboard, and midir when feature `midi` is on)
 //! and an `AudioShared` published through a `TripleBuffer`, summed from

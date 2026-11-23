@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `put` for TAPE sources (ADR 0106): 256 KiB chunks, each ended by its
 //! CRC and acked, the file checked as it streams, written once, read back
 //! and sealed; any failure leaves no file, and a re-run is the retry.

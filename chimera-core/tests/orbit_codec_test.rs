@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT in the project file (spec § 8, Task 18): the eight slots and
 //! `live`, drift and all, the seeds, the playing scene and the tempo, as
 //! records after the six Parts. A bad record or value loads as the neutral

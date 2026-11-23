@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ's host cost (ADR 0296 § Measurements): `cargo test --release
 //! -p chimera-engine --test smart_eq_cost -- --ignored --nocapture`.
 //! Six Parts written, broadband: one FRONT listened to and five behind

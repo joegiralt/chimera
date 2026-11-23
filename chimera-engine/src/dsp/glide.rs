@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A glide in log₂, as an analogue portamento: a one-pole, stepped once a
 //! block, so equal intervals take equal times (ADR 0062). It glides a
 //! period (SYMP's halo) or a pitch ratio (a steal's glide).

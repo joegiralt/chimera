@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::orbit::clock::{Bpm, InternalClock, Phase, Position, step_at, step_start};
 use chimera_core::orbit::euclid::Steps;
 use core::num::NonZeroU32;

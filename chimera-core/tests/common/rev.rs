@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb TYPEs' shared test helpers (reverb TYPEs spec § Tests): the
 //! render plumbing, the measures, and the checks every engine runs. All at
 //! the bus rate, `SR`; a `Render` is one engine on its settings, fed a

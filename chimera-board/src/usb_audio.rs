@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB audio toward the host (ADR 0248): the stereo main out (DAC pair 1)
 //! as a UAC1 stream in USB MIDI's function (`usb-audio`, in every
 //! shipping build: ADR 0256). The audio interrupt pushes each block into

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bytes out: whole messages into a buffer, running status within a burst.
 
 use crate::ctl::{DataValue, FreeCc};

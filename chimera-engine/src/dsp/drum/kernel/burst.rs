@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The burst kernel: noise under a schedule of bursts or grains, through a
 //! CLEAN band-pass. TONE CLAP and BODY SHAKER (`Burst`, machines.rs:1203).
 

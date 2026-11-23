@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A replace waiting on its prompt (#258): the prompt's `Pending` and its
 //! `Choice` together, so only an EDIT press on the confirming pill makes the
 //! `Confirmed`. DELETE, CLEAR, SAVE OVER, OVERWRITE THAT ONE and ENTER DFU

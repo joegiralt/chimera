@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ADR 0013 memory budgets. The `const` assertions next to each type fail the
 //! build on both targets; these repeat them at run time so a failure prints
 //! the numbers.

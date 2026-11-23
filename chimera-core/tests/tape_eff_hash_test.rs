@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's #793 loops, bit for bit as main played them (bc20ae7c): LOOP,
 //! PING-PONG and TRON down to tiny loops (a wrap every few samples) with
 //! and without fades, SCRUB, and STRETCH GRAIN, MONO and POLY forward and

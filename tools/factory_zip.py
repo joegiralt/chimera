@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """`factory-v1.zip`: the card's CHIMERA folder as a tester copies it over
 the bootloader's SD card access. Every factory Sound (the public set's
 and TAPE's) in SOUNDS, the TAPE sources in TAPES, the demo projects in

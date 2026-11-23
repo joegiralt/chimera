@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::console::{Colours, Frame, Out, SHOT_HEADER, Stalled, write_shot};
 use chimera_core::ui::theme;
 use chimera_core::ui::theme_settings::{Accent, Palette, ThemeSettings, palette};

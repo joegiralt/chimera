@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Algorithms and § Testing: every algorithm has operator 1 as a
 //! carrier, no self-links, modulators numbered above their targets; T1–T8
 //! are the TX81Z's routings; every pair plans forward.

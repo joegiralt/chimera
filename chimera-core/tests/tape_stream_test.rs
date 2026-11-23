@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A streamed WALK (slice 1 § 10.2): a source held as heads, the rest read
 //! off a `TestCard` through the voice's ring, plays as the same source held
 //! whole; a late card drops out and comes back cleanly; a chord's burst
@@ -2627,7 +2630,7 @@ fn a_card_steal_keeps_off_a_reserved_parts_streams() {
     );
 }
 
-/// R2 (the owner's ruling, 2026-11-18): a MONO TAPE Part at its cap of 1
+/// R2 (ruling, 2026-11-18): a MONO TAPE Part at its cap of 1
 /// re-strikes beside another Part's released stream, its new note billing
 /// more than the card has left: it stops that stream, as on AUTO. The cap
 /// limits only its own voice count.

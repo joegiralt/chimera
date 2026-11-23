@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 pub mod about_page;
 pub mod alg_layout;
 pub mod animation;
@@ -1055,7 +1058,7 @@ impl UiState {
     /// `elapsed_ms` of wall time since the last call, for the screensaver:
     /// the shells' loops call it beside `step_toast`. `busy`: card work ran
     /// this frame, so `elapsed_ms` is its blocking time. A prompt, card work
-    /// or that time is the owner's attention, not idleness (and never wakes
+    /// or that time is the user's attention, not idleness (and never wakes
     /// the screen).
     pub fn step_idle(&mut self, elapsed_ms: u32, busy: bool) {
         if busy || self.prompt_open() || self.card_pending() {

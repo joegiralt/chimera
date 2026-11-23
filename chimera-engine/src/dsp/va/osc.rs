@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The variable-wave oscillator (spec § Oscillator). WAVE morphs sine →
 //! triangle → saw → pulse, a linear crossfade of two neighbours; SHAPE
 //! varies whichever two are sounding. Every wave, at every SHAPE, is

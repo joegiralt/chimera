@@ -1,9 +1,12 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter types' desktop QA (plan Task 19), on the real mix path.
 //!
 //! `per_pair_levels` (ignored): every TYPE, MODE and 2040 VOICE at RES 0,
 //! ½ and 1 on a held saw: finite, under the ceiling, every voice freed after
 //! the release; prints the RMS/peak table, flagging pairs more than 6 dB from
-//! CLEAN LP4 at RES 0. `demo_render` writes the owner's short-sound takes to
+//! CLEAN LP4 at RES 0. `demo_render` writes the short-sound takes to
 //! `$FILTER_QA_WAV` when it is set; `ladder_demo_render` LADDER's A/B takes
 //! to `$LADDER_DEMO_WAV`.
 

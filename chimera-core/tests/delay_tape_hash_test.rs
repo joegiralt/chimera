@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE, bit for bit (ADR 0202): a saved project loads with TYPE TAPE and
 //! its delay plays exactly what it played before TYPE existed. The hashes
 //! were taken on origin/main f745c0a1, before GRAIN.

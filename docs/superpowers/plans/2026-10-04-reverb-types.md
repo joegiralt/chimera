@@ -877,7 +877,7 @@ The MidiVerb II is now the reference for every TYPE, and the tasks below replace
 
 A preset that still fails after its task's near-miss steps goes to the owner with its residuals, and passes only by the owner's signed-off exception.
 
-**The harness** is outside the repository: `$S/midiverb-ref/`, where `S=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad`. It renders the *Rust* `FxBus` through the ignored test `zz_mvref.rs::mvref_batch`, which lives untracked in the `$S/wt-reverb-ref` worktree. Its job line already sets every slot: `size time tone diffuse predelay smear rate shape damping` (slots 3, 1, 7, 8, 9, 11, 12, 10, 2). Before each fit, point that worktree at the task's commit:
+**The harness** is outside the repository: `$S/midiverb-ref/`, where `S=<scratchpad>/scratchpad`. It renders the *Rust* `FxBus` through the ignored test `zz_mvref.rs::mvref_batch`, which lives untracked in the `$S/wt-reverb-ref` worktree. Its job line already sets every slot: `size time tone diffuse predelay smear rate shape damping` (slots 3, 1, 7, 8, 9, 11, 12, 10, 2). Before each fit, point that worktree at the task's commit:
 
 ```bash
 git -C $S/wt-reverb-ref checkout --detach <task HEAD>   # zz_mvref.rs stays, untracked

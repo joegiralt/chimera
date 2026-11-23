@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Focus glyphs: the gauge at the right of the focus band, hand-assigned
 //! per parameter on its spec (`ParamSpec::glyph`), ARC by default.
 

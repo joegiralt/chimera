@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MAX VOICES and RESERVE on MIXER › PRT › VOICES (ADR 0281), bank 2's:
 //! `bank2.x` links this module there and bank 1 reaches it only through
 //! the UI door's one entry (`UiDoor::voices`), so a closed door holds no

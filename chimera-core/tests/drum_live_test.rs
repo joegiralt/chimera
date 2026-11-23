@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM slice 2 (ADR 0269): a pad's continuous values follow its live
 //! edits on a hit still ringing, glided at the KNOB coefficient as a
 //! Part's knob; its choices and its machine's knobs latch at the hit.

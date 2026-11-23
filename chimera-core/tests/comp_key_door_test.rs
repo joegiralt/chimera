@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The compressor's KEY through bank 2's door (ADR 0303): open, LOW keys
 //! the compressor from the bass; closed, every KEY plays FULL, bit for
 //! bit, and KEY's state is at rest.

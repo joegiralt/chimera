@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The CEM3320 from its own circuit, not from the 2040, wired as the
 //! Oberheim OB-8's 4-pole (#720, branch `cem3320-lab`, 19c87c8e).
 //!

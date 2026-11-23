@@ -2,6 +2,7 @@
 name = "chimera-stm32"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [features]
 default = ["midi-din", "midi-usb", "perf-probe", "usb-console", "card-put", "sweep-free", "midi-map", "push-encoders", "tuning", "usb-audio"]
@@ -68,8 +69,8 @@ usb-console = ["chimera-board/usb-console"]
 # #360's risk for sources (2026-10-07): a cut mid-put can lose clusters.
 # Bench builds answer `ls` and `put` "not in this build": FLASH is full.
 card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer"]
-# The boot's lost-cluster sweep frees what it finds (#360, ADR 0094). Off,
-# it runs dry; on, it fails to build until the owner's go.
+# The boot's lost-cluster sweep frees what it finds (#360, ADR 0094); on
+# by default. Off, it runs dry and only reports.
 sweep-free = ["chimera-board/sweep-free"]
 # The console's `fault dma <1|2>`: provokes a transfer error on a trailing
 # DMA stream, to test its re-arm on the unit (#25). Never in a shipping build.

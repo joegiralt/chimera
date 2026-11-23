@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Where a streamed source's heads go (slice 1 § 5.6): from START − 1,
 //! made even; to just past the chunk boundary after `HEAD_MS` of reach
 //! (#583); the loop's from XFADE before it, holding XFADE + `HEAD_MS`

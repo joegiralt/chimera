@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #565: picking ALG B shows B's diagram, not A's blended by MORPH.
 
 mod common;

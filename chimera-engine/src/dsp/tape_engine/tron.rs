@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TRON (spec § 2 Machines): the Mellotron M400 (Streetly Electronics),
 //! about 8 s of tape a key. Every key gets SIZE's length of sound at every
 //! pitch (owner, 2026-10-05): the tape runs out in output time, and the

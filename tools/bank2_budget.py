@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Bank 2's room (ADR 0272): free space per region from the ELF's end
 symbols, held to ADR 0251's 8 KB floor on the total and to the set's line
 in tools/bank2-budget.txt under bank 1's rules (standard library only).

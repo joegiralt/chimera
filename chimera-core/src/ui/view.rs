@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A page slot as it reads now (filter-routing spec § UI): params, the
 //! filter kind's panel and route views resolve here against the
 //! Sound, so pages, vizzes and encoders all read by address.

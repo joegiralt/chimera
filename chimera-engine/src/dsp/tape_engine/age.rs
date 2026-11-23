@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! AGE, the wear (spec 2026-10-04 § 2): a one-pole low-pass whose corner
 //! falls from the source's band edge (`AGE_TOP_HZ` at most) by `(1/8)^age`, white hiss up to −42 dBFS RMS, and above
 //! ½ dropouts: the gain dipping `(age − ½)·2·9` dB at random for 20–80 ms,

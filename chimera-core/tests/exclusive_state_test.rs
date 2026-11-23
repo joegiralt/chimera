@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Switching on `SlotKind` (exclusive-state spec § 3): a change of engine
 //! or of Modal MODE fades the Part's sounding voices and rebuilds each once
 //! silent; idle voices switch at their next note; knobs never rebuild.

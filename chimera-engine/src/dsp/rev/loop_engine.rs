@@ -1,3 +1,9 @@
+// ROOM, BLOOM and LOOP start from delay and coefficient values derived from
+// thement/midiverb_emulator (GPL-3.0). The parameterizable engine built
+// around them is original to Chimera.
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LOOP (reverb TYPEs spec § LOOP engine): HALL's 1 loop × 4 stages,
 //! generic in its loops and stages (ROOM v2 has its own engine, `room`),
 //! as ADR 0095 § HALL, as built, has it. The send, through TONE and
@@ -86,10 +92,9 @@ const TC: usize = 4;
 /// first arrival is where the line puts it (ADR 0095 § HALL, as built).
 pub const LATENCY: usize = 17;
 
-// ADR 0095's table, ms: program 17's diffuser lengths, read from the
-// MidiVerb II (github.com/thement/midiverb_emulator's decompilation,
-// GPL-3.0), used by the owner's approval of 2026-10-05. Only this table
-// carries them; nothing else here comes from the emulator.
+// ADR 0095's table, ms: HALL's diffuser lengths, values derived from
+// thement/midiverb_emulator (GPL-3.0). Only this table carries them; the
+// engine around it is original to Chimera.
 
 /// HALL's diffuser at SPREAD × 1, in signal order: 321, 431, 668, 808,
 /// 204 and 144 samples at the unit's 23.4 kHz.

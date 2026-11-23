@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Judging bank 2 and the one door into it.
 
 use crate::crc::Crc32;

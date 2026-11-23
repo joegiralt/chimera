@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! An A/B pair of Sounds, `/CHIMERA/SND.A` and `.B`, saved and loaded
 //! through `chimera_core` on a `CutDisk`: each call on a fresh store, as
 //! after a power cycle.

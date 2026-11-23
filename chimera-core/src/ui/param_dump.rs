@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The parameter dump (#984, ADR 0301): a controller's request answered
 //! with the Part's Sound, each writable cell its engine reads as the NRPN
 //! PARAM OUT sends for it (ADR 0216's address and law, ADR 0258's bytes),

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed projects` and `ed project save|saveas|load` (ADR 0289, slice 3): the
 //! box's own card work, queued for the UI pass and run by `card_work` under
 //! BUSY. A save goes over the loaded project's own file (MENU hold's), a

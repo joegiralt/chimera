@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The chorus's FLANGER and PHASER glyphs (ADR 0324): a moiré of two
 //! combs and a ray gun, in the braid's box. Chorus I, II and I+II keep
 //! the braid.

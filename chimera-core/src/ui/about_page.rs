@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › SYSTEM › ABOUT: the firmware, the chip and its board, and the
 //! card, read-only.
 

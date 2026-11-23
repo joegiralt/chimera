@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FB's A/B (#393, ADR 0190): a bass pluck in the spirit of the Kobol
 //! Expander's 'Surfer' (patch sheet #37), on the INIT VA voice through
 //! `Instrument`, each TYPE at FB 0, ½ and full, RES 0.5. Each WAV is RMS

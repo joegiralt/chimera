@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The one i16 arena every reverb TYPE lays its lines in (reverb TYPEs
 //! spec § Arena), with f32 regions for R3's diffusers and R4's
 //! decorrelators.

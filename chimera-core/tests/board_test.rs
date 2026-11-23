@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::board::{BoardId, HC165_PA, HC165_PF, Port};
 
 #[test]

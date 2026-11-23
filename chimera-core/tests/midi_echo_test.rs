@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Value echo out of DIN (spec §§ 8.4, 9): each feedback binding's param,
 //! quantised to its control, sent on its Part's channel when it changes:
 //! never back to the hand, latest value only, a burst on a load, the

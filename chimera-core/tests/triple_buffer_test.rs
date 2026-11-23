@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::triple::{Reader, TripleBuffer, Writer};
 
 fn pair<T: Send + 'static>(a: T, b: T, c: T) -> (Writer<T>, Reader<T>) {

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Boot splash: the Yellow Sign, ground-black on yellow.
 
 use embedded_graphics::pixelcolor::Rgb565;

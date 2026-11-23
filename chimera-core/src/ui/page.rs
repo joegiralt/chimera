@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::addr::{BlockRead, BlockRef, Blocks, Op, ParamAddr};
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
 use crate::dsp::modulator::EnvSlot;

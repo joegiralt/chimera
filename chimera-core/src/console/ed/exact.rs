@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A stored value as text that reads back as itself (#1035): the fewest
 //! decimals that a correctly rounded parse (Rust's, JavaScript's) turns
 //! back into the same `f32`. `describe::num`'s seven places don't: the

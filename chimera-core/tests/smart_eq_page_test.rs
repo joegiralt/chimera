@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ's pages (ADR 0296): ROLE on MIXER › PRT › EQ, its band the
 //! Part's four live cuts; MIXER › MST › LVL, SMART EQ and AMOUNT in D and
 //! E, its band every Part's.

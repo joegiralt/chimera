@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reference audio path: input divider, C2/R10 and IC2, the LDR
 //! network (two Rf, C_mid, C_out, C3 in FILT, Rα, the GATE shunt), Q1's
 //! square-law JFET follower, C5/R17 and IC3 with its rails. Nodal Newton on

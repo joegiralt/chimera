@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 256-byte header at the base of bank 2, little-endian.
 
 use crate::judge::Verdict;

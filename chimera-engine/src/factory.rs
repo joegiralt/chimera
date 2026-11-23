@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The factory bank: eight Algo Sounds, the four formant demos (CHOIR,
 //! TALK BASS, BREATH, VOX), then an INIT per playable engine
 //! (`EngineType::PLAYABLE`, TAPE too: ADR 0187), kept as the pool's own

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SYSTEM (ADR 0045): theme, MIDI CONFIG (ADR 0080) and last project, read at boot and written on
 //! leaving System when RAM differs from what this card is known to hold.
 

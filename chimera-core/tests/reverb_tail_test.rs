@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A long tail's end: once the decay nears the i16 lines' storage noise
 //! (white, half of it over 4 kHz, where a damped tail has nothing), the
 //! return sizzles: first a hiss over the dark tail, at the end the noise

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Notes and MIDI real-time (ORBIT spec § 6.1) from the input threads to the
 //! audio thread, in the order they came (instrument-core spec
 //! § Threading): a fixed 64-event single-producer single-consumer ring.

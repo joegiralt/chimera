@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Encoder turns through the panel's acceleration, as ticks landing in each
 //! 1.33 ms block: the detent timings of the filter root-cause report.
 #![allow(dead_code)]

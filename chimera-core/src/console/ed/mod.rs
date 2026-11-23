@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed`: the browser editor's namespace. `ed hello` here; the rest follow.
 //! Bank 2's, behind `EdDoor` (`crate::bank2`, ADR 0251): `bank2.x` links
 //! this module there, so bank 1 keeps only `EdLine` and the door's stub.

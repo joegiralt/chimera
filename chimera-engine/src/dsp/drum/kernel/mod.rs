@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's kernels (ADR 0265): a hit's sound from its kernel params. No-std,
 //! no-alloc ports of the host prototypes (chimera-utils `drums/machines.rs`),
 //! the same expressions in the same order so they null against them, built

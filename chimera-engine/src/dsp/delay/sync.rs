@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay's tempo sync (ADR 0302): under SYNC, TIME is a note of the
 //! tempo, for TAPE's head and GRAIN's repeat alike. The note is folded
 //! onto the 500 ms line by halves, never clamped off the grid; a small

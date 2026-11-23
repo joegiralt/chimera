@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `voice-stats`: what a sung or spoken patch does over its phrase, read off
 //! any WAV, so ours and a reference are measured the same way.
 //!

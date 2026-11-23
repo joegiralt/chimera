@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The map: a 5×5 field of spectra, made by formulas only (no third-party
 //! data), stored as 8-bit log amplitudes. Rows (Y) are families, ordered so
 //! neighbours share a trait: BELL, ORGAN, REED, BRASS/BOWED, VOICE. Columns

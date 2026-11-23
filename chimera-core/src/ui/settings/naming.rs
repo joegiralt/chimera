@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! NAMING (storage spec § Naming and tags): A moves the cursor, B cycles
 //! A–Z, C cycles 0–9, space and `-`, D toggles case, E deletes. F's tags
 //! come with plan 3. EDIT saves, MENU and SEQ cancel.

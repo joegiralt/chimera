@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb: four stages in a ring, after Sean Costello's description of
 //! the Alesis Quadraverb (Valhalla DSP, KVR thread 349039): "4 parallel
 //! loops (2 x AP + 1 delay), outputs from delay taps", each loop feeding the

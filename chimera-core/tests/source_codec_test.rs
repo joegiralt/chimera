@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sources as card files and project records (ADR 0087, ADR 0093): the
 //! `SourceHead`, the source CRC that names the file, `PoolSource` refs in a
 //! project, and a load over the budget. 12-bit packing is `twelve_test`'s.

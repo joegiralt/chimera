@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card bus word (spec § 4.3): who owns SPI2 and the card, the UI or
 //! the streaming IRQ, and the flags they pass each other. Atomics only,
 //! so the UI, the audio and the card IRQ share one `static`.

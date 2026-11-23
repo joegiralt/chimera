@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each Part's tuning (#217, ADR 0240): a key's offset from its Part's
 //! table reaches the voice at note-on; all zero plays the untuned bits.
 //! `TUNINGS` is global: every test here holds `LOCK`, and no other test

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TYPE, MODE and VOICE changes: warm-started and crossfaded over two
 //! blocks, never snapped (spec § 1 B5, test 5).
 

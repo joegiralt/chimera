@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Chimera's circuit models, kept (ADR 0196): every filter and gate the
 //! circuit labs built, shipped or not, by circuit. Each module holds the
 //! f64 circuit or reference solver, the firmware-shaped model derived from

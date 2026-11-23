@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The showcase QA's engine clicks, each repro played through the real `Instrument` (Part 1, after the limiter, as the
 //! factory-sounds QA plays a Sound) and judged by `listen::qa_takes`, the
 //! factory-sounds QA's click metric, against its `CLICK_RATIO`.
@@ -296,8 +299,8 @@ fn ring_saws(mode: VaMode) -> Sound {
 
 /// #488: RING on two saws reads 17× in the showcase QA (8× here, C2's
 /// first cycle). The product of two edged waves pulses where both edges
-/// meet, and the ideal additive-saw reference pulses the same: the owner
-/// keeps it as RING's character (2026-10-13), so the QA's click gate
+/// meet, and the ideal additive-saw reference pulses the same: it is
+/// kept as RING's character (2026-10-13), so the QA's click gate
 /// leaves RING to the ear.
 #[test]
 fn va_ring_is_left_to_the_ear() {

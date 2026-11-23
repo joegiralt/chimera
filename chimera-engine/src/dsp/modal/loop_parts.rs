@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What every string loop is built from, so none can run away (ADR 0056).
 
 use crate::dsp::clampf;

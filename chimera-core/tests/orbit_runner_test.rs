@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `OrbitRunner` (Task 5): the transport on edges, the working copy and its
 //! drift, and a project load, through `Engine::block`'s order.
 

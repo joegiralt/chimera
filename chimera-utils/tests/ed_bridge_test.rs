@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ed-bridge against a fake TCP console: lines both ways, a gone console,
 //! and a second browser replacing the first.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VOICEFX (block 36): the slot's TYPE and PLACE, its three pots and MIX
 //! (ADR 0155). What each pot does is the type's; the block only holds them.
 
@@ -79,7 +82,7 @@ impl FxType {
     /// - The unit, 2026-10-22 (ROUTING bench, rev V at 480 MHz, each row
     ///   less 1 OP): SOFT 84 and SOFT LO 96, FOLD 80, FUZZ 244. Billed 100,
     ///   80 and 245: FUZZ as it reads, over ADR 0156's ceiling, which ADR
-    ///   0211 lifts (the owner keeps its sound and its fewer voices).
+    ///   0211 lifts (its sound is kept, with its fewer voices).
     pub const fn cost(self) -> Cost {
         match self {
             FxType::Off => Cost::ZERO,

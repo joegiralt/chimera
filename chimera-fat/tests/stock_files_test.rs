@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Chimera never touches stock PreenFM3 files (#405): on a FAT32 card
 //! holding the stock firmware's `/pfm3` tree beside `/CHIMERA`, every
 //! write path the firmware has (project saves on both sides, Sound saves,

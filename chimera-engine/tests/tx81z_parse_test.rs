@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The TX81Z VMEM parser (importer spec § 5.2, § 8.1). Every fixture is
 //! built here from field values or chart offsets: never a Yamaha bank.
 

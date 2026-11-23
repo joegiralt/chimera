@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STABILITY on the 2040 and LADDER (ADR 0168), through the voice: at 1
 //! every slot plays today's filter bit for bit; below 1 each slot is its own
 //! chip, the same one every time, and the output stays bounded.

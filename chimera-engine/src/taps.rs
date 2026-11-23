@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter's jacks (filter-types spec § 2, § 6): FM3 IN and QM IN pick a
 //! matrix source, or on ALGO an audio-rate tap of OP 5 or OP 6.
 

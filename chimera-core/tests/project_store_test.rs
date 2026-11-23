@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Projects on the card (projects spec § Storage, § Errors; ADR 0046's
 //! in-place load): save, load, list and delete, and the notes they leave.
 

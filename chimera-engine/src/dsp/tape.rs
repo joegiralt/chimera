@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tape on DAC pair 1 (FX diet spec § Tape). Per side: wow, pre-emphasis,
 //! 2× oversampled soft saturation, de-emphasis, head bump and an HF
 //! roll-off that darkens with DRIVE, blended in parallel with the dry.

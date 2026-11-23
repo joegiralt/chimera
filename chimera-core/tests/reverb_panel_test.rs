@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each reverb TYPE's panel (reverb TYPEs spec § Pages, § Each TYPE's
 //! knobs): REV's knobs 1–4, REV › MORE, their words, values and steps.
 

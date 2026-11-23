@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pages `ed` walks for a schema: its shared pages first, then each
 //! round's (each pad's on DRUM, each Part's on the mixer and SETTINGS,
 //! each ring's on ORBIT: ADR 0285, 0289).

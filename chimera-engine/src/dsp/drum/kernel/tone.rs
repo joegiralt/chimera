@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The tone kernel: a swept sine body, a noise layer, drive. TONE KICK,
 //! SNARE and TOM (machines.rs:693–853).
 

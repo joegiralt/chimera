@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The cursor (slice 1 § 7.3): a streamed voice's audio side. Once a
 //! block it tends the ring (releases what the read passed, asks the
 //! chunks ahead), plans which spans the block reads, the RAM head or the

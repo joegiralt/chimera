@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE STRETCH GRAIN (ADR 0204): a key plays the source at its pitch over
 //! LENGTH seconds, in four overlapping grains after Mutable Instruments
 //! Beads; SPRAY scatters them; END HOLD parks at the end, STOP fades out;
@@ -564,8 +567,7 @@ fn spans_and_silence_are_no_whole_row() {
     );
 }
 
-/// GRAIN's cheaper builds against GRAIN as shipped (ADR 0204, the owner's
-/// ask): pitch, length and splice ripple, a report, not a gate.
+/// GRAIN's cheaper builds against GRAIN as shipped (ADR 0204, as asked): pitch, length and splice ripple, a report, not a gate.
 #[test]
 #[ignore]
 fn thrift_report() {

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::dsp::lfo::{Lfo, LfoParams};
 
 const SAMPLE_RATE: u32 = chimera_hal::SAMPLE_RATE;

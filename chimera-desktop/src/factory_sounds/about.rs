@@ -1,4 +1,7 @@
-//! What a Sound is, for the owner's page: its engine, its engine's key
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! What a Sound is, for the Sound's page: its engine, its engine's key
 //! settings, its filter and every route, read from the built `Sound`.
 //! Values read as the unit shows them (`view::shown_fmt`, the pages'
 //! cells); labels are the specs' and pages', abbreviations spelled out.

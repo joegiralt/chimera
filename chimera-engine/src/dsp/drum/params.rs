@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A pad as the UI edits it (ADR 0265): `BlockRef::Pad`, the Part's
 //! selected pad, and its sound's blocks (ADR 0269): `BlockRef::PadFilter`,
 //! `PadAmp`, `PadEnv`, `PadLfo` and `PadRoute`. Not a Sound's: the kit

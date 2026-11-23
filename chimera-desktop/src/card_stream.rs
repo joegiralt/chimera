@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sim's card for streams (slice 1 § 10.5): Wanted slots served from
 //! `DirStore` files through the one `CardSide`, as the card interrupt
 //! serves them (`serve_step`, `deframe`, `write_guard`, `fill_done`), one

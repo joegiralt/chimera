@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The console's `put` as the shells drive it: a fake unit and host,
 //! base64 lines, and a plain TAPE source's file.
 // Each test binary uses its own part of this module.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT (ADR 0289, slice 5): its own cells' `act` lines, the song's lines
 //! in `since`'s ORBIT section, and the commands that do what the box's
 //! SCN, CHRD, CUSTOM and NOTES do. Every number on the wire counts from

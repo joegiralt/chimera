@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What a factory Sound plays (spec § 4): the render scripts and the
 //! phrases, as timed notes (`Plan`), and the swell a `sweep` Sound must
 //! hold. Pure: no rendering, so the build checks a sweep without the QA.

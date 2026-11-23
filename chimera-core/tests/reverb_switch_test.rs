@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Switching TYPE (reverb TYPEs spec § Switching TYPE): the old tail
 //! fades out on its latched knobs, four blocks clear the arena a quarter
 //! each, and the new TYPE fades in as a fresh engine. Never a click, never

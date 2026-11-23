@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tempo sync on ORBIT's clock (reverb TYPEs spec § Tempo sync): the
 //! division lists, the fold, the tempo quantiser, SYNC's conversion, and
 //! the clock reaching the reverb through `OrbitRunner` and `Instrument`.

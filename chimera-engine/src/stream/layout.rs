@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Streamed chunks in a `.source` file: a chunk is `CHUNK_RECORDS` whole
 //! `SourceData` records, read as the raw blocks that hold them and
 //! de-framed into packed samples.

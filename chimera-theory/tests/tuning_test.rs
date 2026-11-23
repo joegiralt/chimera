@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_theory::tuning::{
     BUILT_IN, KbmError, Keymap, Scale, SclError, description, offsets, offsets_into,
 };

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! AMP: the VCA's VEL and its low-pass gate, LPG · DECAY · STRIKE (ADR
 //! 0195); the sends on AMP › SENDS (filter-routing spec § 5; the fold left
 //! for the FX slot, ADR 0155).

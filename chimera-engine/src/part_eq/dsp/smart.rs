@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ's block (ADR 0296): bank 2's, inside the Part EQ's S4 group
 //! (`*7part_eq3dsp*`), run by the EQ's door entry after LO CUT and TILT.
 //!
@@ -99,7 +102,7 @@ impl Threat {
 /// for): how deep BACK yields under FRONT at four AMOUNTs, one rank apart
 /// 2/3 of each. 64 is polite (4 dB one rank, 6 two, everywhere); 95 is
 /// DEEP (LOW and LOW MID 8 and 12 dB, the kick's dip 10 and 15); 127 is
-/// OVER, provisional until the owner hears it (14 and 21 dB, the kick 18
+/// OVER, provisional until judged by ear (14 and 21 dB, the kick 18
 /// and 27, HIGH MID and HIGH 6 and 9). Re-tune here: `CAPS` follows.
 pub const KNOTS: [(Amount, Caps); 4] = [
     (amount(0), caps(0.0, 0.0, 0.0)),

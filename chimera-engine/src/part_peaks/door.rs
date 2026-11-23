@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The meters' table (ADR 0293): `kern::run` links into an S4 group, reached
 //! through `PeakDoor` at its own address a stride after the Parts' EQ's
 //! (`PART_PEAKS_DOOR_ADDR`). Without `bank2` it is bank 1's, called

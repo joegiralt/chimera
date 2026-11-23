@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LFO DEPTH as a matrix destination (#876): INIT's wheel vibrato is a
 //! route, WHEEL → LFO 1 DEPTH at +127, not a CC 1 map entry.
 

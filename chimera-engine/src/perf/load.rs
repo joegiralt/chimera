@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::board::BoardId;
 use crate::clock_plan::SiliconRev;
 use crate::hw::{BlockBudget, Cycles};

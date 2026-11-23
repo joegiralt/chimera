@@ -1,6 +1,9 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's read interpolator A/B (#698 finding 8): today's 4-point Hermite
 //! against a polyphase windowed-sinc, on a 24 kHz 12-bit source pitched
-//! −12, 0, +12 and +24 st, rendered at 48 kHz for the owner's ears. Nothing
+//! −12, 0, +12 and +24 st, rendered at 48 kHz for listening. Nothing
 //! in the firmware changes: the A/B comes first.
 //!
 //! The sinc is 8 taps × 32 phases (a 1 KB table at 16 bits), Kaiser β 7,
@@ -8,7 +11,7 @@
 //! 16 multiply-adds a read, +40 cycles a sample a head over Hermite's ~25
 //! (est.). `sinc-bl` is the same kernel stretched by `inc` above 1, so a
 //! pitch up band-limits instead of folding: `8 · inc` taps, which costs
-//! more as the pitch rises; shown so the owner can hear what fold costs.
+//! more as the pitch rises; shown so a listener can hear what fold costs.
 
 use std::f64::consts::PI;
 use std::path::Path;

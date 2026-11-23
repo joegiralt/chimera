@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Leaving System: no BUSY before the card work; a short toast after it,
 //! counted down by the frame clock, never a sleep.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The SOURCE cell's card work and its turns (ADR 0175): bank 2's with
 //! `bank2` (`bank2.x`'s `source_cell4card` glob), reached through the UI's
 //! table (`bank2::UiDoor`); `SourceCell`'s wrappers are bank 1's.

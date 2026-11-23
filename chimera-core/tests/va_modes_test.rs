@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VA MODEs past the first five (#601–#605, #613), one section each.
 //! Levels are the morph's (÷ `VA_CHAIN_GAIN`) unless said.
 

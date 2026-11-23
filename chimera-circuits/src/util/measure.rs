@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The labs' comparison measures, from the 2040 lab (`circuit2040.rs`):
 //! level, third-octave bands, LSD and the null. Every one reads raw
 //! levels; none matches gain first unless it says so.

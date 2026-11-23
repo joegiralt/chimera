@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Screen atlas: every screen the UI can show, found from the chain
 //! registry and reached through the real controls. Nothing is pinned: it
 //! is a smoke test (every screen renders, on screen) that also writes

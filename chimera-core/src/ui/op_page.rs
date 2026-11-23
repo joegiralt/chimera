@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! OP1–OP6: an operator's own page, a sub-page of OSC after the twelve
 //! group pages (ADR 0130). Its cells follow the operator's kind
 //! (`page_cells`); the band draws the envelope with the kind inset beside

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FB through the door (ADR 0190): open, each TYPE's FB block crosses to
 //! bank 2's loop and is heard; closed, the block runs the plain moving path,
 //! bit for bit FB 0's. The host builds its own door (`open_host`); the door

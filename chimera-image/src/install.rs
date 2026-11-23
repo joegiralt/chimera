@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Installing an image into bank 2 so that a power cut at any instant leaves
 //! it closed: S0 erased first, the commit word programmed last.
 

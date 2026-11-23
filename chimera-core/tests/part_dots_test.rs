@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The header's Part dots (#562): the current Part filled bright green, a
 //! sounding one a ring, the rest small and faint.
 #![cfg(feature = "orbit")]
@@ -74,7 +77,7 @@ fn the_header_region_keys_on_the_dots() {
     assert_ne!(base, at(p0, PartSet::EMPTY.with(p1)));
 }
 
-/// `SCREEN_DUMP=<dir>`: the owner's look at a sound page, the mixer and
+/// `SCREEN_DUMP=<dir>`: a look at a sound page, the mixer and
 /// ORBIT with Part 1 current and Parts 3 and 5 sounding.
 #[test]
 fn dump_the_headers_with_dots() {

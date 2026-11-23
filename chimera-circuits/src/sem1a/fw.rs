@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The firmware-feasible SEM (`sem-circuit-lab` aa4cb6a2): the same circuit
 //! at 48 kHz ×1 in f32, its parts folded into per-block coefficients and
 //! five cheap per-sample terms. Derived from `reference` (every constant

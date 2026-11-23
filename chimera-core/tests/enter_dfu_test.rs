@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › SYSTEM › OS UPGRADE: a prompt, then one yes for the shell.
 
 mod screen;

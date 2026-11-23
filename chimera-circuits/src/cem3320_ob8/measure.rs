@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The CEM3320 lab's own measures, on top of `util::measure`: the
 //! gain-matched null, harmonics and THD, the strongest line, the pole from
 //! one gain reading, and the self-oscillation onset.

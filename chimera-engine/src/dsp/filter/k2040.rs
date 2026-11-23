@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 2040: the SSM2040's four OTA stages (spec § 3, ADR 0096). Each stage is
 //! a TPT one-pole whose OTA bends the slew on the stage's true error, its
 //! output clamped to the chip's ±1 V swing. The global loop is solved

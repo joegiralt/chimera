@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `VaEngine`: two oscillators, the operator, the sub, the MODE duck and
 //! STABILITY (spec § Oscillator, § Combine, § Stability, § Testing).
 //! Levels are the morph's (÷ `VA_CHAIN_GAIN`) unless said.

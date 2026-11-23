@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's strip (spec § 3): how SRC and DECK show what the machine does to
 //! the source. A 216 × 40 px view of it, min/max a column in `MID`, START
 //! and END marked; over it the machine's part in `ACCENT_DIM`, and its

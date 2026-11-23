@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FOLD: the triangle wavefolder, today's moved whole (ADR 0155). P1 is
 //! FOLD, P2 SYM (its bias shapes the fold, not the level: silence folds to
 //! silence, ADR 0060), P3 LEVEL on the wet.

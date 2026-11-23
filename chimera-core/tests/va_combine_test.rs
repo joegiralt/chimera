@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA sync, the sub and the five operators (spec § Combine, § Testing).
 
 mod common;

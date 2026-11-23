@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM (ADR 0265): a Part plays a 12-pad kit, each pad a machine with its
 //! own knobs, level, pan, choke group and retrig.
 

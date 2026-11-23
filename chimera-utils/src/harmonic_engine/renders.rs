@@ -1,5 +1,8 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The audition groups. Short musical phrases (a held note, a chord stab,
-//! a bass line, a slow pad swell), per the owner's listening rules.
+//! a bass line, a slow pad swell), per the listening rules.
 
 use super::voice::{EnvX, PathCtl};
 use super::{

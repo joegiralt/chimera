@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice-groups A/B (ADR 0280, #993), the drum-steal spike's patterns
 //! rendered on this tree, for the ear and the refusal counts. One render a
 //! process, so the hit seeds start alike: `AB_PATTERN` 1–6, `AB_MODE`

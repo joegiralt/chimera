@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The vactrol in the firmware's shape: f32, a 61-entry drive table, and
 //! Najnudel's eq. 4 stepped once a sub-block by a two-stage Rosenbrock
 //! (ROS2) in u = s², where the generation term is a constant (no

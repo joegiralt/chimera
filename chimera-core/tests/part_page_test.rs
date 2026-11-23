@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Part-chain pages driven by slot bindings (spec §5): encoders, shift-snap
 //! and display go through the bound param's spec. Parity tests pin today's
 //! step sizes (plan § Encoder step audit).

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PART › MIDI MAP (spec § 8.2): each binding's row names its
 //! control, its target and its input; the bar's binding is spelled out
 //! under the list with its MIN, MAX and ECHO. A moves the bar; B steps the

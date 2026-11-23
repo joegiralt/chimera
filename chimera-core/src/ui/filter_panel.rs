@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each filter type's panel as `const` data (filter-types spec § 2–4, layout
 //! A of ADR 0155): FLT's MODE or VOICE, FREQ and Q, and FLT › MOD's six
 //! cells. Route knobs are views of matrix cells, and the jacks pick which

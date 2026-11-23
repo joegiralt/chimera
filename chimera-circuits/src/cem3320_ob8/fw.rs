@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The firmware-shaped model: the reference's equations cut to what an M7
 //! can run at 1× (`Fw`, per-block `FwCoef`), f32 inside, f64 at the edges.
 

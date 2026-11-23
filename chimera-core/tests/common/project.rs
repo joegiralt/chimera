@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Project files as bytes: `encode` and the two-pass `decode`, and the
 //! `full`/`same` fixtures.
 

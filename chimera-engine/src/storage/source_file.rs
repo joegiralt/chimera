@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's source files (ADR 0087, ADR 0093): `/CHIMERA/TAPES/<CRC>.SRC`,
 //! a framed file of kind `Source` holding a `SourceHead`, a `ZoneSet`'s
 //! `SourceZones`, then the packed 12-bit samples in `SourceData` records.

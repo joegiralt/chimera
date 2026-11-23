@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice's FX slot through the whole chain (ADR 0155): a golden per
 //! type and place on VA INIT C3 and ALGO INIT C4, and SOFT PRE and FOLD
 //! POST against the DRV and fold they replace.

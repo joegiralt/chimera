@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's pages (`pages`), its own cells (`cells`) and how they are drawn
 //! (`draw`); and `OrbitUi`: the transport and what the pages draw of the
 //! runner's view.

@@ -1,3 +1,32 @@
+// Copyright (c) 2017 martnak (the ILI9341 init list, martnak/STM32-ILI9341, MIT, via PreenFM3; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
+// The ILI9341 init list in `init` comes from PreenFM3's `lib/Src/ili9341.c`,
+// whose `ILI9341_Init` bases it on martnak/STM32-ILI9341
+// (https://github.com/martnak/STM32-ILI9341), under the MIT licence:
+//
+// Copyright (c) 2017 martnak
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 //! ILI9341 display driver via SPI1.
 //! 240x320 RGB565, framebuffer in static BSS (too large for stack).
 
@@ -107,7 +136,7 @@ where
         self.data_bytes(data);
     }
 
-    /// ILI9341 init sequence (from PreenFM3 ili9341.c). Leaves gamma at the
+    /// ILI9341 init sequence (PreenFM3 ili9341.c, after martnak/STM32-ILI9341). Leaves gamma at the
     /// panel's reset tables (THEME's PANEL); the caller pushes the boot
     /// theme's actual gamma right after.
     pub fn init(&mut self, cpu_hz: u32) {

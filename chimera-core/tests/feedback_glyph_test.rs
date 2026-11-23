@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FEEDBACK's glyph (ADR 0190): a low-pass curve with a loop from its
 //! output back to the cutoff corner. Still, keyed on the set value in
 //! eighths: nothing redraws at idle and a dirty redraw is the full one.

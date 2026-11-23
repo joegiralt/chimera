@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Testing "Modulatable is true": for every address whose spec says
 //! `modulatable: true`, an LFO route changes the rendered output. Keeps the
 //! flag from lying. An ENV or LFO slot is heard through its own route into
