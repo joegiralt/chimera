@@ -233,7 +233,11 @@ impl KsString {
     pub(super) fn refill(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
         // the precondition: `excite` leaves the write at its loop's last
         // sample, and a played sample moves it
-        debug_assert_eq!(self.write_pos + 1, self.delay, "refill on a line that played");
+        debug_assert_eq!(
+            self.write_pos + 1,
+            self.delay,
+            "refill on a line that played"
+        );
         let dirty = self.dirty;
         // `clear`'s resets but the buffer's: nothing past `dirty` was written
         self.write_pos = 0;
