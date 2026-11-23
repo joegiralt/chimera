@@ -519,7 +519,7 @@ mod tests {
         assert!(loopback("[::1]:7341").is_ok());
         // The console can rm, put and dfu: never on the LAN.
         assert!(loopback("0.0.0.0:7341").is_err());
-        assert!(loopback("192.0.2.5:7341").is_err());
+        assert!(loopback("203.0.113.5:7341").is_err());
         assert!(
             loopback("localhost:7341").is_err(),
             "a name is not an address"
