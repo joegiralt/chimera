@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Rendering, § Plan and morph, § Testing: pitch, ends of the morph
 //! bit-identical to each algorithm alone, equal loudness, nothing snaps.
 

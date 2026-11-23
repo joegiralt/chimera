@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Prophet-5 rev 1/2 filter at component level (#711, branch
 //! `circuit-2040`): an SSM 2040 wired as the Prophet's Voice schematic SD411
 //! (tech manual, Jan 1980).

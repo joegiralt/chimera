@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! KEEP MAP (#517, ADR 0253): MIX + PLUS on MIDI MAP's row 0 keeps the
 //! active Part's own rows through Sound loads, so a controller layout
 //! survives preset browsing. A kept map is no edit: the Part reads Clean

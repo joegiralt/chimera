@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The two slot stubs and their end markers (ADR 0272): bootloader 1.09
 //! jumps to 0x08180000 with MIXER held at power-on and to 0x081C0000 with
 //! EDIT held; each stub restarts into bank 1 at 0x08020000, VTOR set.

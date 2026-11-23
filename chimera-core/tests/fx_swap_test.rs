@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FX at the swap (ADR 0046): a project load kills every voice, then
 //! publishes the new snapshot under the FX tails. Every FX setting,
 //! stepped min↔max either way with its effect alone, the delay also at

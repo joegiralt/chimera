@@ -1,3 +1,7 @@
+// Copyright 2014-2015 Emilie Gillet (Mutable Instruments Rings, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 // The modal bank's filter setup follows Mutable Instruments Rings, and
 // `rings.rs` holds its SVF, cosine oscillator and stiffness table (ADR 0032):
 //
@@ -27,7 +31,7 @@
 // same notice.
 //
 // The Karplus-Strong string (`string.rs`) is the project owner's own code,
-// from their Carcosa firmware for the Ambika, relicensed here under MIT
+// from their Carcosa firmware for the Ambika, brought in by its author
 // (ADR 0032).
 
 //! Modal, the physical-modelling engine (ADR 0004): a modal resonator bank
@@ -238,7 +242,7 @@ struct SympatheticVoice {
 crate::in_place::field_list!(SympatheticVoice => SympatheticVoice { main, halo });
 
 /// A Sympathetic note's seven sympathetic lines, fixed when it starts
-/// (the owner's rule, 2026-09-29): a slot's set, or none.
+/// (rule of 2026-09-29): a slot's set, or none.
 ///
 /// An enum, not `Option<Lease>`: there is no `insert`, `get_or_insert` or
 /// `replace` to attach a lease to a sounding note, and `SympatheticVoice`
@@ -728,7 +732,7 @@ impl ModalEngine {
         let freq = note_to_freq(note);
         let f = freq / sample_rate as f32;
         // The sounding note struck again: added to what rings, nothing
-        // cleared (the owner's UAT, 2026-09-30); it glides on. BANK's
+        // cleared (UAT, 2026-09-30); it glides on. BANK's
         // strike always adds.
         let restrike = self.active && f == self.frequency;
         let glides = self.active && !restrike && glide.is_some();

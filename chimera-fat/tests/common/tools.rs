@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! dosfstools as a second opinion: `mkfs.fat` makes images, `fsck.fat -n`
 //! checks them. A missing tool fails the test; it never skips.
 // Each test binary uses its own part of this module.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MORPH between ALG A and ALG B (ADR 0024).
 
 use super::math::clampf;

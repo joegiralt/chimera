@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `OrbitRunner`: ORBIT's audio-thread shell. It owns the clock, the
 //! transport and the working copy of the playing scene, and each block
 //! turns them into note events for the `Instrument` (spec § 4).

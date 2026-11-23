@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A short text buffer, for labels and the console's numbers.
 
 /// Fixed-size buffer for no_std text formatting via core::fmt::Write.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What the audio thread tells the UI about the notes played (`played`).
 //! The statics are global: this binary's one test owns them.
 

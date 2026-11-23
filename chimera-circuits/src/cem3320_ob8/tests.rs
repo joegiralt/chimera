@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lab's `validate`, probes, onset and A/B as tests. Every threshold
 //! is the ledger's number (`docs/cem3320_ob8/validation.md`, `probes.md`)
 //! with a margin, beside the data sheet's bound where the lab compared

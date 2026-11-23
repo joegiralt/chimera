@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STRETCH's GRAIN TYPE (ADR 0204): a key plays the source at its pitch, and the
 //! source lasts LENGTH seconds, 0.25 to 8, at that pitch, in grains.
 //!
@@ -43,7 +46,7 @@ use crate::dsp::grain::core::Rng;
 /// Grains overlapping: a start every GRAIN / 4 or later.
 pub const OVERLAP: f32 = 4.0;
 
-/// GRAIN's cheaper builds under measurement (ADR 0204, the owner's ask):
+/// GRAIN's cheaper builds under measurement (ADR 0204):
 /// test builds only. `Four` is GRAIN as shipped.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

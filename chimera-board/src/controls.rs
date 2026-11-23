@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! HC165 shift register control input via SysTick interrupt.
 //!
 //! Port F on the LQFP176/144 boards, port A on the LQFP100 (ADR 0140):

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Layer 2: controller meaning. RPN/NRPN selection, data entry, step,
 //! bank latch, per channel. Pure, no allocation, never panics.
 

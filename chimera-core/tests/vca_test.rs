@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VCA destination (filter-routing spec § 4, § Tests "VCA").
 
 mod common;

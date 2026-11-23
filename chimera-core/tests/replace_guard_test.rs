@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The replace guard (projects spec § Types decide what's possible,
 //! § Unsaved-state edge cases): a replace that can lose work asks first,
 //! and a confirmation is refused once its target moved.

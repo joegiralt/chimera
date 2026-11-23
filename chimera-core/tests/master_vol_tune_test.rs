@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MST > LVL's VOL and PAN and SETTINGS > TUNING (#438): the master
 //! gains sit after the limiter and ease; TUNING moves every engine's pitch.
 

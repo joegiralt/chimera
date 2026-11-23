@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! REV › DUCK (ADR 0295): the wet return turned down under the reverb's
 //! own input and back in the gaps. AMOUNT 0 is the reverb as before, bit
 //! for bit (`reverb_dispatch_test`'s and the other reverb goldens hold

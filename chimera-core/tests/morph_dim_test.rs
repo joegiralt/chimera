@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #188: MORPH is inert while ALG A = ALG B, so it draws dimmed, refuses
 //! priming, and a route into it draws inert in the matrix (ADR 0049).
 

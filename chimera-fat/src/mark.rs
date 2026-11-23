@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sweep mark (ADR 0094), `/CHIMERA/SWEEP.MRK`: one block, `CLEAN`
 //! or not. A change that writes turns a clean mark `DIRTY` before its
 //! first write and `CLEAN` after its last (`FatStore`); a mark written in

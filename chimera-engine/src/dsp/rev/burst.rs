@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! BURST (reverb TYPEs spec § BURST engine; ADR 0095 § GATE and REVERSE,
 //! as built): GATE and REVERSE, each its own loop over one store. The
 //! send, through TONE, is written to the burst line; taps over it sum

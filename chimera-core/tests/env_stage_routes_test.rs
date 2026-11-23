@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #149: on an ENV A page, ATTACK, DECAY, RELEASE and HOLD prime the
 //! slot's TIME and SUS its LEVEL (MIX + PLUS); a route there moves those
 //! cells' bars as the envelope moves: every stage × 2^(−5·Σ), the peak

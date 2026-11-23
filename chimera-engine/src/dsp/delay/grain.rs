@@ -1,3 +1,7 @@
+// Copyright 2017 Emilie Gillet (Mutable Instruments Beads, MIT; see dsp/grain/core.rs)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 //! GRAIN, the delay's second TYPE (ADR 0202): repeats made of grains read
 //! from the delay's own line by the grain core (`dsp::grain::core`, after
 //! Mutable Instruments Beads, MIT, its notice there). This module is the

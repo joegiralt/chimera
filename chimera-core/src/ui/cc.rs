@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mapped controls move the Sound (spec §§ 5-7): bank 1's side of
 //! `MidiUiDoor` (ADR 0198, 0217). Bindings resolve in bank 2 (`ui::midi`),
 //! its table at its own slot after the door (`MIDI_UI_DOOR_ADDR`); here

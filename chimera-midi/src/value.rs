@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI quantities as checked newtypes: an out-of-range value cannot be built.
 
 /// 7-bit data byte, 0..=127.

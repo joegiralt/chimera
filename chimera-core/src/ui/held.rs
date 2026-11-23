@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A WAVE or ALG A/B choice the formant budget refuses (ADR 0151), a
 //! TAPE machine or WALK DIRECTION a streamed source can't play, or a pad's
 //! CHOKE that makes a 9th voice group (ADR 0280): the turn lands on it, the

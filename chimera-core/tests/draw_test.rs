@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Direction A primitives (`ui::draw`, `ui::theme`).
 
 mod screen;

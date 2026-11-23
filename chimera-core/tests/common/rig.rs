@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A lone `Voice` with the sympathetic pool it borrows from and, for TAPE,
 //! the one source its notes latch (by default the thread's second of saw,
 //! `tape::saw_with_burst` at 24 kHz): the suites that drive one voice

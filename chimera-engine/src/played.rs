@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The notes played, as the audio thread shows the UI: the keys held, the
 //! last note in and the pitch it sounds at. A few relaxed atomic ops per
 //! note event (never per sample or block), read by the screensaver.

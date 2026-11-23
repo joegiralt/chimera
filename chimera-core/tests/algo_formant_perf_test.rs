@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FRMT renders in spans between grain starts (Task 11b): bit for bit the
 //! per-sample path, and its cost term against the formant budget.
 

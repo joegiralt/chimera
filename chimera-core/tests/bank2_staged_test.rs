@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The boot's staged file (ADR 0137, Task 9c): `/CHIMERA/SYSTEM/BANK2.BK2`
 //! first, then up to eight `*.BK2` in the card root, a dropped
 //! `CHIMERA.BK2` (or a host-shortened long name); the first judged `Good` for this

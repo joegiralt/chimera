@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb through the door (ADR 0142): open, `Reverb::play` crosses it
 //! to bank 2's `Reverb::process` and returns its every bit; closed, the
 //! reverb's wet is silent and the rest of the FX bus plays on. The host

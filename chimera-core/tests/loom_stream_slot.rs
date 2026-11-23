@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A loom model of a stream slot: one audio thread wants a chunk, cancels
 //! and wants another; one card thread claims, fills and publishes. A
 //! shadow cell stands for the slot's bytes, holding the chunk the card

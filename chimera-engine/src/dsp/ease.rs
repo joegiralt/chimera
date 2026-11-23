@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Parameter easing (CLAUDE.md: never snap), two ways the codebase
 //! already used: a bus setting (level, pan, send, an effect's MIX) by a
 //! 20 ms one-pole once a block, as REV SEND; a voice setting, which a

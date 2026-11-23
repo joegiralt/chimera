@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! THEME's PAGES ROW (ADR 0145): the window the sub-page row shows, and
 //! its arrows on every chain.
 

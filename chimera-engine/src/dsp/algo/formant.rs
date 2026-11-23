@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The formant grain's pure laws (spec § 3): the window `(4x(1 − x))^q`,
 //! its SKIRT constants and curves. Those are measured on the host from the
 //! window's definition (`formant_laws_test`'s `measure` and `print_curves`).

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! GRAIN's lock where the source carries no PERIOD (ADR 0204): the
 //! window's own period, read off its first frames at note-on.
 //!

@@ -1,3 +1,9 @@
+// ROOM, BLOOM and LOOP start from delay and coefficient values derived from
+// thement/midiverb_emulator (GPL-3.0). The parameterizable engine built
+// around them is original to Chimera.
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ROOM (ADR 0095 § ROOM v2): the send, through TONE, PRE-DLY and five
 //! fixed f32 allpasses, enters four loops of two stages at +1. A stage is
 //! a delay then an f32 allpass; each loop ends in a one-pole damper and the
@@ -54,10 +60,9 @@ const FS: f32 = 24_000.0;
 /// Ring samples a millisecond.
 pub const PER_MS: f32 = FS / 1000.0;
 
-// ADR 0095's tables, ms: structure numbers read from the MidiVerb II's
-// ROOM programs (github.com/thement/midiverb_emulator's decompilation,
-// GPL-3.0), used by the owner's approval of 2026-10-05. Only these
-// tables carry them; nothing else here comes from the emulator.
+// ADR 0095's tables, ms: values derived from thement/midiverb_emulator
+// (GPL-3.0). Only these tables carry them; the engine around them is
+// original to Chimera.
 
 /// TONE's input one-pole coefficient at `tone_hz`: a one-pole at the
 /// cutoff, opened toward a bypass over `TONE_RAMP_HZ`..`TONE_OPEN_HZ`.

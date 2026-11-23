@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! GATE and REVERSE on the BURST engine (reverb TYPEs spec § BURST engine,
 //! § Level plan, § Moving a length, § Pitch bounds, § Tests).
 

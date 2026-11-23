@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SEM, the Oberheim SEM-1A VCF from its circuit (ADR 0192): the firmware
 //! against the circuit lab's model on its stimuli, MODE's notch, RES's
 //! law, the ring that never holds, LEVEL and the LED, smooth sweeps, and

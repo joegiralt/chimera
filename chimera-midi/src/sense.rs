@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Active Sensing: opt-in after the first FE. The shell times it.
 
 use crate::stream::RealTime;

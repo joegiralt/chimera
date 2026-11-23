@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Parts' EQ block (ADR 0284): bank 2's, behind its door
 //! (`part_eq::door`). `run` takes each written Part's bus (and a DRUM
 //! pad's side) through LO CUT, then TILT, both one-pole and both gliding:

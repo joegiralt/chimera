@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sources in the pool (ADR 0087): their table, the gate a compaction
 //! closes, retirement, purge, NEW, and pass 1 against the whole arena.
 

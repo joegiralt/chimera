@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb (FX diet spec § Reverb, § Testing), QUAD at SMEAR 0. SMEAR
 //! is `reverb_smear_test`'s; GRIT is retired.
 

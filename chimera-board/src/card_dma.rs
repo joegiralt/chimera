@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card's DMA read path (spec § 4.2): SD multi-block reads over SPI2,
 //! DMA2 stream 0 receiving and stream 1 sending 0xFF, run by one state
 //! machine in `DMA2_STR0`. It fills the voices' stream rings and, in bench

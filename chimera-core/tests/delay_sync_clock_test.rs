@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay under SYNC on ORBIT's clock (ADR 0302), through
 //! `OrbitRunner` and `Instrument` as the reverb's is
 //! (`reverb_sync_test`'s rig). Its own binary: it renders, so it

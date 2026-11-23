@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI learn (MIDI map spec § 4): MIX+SEQ arms on the focused cell, a
 //! turn moves the focus only, and the first CC on the active Part's
 //! channel maps to it, its value never applied. Every refusal says why in

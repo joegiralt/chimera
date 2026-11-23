@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SOFT: symmetric soft clipping (`fast_tanh`) with a tone control, today's
 //! DRV moved whole (ADR 0155). P1 is DRIVE, P2 TONE, P3 LEVEL on the wet.
 

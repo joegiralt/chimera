@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Juno-style BBD chorus, stereo (FX diet spec § Chorus): each line has a
 //! triangle LFO and two read taps, the normal one on the left and one on
 //! the inverted LFO on the right. The mono sum does not cancel.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The ENV slot: A or B, the matrix's inputs, TYPE/MODE/FORM changes
 //! (filter-routing spec § 1, § Tests "TYPE, MODE and FORM changes").
 

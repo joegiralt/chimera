@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Directories, `list`, `read`, `write`, `delete` and `make_dir` over a
 //! volume's blocks. Every buffer is borrowed from the caller, so none sits on
 //! the stack.

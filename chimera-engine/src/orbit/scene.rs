@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A scene: everything a loop plays, as plain data; and the song a
 //! project keeps, edited through the ORBIT blocks.
 
@@ -170,7 +173,7 @@ const fn on_part(ring: Ring, n: usize) -> SceneRing {
 }
 
 impl Scene {
-    /// The owner's pick at UAT, "sparse groove" (ADR 0073): A minor,
+    /// The pick at UAT, "sparse groove" (ADR 0073): A minor,
     /// i-VI-VII-i a bar each. Ring 1 the bass on Part 1, each chord's root;
     /// ring 2 the e-piano on Part 2; rings 3 and 4 the pad's two held notes
     /// on Part 3; ring 5 (Part 5) muted, to bring in. Nothing random:

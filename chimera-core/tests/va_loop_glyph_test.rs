@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #667: under MODE LOOPFM, WAVE scales each oscillator's loop (ADR 0162),
 //! so WAVE's glyph draws that oscillator's looped wave at its own depth:
 //! it follows WAVE and BLEND, and the SHAPE LOOPFM ignores leaves it.

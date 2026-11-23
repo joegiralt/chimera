@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The configuration descriptor the unit serves, enumerated through
 //! usb-device on a fake bus: the console's CDC (usbd-serial) alone (bank 2
 //! closed at boot), with USB MIDI's function (the bench builds'), and with

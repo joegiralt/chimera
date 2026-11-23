@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `put` takes the bench's check table: one whole file of at most 9 KiB at
 //! `/CHIMERA/BENCH/BEDS.CHK`, replacing an old one.
 #![cfg(feature = "card-put")]

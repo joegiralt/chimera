@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Library ids, the header peek and saving a Sound to the card (library
 //! spec § Files, § Save).
 

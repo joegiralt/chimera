@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB Audio 1.0 from the host (#885, design 2026-11-10): the stereo
 //! stream's room, the explicit feedback the device sends, and when the
 //! audio interrupt starts taking blocks. Not globbed into bank 2 (bank 2

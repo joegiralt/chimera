@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Whole scenes through the real `Instrument`, DAC pairs out (ADR 0109):
 //! the loudness table, the limiter's tests and the A/B renders.
 #![allow(dead_code)]

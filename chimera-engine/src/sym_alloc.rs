@@ -1,7 +1,10 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sympathetic slot pool's allocator (exclusive-state spec § 4.5):
 //! pure bookkeeping over `SYM_SLOTS` slots, no DSP.
 //!
-//! The owner's rule (2026-09-29): nothing is stolen for the pool. A
+//! The rule (2026-09-29): nothing is stolen for the pool. A
 //! Sympathetic note gets a slot only if one is free when it starts;
 //! otherwise it plays bare, its main string alone, and never gains one
 //! mid-note. A slot comes back when its voice gives the lease back.

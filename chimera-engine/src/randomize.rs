@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PART › RANDOMIZE (#809, ADR 0232): four amounts, as stock
 //! PreenFM3's randomizer has, and a seed. Turning any of them rolls the
 //! active Part's Sound (`kern::roll`, bank 2's): the same seed, amounts and

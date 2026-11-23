@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The parameter sweep's rig (`param_sweep_test.rs`): the real `Instrument`,
 //! `FxBus` and `DacBlocks` as the desktop drives them, every parameter the
 //! registry lists set through `Block::set` as the UI sets it, and each DAC

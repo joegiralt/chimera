@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ's block (ADR 0296): a lower role is cut where a higher role
 //! plays, slowly, never stepped; FRONT and a quiet setting are untouched.
 

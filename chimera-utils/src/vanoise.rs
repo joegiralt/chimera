@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA NOISE: Sounds and event scripts through the real `Instrument` (Part
 //! 1, sends 0), mono (L+R)/2 after the limiter, raw. `vanoise hash SOUND
 //! EVENTS` prints each MODE × script's SHA-256 (the bit-identity check
@@ -229,7 +232,7 @@ pub fn jobs() -> Vec<Job> {
         for kind in NoiseKind::ALL {
             push(snd, true, "held", kind, 0.0, true);
         }
-        // the owner's Sound sweeps through its own 2040 too
+        // the reference Sound sweeps through its own 2040 too
         if snd == 0 {
             for kind in NoiseKind::ALL {
                 push(snd, false, "held", kind, 0.0, true);

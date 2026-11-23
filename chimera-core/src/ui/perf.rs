@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 /// Performance counters fed by the platform, displayed by the renderer.
 /// All times in microseconds.
 #[derive(Clone, Copy, Debug)]

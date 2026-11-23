@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The frame's turns as the edit path takes them (ADR 0279): each
 //! encoder's ticks, plain or fine, and SEQ's hold after them. Bank 2's
 //! `ui::feel` answers them; closed, `FrameTurns::closed`.

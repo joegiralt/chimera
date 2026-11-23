@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_midi::ctl::{Dir, FreeCc};
 use chimera_midi::learn::*;
 use chimera_midi::rel::ByteEncoding::*;

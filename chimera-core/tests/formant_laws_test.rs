@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The formant grain's pure laws (spec § 3): the window, its SKIRT
 //! constants and curves, measured here from the window's definition and
 //! pinned against `formant.rs`.

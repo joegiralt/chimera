@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The console's `put` and `ls` on a FAT card in RAM, through `answer` as
 //! the shells drive them: a project file saved the unit's way, every
 //! failure leaving the pair loading as before, with no cluster lost.

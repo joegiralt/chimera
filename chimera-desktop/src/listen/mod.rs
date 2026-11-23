@@ -1,6 +1,9 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The TAPE listening rig (spec § 9, Desktop QA): a source held as the
 //! importer holds it, played offline through a model under a macro script,
-//! checked (peaks, the click rule, NaN) before the owner hears it, and laid
+//! checked (peaks, the click rule, NaN) before it is heard, and laid
 //! out on a page with a transport per render.
 
 use std::fmt::Write as _;

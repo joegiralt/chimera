@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The UI's card behind the card bus (spec § 4.3): every touch of SPI2
 //! holds the bus as `Ui`. A wait for it that runs past `take` is `Busy`:
 //! the device untouched, never a card fault, never a re-init (C1). A

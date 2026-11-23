@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI MAP's pointing (ADR 0288): EDIT on `+ NEW BINDING` or on a Sound
 //! row walks the box's own pages; a turn points at a cell, as learn's
 //! armed turn does (`learn_turns`), and EDIT binds it there: a new row on

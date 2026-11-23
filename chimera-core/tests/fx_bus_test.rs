@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The shared FX bus (instrument-core spec § Audio path, FX diet spec
 //! § Bus): each effect runs once on the sum of the parts' sends; the return
 //! is the sum of the effects' wet outputs, each × its eased MIX.

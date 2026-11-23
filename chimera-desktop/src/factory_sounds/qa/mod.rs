@@ -1,10 +1,13 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! QA before UAT (spec § 4): each factory Sound played headlessly
 //! (`render`), measured dry (its sends at 0) by pure gates (`measure`);
 //! the listening renders carry its sends through the FX bus at NEW's
 //! settings, the first of them a phrase (a listening render, never a
 //! gate). An APPROVED Sound's renders against a baseline (`baseline`), the
-//! demo projects (`demo`), then `report.txt` and the owner's
-//! `listening.html` in the ledger folder (`page`, the only I/O).
+//! demo projects (`demo`), then `report.txt` and the `listening.html`
+//! in the ledger folder (`page`, the only I/O).
 
 pub mod baseline;
 pub mod demo;

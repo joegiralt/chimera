@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The mod matrix over `ed` (ADR 0289, slice 2): a route is a cell,
 //! `<SRC>:<DEST>` (`LFO1:OP_C.CRSE`, `ENV1:FILTER.CUTOFF`, `OP5:FILTER.RESO`),
 //! or FLT › MOD's jack knobs, `FM3IN` and `QMIN`, resolved in the UI pass

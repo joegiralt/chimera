@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The operator envelope, stepped per sample in `f32`. Every four steps of
 //! effective rate doubles the speed; the scale puts AR 31 at about 12 samples.
 

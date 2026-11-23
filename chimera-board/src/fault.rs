@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `fault dma <1|2>`: provoke a transfer error on a trailing audio DMA stream
 //! as a debugger would. Test builds only (`fault-inject`).
 

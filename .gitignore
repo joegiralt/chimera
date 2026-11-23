@@ -16,3 +16,4 @@ __pycache__/
 /tools/factory-sounds/private/
 /target-wasm
 /tools/binaryen/
+/.claude/projects/

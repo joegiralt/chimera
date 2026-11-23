@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DIN OUT's identity reply (spec § 10): a Device Inquiry heard off the
 //! control ring queues one reply, which the UI's out pass writes into the
 //! out ring whole, first in line.

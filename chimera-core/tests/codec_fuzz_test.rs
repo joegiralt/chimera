@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mutated and random bytes never panic the Sound or project decoder or
 //! leave a value outside its spec. Seeded xorshift: deterministic and fast.
 

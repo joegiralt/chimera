@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `card` (bench builds): how fast the SD card reads while audio runs, for
 //! sizing TAPE's and TRON's streams. The shell times raw block reads over
 //! two test files' runs; this holds the plan, the sums and the text. KB is

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::console::Frame;
 use chimera_core::ui::theme_settings::{Palette, ThemeSettings, palette, splash_palette};
 use chimera_hal::{ChimeraDisplay, FB_SIZE, SCREEN_HEIGHT, SCREEN_WIDTH};

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Focus band tracking (UI refresh spec § Focus tracking): the last-touched
 //! slot per page, slot a by default, no timer.
 

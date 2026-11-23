@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 292B's LED driver: CV via R2 62k and the OFFSET pot via R3 62k into
 //! IC1's − input; + input at Vb = 15·R7/(R6 + R7), R6 1 MΩ (rev. 7-76),
 //! R7 10k. Feedback R4 15k from − to the LED string's top node, which has

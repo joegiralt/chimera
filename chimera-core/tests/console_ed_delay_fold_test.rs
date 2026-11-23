@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed since` says the delay's note again when its fold moves (ADR 0289,
 //! 0302): the note's text reads the fold the audio thread publishes,
 //! outside the note's own value. Its own binary: it publishes the global

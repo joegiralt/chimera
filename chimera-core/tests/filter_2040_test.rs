@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 2040, the SSM2040 four-pole, and its VOICE (spec § 3, ADR 0096; plan
 //! Task 8 and its amendment): REV2 the Prophet-5 Rev 1/2, EXP the Kobol.
 

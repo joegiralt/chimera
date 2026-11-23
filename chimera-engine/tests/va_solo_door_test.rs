@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's oscillators with WAVE on and off its anchors (ADR 0283, the saw's
 //! solo behind bank 2's door; they share `osc.rs` with DRUM's pulses).
 //! Held on an anchor, every MODE that plays the plain runs (MIX's, SYNC's

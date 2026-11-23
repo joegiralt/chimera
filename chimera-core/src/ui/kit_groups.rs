@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's voice groups on the KEYS page (ADR 0280), bank 2's: `bank2.x`
 //! links this module there and bank 1 reaches it only through the UI
 //! door's one entry (`UiDoor::groups`), so a closed door holds no CHOKE

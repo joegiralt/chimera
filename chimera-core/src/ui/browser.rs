@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sound browser overlay in Direction A (UI refresh spec § Page types):
 //! title, list rows (slot / name / engine tag) with the selected row an
 //! accent pill and empty slots dimmed, each Sound's cost, a thin scroll

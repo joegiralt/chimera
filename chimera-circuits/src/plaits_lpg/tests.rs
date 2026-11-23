@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lpg-circuit lab's Plaits rows as assertions: `docs/lpg/gate.md`
 //! (the gate checks and the "over time" trace on a 220 Hz saw ping).
 

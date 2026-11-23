@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The header's beat dot, alone in its binary (#1033): `UiState::update`
 //! reads the Parts sounding from the process (`meter::sounding_parts`),
 //! which any other test's audio block publishes, and the header's Part

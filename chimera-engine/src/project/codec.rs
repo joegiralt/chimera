@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A project as card records (projects spec § Format): `Fx` and its five
 //! blocks, a `PoolSource` per pool source in slot order (ADR 0087: its
 //! ref, never audio), then `Slot` and its Sound per filled slot, then each

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's flash-controller register values (RM0433 FLASH_KEYR2, CR2, SR2,
 //! CCR2), pure: the board writes them, this decides them. Bank erase has no
 //! public bit and no helper sets it; a sector is a `Bank2Sector`, S0-S7.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's image: header, seal, judgement and the one door (ADR 0137).
 //! Pure and `no_std`; the board reads flash through `ImageRead`.
 #![no_std]

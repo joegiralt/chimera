@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Any encoder moves a list's bar, one row per detent, and edits nothing
 //! (#561). MIDI MAP keeps B, C and D for the row's values; the browser keeps
 //! B for its tabs.

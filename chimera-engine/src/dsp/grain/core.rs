@@ -1,3 +1,7 @@
+// Copyright 2017 Emilie Gillet (Mutable Instruments Beads, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 //! The grain core (ADR 0202), after Mutable Instruments Beads' grain engine
 //! (`beads/dsp/`: `granular_player.h`, `delay_grain.h`, `grain_envelope.h`,
 //! `voice_stealing_envelope.h`, `trigger_generator.cc`, `delay_line.h`):

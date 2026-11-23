@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! How a card addresses a block: SDHC and SDXC by block, SDSC by byte.
 //! A command argument is built only here, from the card type, so a block
 //! number is never sent as a byte address or the reverse.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reference: the circuit's parts (`Circuit`), ngspice on a netlist
 //! this file writes (a transistor pair per stage; the lab's reference), and
 //! `Model`, the same node equations in our own TR-BDF2 + Newton solver,

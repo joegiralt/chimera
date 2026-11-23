@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The chip as wired (`Chip`: the OB-8's 4-pole and the data sheet's own
 //! circuit), its small-signal maps, and the two device functions every
 //! model shares: the antilog side of the cell (`antilog`) and the

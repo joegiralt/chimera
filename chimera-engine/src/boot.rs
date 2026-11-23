@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What a reset leads to: the synth, or ST's ROM DFU loader (USB console
 //! spec § Enter DFU from the firmware). Pure, no I/O: the chip shell reads
 //! and clears the marker, then acts on `after_reset`.

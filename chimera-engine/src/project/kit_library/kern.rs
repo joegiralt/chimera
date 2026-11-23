@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's side of `KitDoor` (ADR 0305; `bank2.x` links this module
 //! there): a kit's library records, its CRC and its mark.
 

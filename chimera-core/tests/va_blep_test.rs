@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA 2-point polyBLEP/polyBLAMP kernels and the Corrector (Task 2).
 
 use chimera_core::dsp::provenance::{Patent, Provenance};

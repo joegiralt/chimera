@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The kit on the Part, saved with the project (ADR 0265): the `Kit`
 //! record round-trips, a 0.3 project loads with the default kit, and an
 //! unknown or out-of-range byte loads safely. The pads' sounds (ADR 0269)

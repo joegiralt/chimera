@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter probes (`filter-probes`), linked though nothing calls them:
 //! `tools/loop_count.py` counts their loops in this ELF. Apart from the
 //! bench, whose areas have no room for their ~37 KB. Bank 2's, these

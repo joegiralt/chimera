@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A project's TAPE Part loads as TAPE (ADR 0141): kept whole, saved back
 //! whole, and while bank 2 isn't open, silent and reading NEEDS UPDATE.
 

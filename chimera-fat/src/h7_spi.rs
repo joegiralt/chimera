@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The STM32H7 SPI2 and DMA2 register sequences as data. The shell runs
 //! each `Op` as one register access (or one bounded wait); host tests
 //! check the order.

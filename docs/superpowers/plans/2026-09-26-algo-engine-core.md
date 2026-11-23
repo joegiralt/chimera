@@ -16,7 +16,7 @@
 - CLAUDE.md's rules: SAFETY comments; no allocation or blocking in audio; nothing snaps.
 - Desktop/chip parity (ADR 0013).
 - Never stage `docs/chimera-ui-ux-spec.md`. Stage files by name in every commit; never `git add -A` or `git add .`.
-- The build/test command is `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`. Written `just check` below, it always means this full command.
+- The build/test command is `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`. Written `just check` below, it always means this full command.
 - Commit messages are terse and plain, with no conventional prefixes (no `fix:`/`feat:`/`docs:`…).
 - Code comments only where genuinely needed (SAFETY, a non-obvious why, or a `ponytail:` ceiling note).
 - Run `cargo fmt --all` before each check.
@@ -4831,7 +4831,7 @@ Expected: PASS (`memory_budget_test::ui_state_fits_the_ui_reserve` unchanged: th
 
 - [ ] **Step 5: Listen on the desktop**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just desktop`, open the browser (EDIT + B1), load each factory Sound and play it. Report to the user which ones sound wrong; do not re-voice beyond Step 3's level rule without them.
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just desktop`, open the browser (EDIT + B1), load each factory Sound and play it. Report to the user which ones sound wrong; do not re-voice beyond Step 3's level rule without them.
 
 - [ ] **Step 6: Format and check**
 

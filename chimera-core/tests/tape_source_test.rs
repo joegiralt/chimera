@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's sources under the voice (TAPE Task 13, spec § 4): a Part's
 //! source reaches the audio as an id, a voice latches it at note-on, a
 //! note-on with nothing playable is refused before allocation, and the

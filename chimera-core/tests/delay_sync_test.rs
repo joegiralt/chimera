@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay's tempo sync (ADR 0302): FREE as it always played, bit for
 //! bit; under SYNC each note on its time at any tempo, folded onto the
 //! 500 ms line by halves and never off the grid; GRAIN on the same note;

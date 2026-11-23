@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA: two variable-wave oscillators, an operator, a sub and STABILITY
 //! (spec § Pages, § Params and Motion, § Combine, § Stability): the params
 //! block and `VaEngine`.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::scope::{SCOPE_LEN, ScopeWriter, scope_buffer};
 
 fn writer_and_reader() -> (ScopeWriter, chimera_core::triple::Reader<[f32; SCOPE_LEN]>) {

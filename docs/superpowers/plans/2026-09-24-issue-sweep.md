@@ -6,12 +6,12 @@
 
 **Tech Stack:** Rust `no_std` workspace (chimera-core, chimera-hal, chimera-desktop, chimera-stm32).
 
-**Spec:** none. The GitHub issues are the requirements (copies are in `/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/issues/<N>.md`).
+**Spec:** none. The GitHub issues are the requirements (copies are in `<scratchpad>/scratchpad/issues/<N>.md`).
 
 ## Global Constraints
 
 - CLAUDE.md rules: no `unsafe` without `// SAFETY:`; no heap allocation or blocking in the audio path; no libc; parameter changes are lerped, never snapped.
-- Build and test with: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`. Baseline: all pass (about 521 core+hal tests, 3 ignored; desktop 2) and the firmware links.
+- Build and test with: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`. Baseline: all pass (about 521 core+hal tests, 3 ignored; desktop 2) and the firmware links.
 - Audio goldens must stay bit-identical unless a task says otherwise. Screen goldens are re-locked only where a task changes a page on purpose; regenerate the PNGs with `just screens` in that case.
 - Never stage `docs/chimera-ui-ux-spec.md` (it holds unrelated uncommitted edits).
 - One commit per task, message `fix(...)`/`refactor(...)`/`test(...)`/`chore(...)` naming the issue, e.g. `(#15)`.

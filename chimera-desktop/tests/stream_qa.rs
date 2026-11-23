@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Slice 1 § 10.5's desktop QA, headless (`just stream-qa`): each factory
 //! Plain bed (`target/tapes-v1/`, `just factory-tapes`) played by PLAY
 //! ONE and LOOP, streamed off the sim's card through the card model
@@ -5,7 +8,7 @@
 //! The deck renders as `listen::render` renders it, through its port.
 //! Judged by click_free_test's rule: no step over 4 × the whole render's
 //! largest; under `slow`, every drop-out a fade. Prints the table; with
-//! `STREAM_QA_WAVS=<dir>`, a few renders as WAVs for the owner's ears.
+//! `STREAM_QA_WAVS=<dir>`, a few renders as WAVs for listening.
 
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
@@ -42,7 +45,7 @@ const BLOCK_US_X3: u64 = 4_000;
 /// A read fault's drop-out, cleared after this many blocks: ~33 ms, a
 /// UI pass or two.
 const RECOVER_BLOCKS: usize = 25;
-/// The beds the owner hears, LOOP at each latency.
+/// The beds to listen to, LOOP at each latency.
 const EARS: [&str; 3] = ["RAIN", "TRON BOWED", "PAD CHORD"];
 
 /// A source's row in a table of one, read through block views.

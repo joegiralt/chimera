@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay's tempo sync on the box (ADR 0302): SYNC in cell E of DLY ›
 //! CHAR and DLY › GRAIN, the TIME cell turning its note a detent a note
 //! and reading the note that plays, MIX + turn flipping SYNC with its

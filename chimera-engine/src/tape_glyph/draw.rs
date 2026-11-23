@@ -1,8 +1,11 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The glyphs' raster: `render`, a pure function of a `TapeGauge` into a
 //! `Canvas`. With `bank2` this module is bank 2's (`bank2.x`), reached
 //! only through the door (`super::paint`).
 //!
-//! The drawings and their primitives follow the owner's mockup
+//! The drawings and their primitives follow the approved mockup
 //! (`.superpowers/ledgers/tape-glyphs/`): rows, Bresenham lines, discs of
 //! `r² + r`, then the wear passes.
 
@@ -23,7 +26,7 @@ const FAINT: Ink = Ink::Faint;
 const ACC: Ink = Ink::Accent;
 const SOFT: Ink = Ink::Soft;
 
-/// WALK's other styles, the owner's mockups: kept, never shipped.
+/// WALK's other styles, from approved mockups: kept, never shipped.
 #[cfg(any(test, feature = "walk-styles"))]
 mod footsteps;
 #[cfg(any(test, feature = "walk-styles"))]

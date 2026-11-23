@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! PARTICLE: random impulses (dust) shared round-robin over six of the
 //! engine's CLEAN band-passes (`filter::Filter`, BP12, its own state each),
 //! then an all-pass diffuser. TIMBRE is the dust's density (2 to 3000

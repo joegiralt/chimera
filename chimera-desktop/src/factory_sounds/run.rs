@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `factory-sounds qa` (spec § 4): every public Sound and demo project
 //! rendered and gated into the showcase ledger; with `--private` the ports
 //! into their own ledger (`build::private_qa_ledger`), never the public one.

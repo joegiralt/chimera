@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! KEY's page (ADR 0303): MIXER › MST's cell E, MAKEUP on MST › LVL's
 //! cell C with everything of it but its place unchanged; KEY's hint on
 //! MST's status line and its name under the curve.
@@ -88,7 +91,7 @@ fn key_is_msts_fifth_cell_and_reads_its_choice() {
         ui.project().perf().fx.comp.key,
         CompKey::Part(PartId::ALL[5])
     );
-    // The cell reads the names the owner approved.
+    // The cell reads the approved names.
     let ValFmt::Names(names) = COMP_SPECS[10].fmt else {
         panic!("KEY is a choice of names");
     };

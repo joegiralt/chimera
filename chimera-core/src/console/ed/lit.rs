@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The words protocol 4's answers write, kept in bank 2 with the code
 //! that writes them (ADR 0289). A `str` literal, and a `write!`'s pieces,
 //! are anonymous rodata, which no glob can place: bank 1 would hold them.

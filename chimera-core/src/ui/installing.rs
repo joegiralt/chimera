@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's install (ADR 0137): DON'T POWER OFF over the whole screen,
 //! what it is doing under it. The UI loop is held until it ends; the
 //! audio plays on. Or, a slot holding other code, the refusal.

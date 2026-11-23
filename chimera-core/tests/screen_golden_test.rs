@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Screen goldens (UI refresh spec § Testing): one FNV-1a hash per screen.
 //!
 //! Every case must match bit-for-bit. Re-record ONLY for a change that is

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Projects on the card (projects spec § Storage, ADR 0046):
 //! `/CHIMERA/PROJECTS/P#######.A` and `.B`, saved from live state, loaded
 //! in place, listed by header. Each call is one `Card::run`; every error

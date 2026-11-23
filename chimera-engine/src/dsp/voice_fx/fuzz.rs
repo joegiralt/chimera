@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FUZZ: an EHX Big Muff Pi (NYC reissue) from its circuit (ADR 0156). P1
 //! is SUSTAIN, P2 TONE (the LP/HP blend, the mid scoop at noon), P3 VOLUME.
 //!

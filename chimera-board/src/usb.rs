@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The USB console's shell (ADR 0068): CDC-ACM on the OTG FS port (PA11/PA12).
 //! The device lives in a static cell the UI reaches through `with`.
 //! Without `midi-usb` only the UI loop polls it and `pac::Interrupt::OTG_FS`

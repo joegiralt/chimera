@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A small file whole, for bank 2's readers (ADR 0226): a trait object
 //! bank 2 builds of its own type gets an anonymous vtable no glob places,
 //! so the sink, the body and the listing's callback are these, bank 1's.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The master reverb TYPEs (reverb TYPEs spec, ADR 0085): `Reverb` runs
 //! the half-band rate change, SMEAR's source and depth, and MIX, and
 //! dispatches the block to the TYPE's engine over the one shared arena. A

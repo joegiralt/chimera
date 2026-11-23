@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Controller maps (#807, ADR 0226): named bindings kept on the card,
 //! apart from projects and Sounds, so a controller is set up once.
 //!

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's command channel (ADR 0082): the UI's one-byte command log, its
 //! outbox, and the runner's receive. Pure: the shells only publish the log
 //! and read the ack through their triple buffers.

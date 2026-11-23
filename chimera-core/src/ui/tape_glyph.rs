@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's machine glyphs in the focus band (#641, ADR 0173): the engine's
 //! raster (`chimera_engine::tape_glyph`, bank 2's with `bank2`) painted
 //! in the theme's tokens into the gauge box.

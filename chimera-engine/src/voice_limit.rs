@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's share of the voice pool (ADR 0281): MAX VOICES, a cap the
 //! Part never grows past (at it, a new note steals one of its own), and
 //! RESERVE, a floor at or below which another Part's note can't steal its

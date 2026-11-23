@@ -1,4 +1,7 @@
-//! `report.txt` and the owner's `listening.html` (spec § 4): each Sound's
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! `report.txt` and the `listening.html` (spec § 4): each Sound's
 //! and demo's gates, the page of everything that passed, and the ledger
 //! they are written to.
 
@@ -30,12 +33,12 @@ pub fn checked_ledger(p: &Path) -> Result<PathBuf, String> {
     Ok(p.to_path_buf())
 }
 
-const DEFAULT_LEDGER: &str = "~/dev/chimera/.superpowers/ledgers/showcase";
-
 /// `$CHIMERA_SHOWCASE_LEDGER`, else the showcase ledger, checked.
 pub fn ledger() -> Result<PathBuf, String> {
-    let p = std::env::var_os("CHIMERA_SHOWCASE_LEDGER")
-        .map_or_else(|| PathBuf::from(DEFAULT_LEDGER), PathBuf::from);
+    let p = std::env::var_os("CHIMERA_SHOWCASE_LEDGER").map_or_else(
+        || super::super::build::home_ledger("showcase"),
+        PathBuf::from,
+    );
     checked_ledger(&p)
 }
 
@@ -129,7 +132,7 @@ fn changed_line(round: Round) -> String {
     format!("CHANGED SINCE {round}: re-listen")
 }
 
-/// The owner's page: every Sound that passes, badged APPROVED or NEW,
+/// The listening page: every Sound that passes, badged APPROVED or NEW,
 /// then each placeholder, then each passing demo project under DEMO
 /// PROJECTS; a Sound or demo a gate failed is named in a flagged OFF THE
 /// PAGE row. Per Sound its name, description, demo mode,

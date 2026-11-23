@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::dsp::clampf;
 use crate::dsp::reverb::ReverbType;
 use embedded_graphics::draw_target::DrawTarget;

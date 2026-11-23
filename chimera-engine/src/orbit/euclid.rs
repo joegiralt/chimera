@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Euclidean fills: k hits spread as evenly as possible over n steps
 //! (Bjorklund), rotated.
 

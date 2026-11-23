@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The f64 reference: the cell from US 4,004,141 fig. 3 at device level,
 //! Newton on all 13 node voltages per sample, oversampled (`render_ref`).
 //!

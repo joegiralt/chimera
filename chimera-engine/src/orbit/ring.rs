@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A ring: one Euclidean voice and the pure function that plays it.
 
 use super::MAX_STEPS;

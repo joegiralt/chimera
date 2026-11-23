@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The boot's BKP14R marks over a series of boots (spec § 3.2, review B2,
 //! N3): a fault in the guard or the install never loops the boot.
 

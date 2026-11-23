@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bindings resolve (spec §§ 5, 6.2): takeover, relative, button, 14-bit,
 //! pressure, canonical NRPN and RPN 0, each through ADR 0139's ramp, bin
 //! and edit path, heard off the control ring as `CtrlEvent`s.

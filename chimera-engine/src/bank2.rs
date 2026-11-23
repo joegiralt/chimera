@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's side of the link (ADR 0137) and bank 1's state of its door.
 //!
 //! With `bank2`, the header placeholder and the door table land in the

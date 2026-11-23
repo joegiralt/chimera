@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS' own look (spec § Screens), so it never reads as a Part page: a
 //! breadcrumb for the header, a list with a bar, and a project footer in the
 //! map's band. Direction A's tokens (ADR 0016).

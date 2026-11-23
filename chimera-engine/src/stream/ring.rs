@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The stream rings: three slots a voice, each a chunk of packed samples
 //! behind a few guard frames copied from the chunk before, so a cursor's
 //! interpolation reads across the seam from one slot. Three slots, so a

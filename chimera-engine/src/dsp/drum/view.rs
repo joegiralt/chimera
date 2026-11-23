@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The kits as the audio reads them (ADR 0265): each Part's kit and its
 //! TONAL (ADR 0270), published by the UI, and back to the UI each Part's
 //! live hits and sounding pads; and each Part's hit seed, the audio's own. A static of atomics only: the audio never touches the UI's

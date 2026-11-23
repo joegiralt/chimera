@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mixer chain (instrument-core spec § UI): MIX + B<n> opens Part n's PART
 //! and SENDS pages and the shared FX pages, all bound through slot bindings.
 
@@ -376,7 +379,7 @@ fn fx_pages_light_their_effect_in_the_flow() {
 }
 
 /// FX diet spec § UI: DLY keeps TIME, FDBK, TONE, REV and MIX; WOW and SAT
-/// move to DLY › CHAR (an assumed default, pending the owner), on both
+/// move to DLY › CHAR (an assumed default, pending review), on both
 /// Mix chains.
 #[test]
 fn the_delay_page_is_type_time_fdbk_tone_rev_mix_with_char_and_grain_below() {
@@ -657,7 +660,7 @@ fn the_tape_page_is_drive_tone_wow_mix() {
 
 /// FX diet spec § UI, ADR 0303: MST binds THRESH, RATIO, ATK, REL, KEY,
 /// MIX; the legacy VOL and PAN sit on MST › LEVEL (an assumed default,
-/// pending the owner) with the compressor's MAKEUP; MST ends both Mix
+/// pending review) with the compressor's MAKEUP; MST ends both Mix
 /// chains.
 #[test]
 fn the_master_page_is_the_compressor_with_level_below() {

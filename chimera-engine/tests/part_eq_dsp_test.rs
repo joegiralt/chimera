@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-Part EQ's filters (ADR 0284): TILT about 810 Hz, LO CUT at
 //! 150 Hz, both one-pole, gliding, and a true bypass at flat.
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Talk to your Chimera over USB: status for bug reports, screenshots, files onto the card.
 
     python3 chimera-usb.py <cmd> [<arg>]     help, status, stats, bench, card [clean|seed=N], shot [raw], dfu, sweep, flash,

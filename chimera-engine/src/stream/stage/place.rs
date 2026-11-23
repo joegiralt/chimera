@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Where the heads go: the placement itself. With `bank2` it is bank 2's
 //! (`bank2.x` globs this module): the UI and a project load reach it
 //! through `LoadDoor`, the deck (bank 2's too) directly.

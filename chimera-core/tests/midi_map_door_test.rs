@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI MAP behind bank 2's door (spec § 8.2): closed, the page reads
 //! `NEEDS UPDATE` and its keys change nothing; open again, it lists and
 //! edits. One test: the door is a process-wide static.

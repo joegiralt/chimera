@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ in the Instrument (ADR 0296): three Parts playing at once
 //! (bass, chord, lead). OFF, or ON at AMOUNT 0, is the plain render bit for
 //! bit with no door call; ON cuts the lower roles and never FRONT.

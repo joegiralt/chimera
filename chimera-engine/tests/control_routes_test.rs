@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI CONFIG › CONTROL in the pipe (ADR 0254): AUTO's messages move to
 //! the focused Part's channel, held notes and the pedal staying with the
 //! Part that has them; a note-on on SEQUENCER also reaches the UI as a key.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Controller maps over USB (#880, ADR 0226): `put` takes a map's file to
 //! `/CHIMERA/MAPS/<stem>.A|B`, `get` reads the side a load takes, `rm`
 //! deletes the pair and `ls maps` lists them; the UI reads its layers again.

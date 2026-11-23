@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ADR 0281's "AUTO and 0 pick as before", against the allocator as it was
 //! before MAX VOICES and RESERVE: `baseline/voice_alloc_33794f79.rs` is
 //! `voice_alloc.rs` at 33794f79 (drum-groups), its imports pointed at the

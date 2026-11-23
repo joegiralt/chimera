@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! PIT's tuner (ADR 0201): the corner of the scope reads the pitch the
 //! Part's last note sounds at, `C4 +12ct` over `261.6 Hz`, worked out from
 //! the note and the Sound (`calc`), never heard off the output. Lit while

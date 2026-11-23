@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pool arena (ADR 0087): one 160 KiB block, sources packed up from 0,
 //! Sounds packed down from the top, free space the gap between them.
 //! Sounds compact at once; a freed source is a pending hole until nothing

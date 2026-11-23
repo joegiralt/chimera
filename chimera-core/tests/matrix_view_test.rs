@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mod matrix page (UI refresh spec § Page types, #161): an amount grid
 //! with every source on screen, then a one-line readout of the route.
 

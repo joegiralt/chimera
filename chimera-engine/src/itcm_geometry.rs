@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // ITCM's state region and free floor (ADR 0266, 0286), the one source:
 // `hw` includes this file, and chimera-stm32's build.rs includes it too and
 // writes `memory.x`'s ITCM region and `itcm.x`'s asserts from these values.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VCA's low-pass gate (ADR 0195): LPG, DECAY or STRIKE above 0 hand
 //! the VCA's block to Plaits' gate (`dsp::lpg`). Every loop is bank 2's
 //! (`kern`, `bank2.x` links `*5voice4gate4kern*`); `GateDoor` is the entry.

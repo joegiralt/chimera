@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The last-touched encoder slot per page (UI refresh spec § Focus
 //! tracking): the focus band shows it until another slot is touched. No
 //! timer. Pages are keyed by `BlockDef::id`, so a page shared by several

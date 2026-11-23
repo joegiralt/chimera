@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The host's USB playback reaches the main out's DAC at the host's own
 //! scale (ADR 0260): a host sample of full scale plays as the synth's full
 //! scale does, and USB IN 0 dB (the default) is unity. The firmware's path

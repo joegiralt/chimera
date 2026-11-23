@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A one-pole high-pass for DC: on the string models' output (10 Hz,
 //! ADR 0056) and on every voice after its last nonlinear stage (ADR 0060).
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A loop's heads, bounds and crossfade (spec § 2 The macros and the
 //! window, LOOP): the pure arithmetic. The loop is `[ls, le)`; over its
 //! last `lx` frames a second head reads into the next pass's start, and the

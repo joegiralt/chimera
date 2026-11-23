@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB Audio 1.0 toward the host (ADR 0248): the stream's format, how
 //! many frames each isochronous IN packet carries, their bytes, and the
 //! frame each packet is aimed at. The board's door runs these from the

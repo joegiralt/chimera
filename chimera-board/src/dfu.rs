@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Entering ST's ROM DFU loader from the firmware, so `just flash` needs no
 //! BOOT0 jumper (USB console spec § Enter DFU from the firmware). `enter`
 //! leaves a marker in RTC_BKP0R and resets; `after_reset`, the top of

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Card, time and rate units. Each is its own type, so a block number is
 //! never a byte count and a duration is never an instant; a conversion is
 //! one of these methods, never an `as` across units.

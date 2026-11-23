@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #284, #365: a composite glyph eases the params it reads that the page
 //! has no cell for, as it eases its own cells', and follows them: a CC on
 //! the delay's SAT (CHAR's cell) moves the rings on the DELAY page over a

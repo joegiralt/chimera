@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! An encoder's push (ADR 0140), frame by frame: a turn while it is held
 //! steps fine, and a push let go with no turn is a tap, which sets the
 //! cell to its default. Pure: the edges and the turn in, the gesture out.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `Fs::list` and `Fs::read` on a recording RAM partition: files
 //! `embedded-sdmmc` wrote read back, chains are checked before the sink sees
 //! a byte, odd entries are skipped, and nothing is ever written.

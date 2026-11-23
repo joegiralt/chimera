@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card interrupt's decision (slice 1 § 7.2): which voice's Wanted
 //! slot it reads next, from the file its ring names, or that it gives the
 //! bus up. The board only runs it.

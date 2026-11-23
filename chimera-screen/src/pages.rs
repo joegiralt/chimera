@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed describe`'s page numbering: the console's own walk
 //! (`console::ed_page_at`), the Part's pages of the editor's chain, then
 //! each pad's on DRUM. `tests/screen.rs` holds it to every page

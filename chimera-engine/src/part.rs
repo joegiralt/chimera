@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's mix settings (instrument-core spec § Data model): the MIDI
 //! channel it listens on, Mono/Poly, the DAC pair it plays out of, level
 //! and pan, and how its played keys follow ORBIT (SNAP, HELD).

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The showcase's factory Sounds (spec § 3, ADR 0134): committed text
 //! Sources in `tools/factory-sounds/`, parsed and checked on the host and
 //! built into card files through the firmware's own encoder. `source` is

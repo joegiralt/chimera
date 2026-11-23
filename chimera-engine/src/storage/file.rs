@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A/B files (ADR 0045): two-pass loads, streamed saves, and the pick rule
 //! that keeps a generation loadable through a cut at any block.
 

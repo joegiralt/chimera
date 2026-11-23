@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A source lost (DIN's sensing timed out, USB reset) says so: a toast
 //! naming the port, as a load waits too.
 

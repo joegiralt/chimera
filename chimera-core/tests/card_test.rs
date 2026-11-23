@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::storage::{Card, CardError, CardEvent, Outcome, after_error, after_mount};
 use chimera_hal::store::{ByteSink, Dir, FileName, Store, StoreError, Unsupported, VolumeId};
 use chimera_hal::testkit::MemStore;

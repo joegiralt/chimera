@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Every user-facing parameter, from the registry, swept on the desktop's
 //! real mix path (`Instrument`, `FxBus`, `DacBlocks`) and measured on each
 //! DAC pair apart: finite, under the ceiling, no DC, no clicks the
@@ -1384,7 +1387,7 @@ fn median(mut v: Vec<f32>) -> f32 {
     }
 }
 
-/// The owner's question: Modal against Algo at INIT.
+/// The question asked: Modal against Algo at INIT.
 fn modal_loudness(s: &mut String) {
     let pats = [
         Patch::AlgoInit,
@@ -1619,7 +1622,7 @@ fn report(sw: &Sweep) -> String {
     s
 }
 
-/// The owner's UAT (2026-09-30): BANK was harsh high up. BANK INIT's C5 at
+/// UAT (2026-09-30): BANK was harsh high up. BANK INIT's C5 at
 /// v100 on P1, 50 ms to 1 s: the energy over 8 kHz at least 50 dB under
 /// its fundamental's band (a half-octave round f0).
 #[test]

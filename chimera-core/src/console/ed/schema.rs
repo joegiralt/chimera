@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What `ed describe` describes (ADR 0289): an engine's pages, the
 //! mixer's, an engine's mod matrix, SETTINGS', MIDI MAP's grammar or
 //! ORBIT's. A `Schema` is parsed once at the boundary from its token and

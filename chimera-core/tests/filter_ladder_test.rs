@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LADDER, the Moog transistor ladder (ADR 0104): its derived Xpander
 //! modes against the linear prototype, its ring, LEVEL as drive, the LED,
 //! bounds under audio-rate modulation, TYPE changes and its codes.

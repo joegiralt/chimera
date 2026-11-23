@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_midi::rel::ByteEncoding::{self, *};
 use chimera_midi::value::U7;
 

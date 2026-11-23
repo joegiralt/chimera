@@ -1,3 +1,7 @@
+// After J. Najnudel, R. Müller, T. Hélie, D. Roze, DAFx-23 (CC BY 4.0; see THIRD_PARTY.md)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VTL5C3 vactrol (LED + CdS photoresistor) as a photoconductor:
 //! Najnudel, Müller, Hélie & Roze, "Power-balanced dynamic modeling of
 //! vactrols: application to a VTL5C3/2", DAFx-23 (CC BY 4.0). Their eq. 4

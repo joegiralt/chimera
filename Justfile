@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Justfile for Chimera
 
 # The bench's builds, an area each (all of it no longer fits FLASH), and
@@ -895,6 +898,23 @@ flash-fault:
     cargo build --release -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features --features fault-inject
     just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-fault
     python3 tools/chimera-usb.py update target/chimera-fault.bin target/chimera-fault.bk2
+
+# Copyright and licence headers (ADR 0330) on every published .rs, .py,
+# .sh, linker script and this Justfile, upstream authors' lines above ours:
+# inserts missing ones, rewrites stale ones; the name line and the licence
+# ID are constants in tools/headers.py. tools/test_headers.py fails `check`
+# on a file without one.
+headers:
+    python3 -I tools/headers.py
+
+# The public tree (ADR 0330): HEAD's files into <dir>, no history, the
+# private paths left out, home paths rewritten, then scanned for emails,
+# tokens, keys, hostnames and audio or bank data; any hit fails. Re-exports
+# only into a dir an earlier export wrote (its .oss-export marker).
+# `--drop editor/` leaves out a part published elsewhere.
+oss-export dir *flags:
+    python3 -I tools/oss_export.py export "{{dir}}" {{flags}}
+    python3 -I tools/oss_export.py refs "{{dir}}"
 
 # Copy the stock bootloader (0x08000000, 128 KB) to ~/chimera-backups with a
 # .sha256, never over an existing file. Upload only: it never writes the

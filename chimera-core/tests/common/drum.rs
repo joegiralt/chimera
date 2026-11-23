@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM rigs: a Part 1 DRUM Instrument on a kit, its budgets, and the
 //! hits its voices play.
 

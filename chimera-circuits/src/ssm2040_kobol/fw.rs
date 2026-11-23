@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! EXP-C: the 2040 EXP voicing derived from the Kobol's own circuit
 //! (`circuit`), in the firmware's 2040 structure: four TPT OTA stages, the
 //! loop solved linearly in one step, f32, 1×. Every constant is a circuit
@@ -66,7 +69,7 @@ impl Offsets {
         cell: [0.0; 4],
         ci5: 0.0,
     };
-    /// The owner's unit (`Kobol::UNIT`): CI5 at 1.5 mV (in spec: 0.4
+    /// The test unit (`Kobol::UNIT`): CI5 at 1.5 mV (in spec: 0.4
     /// typical, 5 max), the one value read off the recording, from its
     /// ring's H2 (−39 dBc).
     pub const UNIT: Offsets = Offsets {

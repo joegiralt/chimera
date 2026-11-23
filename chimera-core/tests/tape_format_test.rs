@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's source format on the card (TAPE Task 10, spec § 1 and § 8): a
 //! `ZoneSet`'s zones, its CRC and `held`, the descriptor `held` starts
 //! with, `SourceCheck` for `put`, and a Sound's `ZoneTune`. The head, the

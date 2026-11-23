@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::console::Hand;
 use chimera_hal::{
     ButtonId, ButtonState, Controls, Edges, EncoderId, Latch, Ms, NUM_BUTTONS, NUM_ENCODERS,

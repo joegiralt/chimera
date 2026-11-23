@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ALGO's block through the door (ADR 0212): bank 1's own path on a host
 //! and the host's open door (`--features bank2,test-support`) both play
 //! what ALGO played before the move, bit for bit; closed, an ALGO note is

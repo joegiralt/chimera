@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Chimera bootloader — minimal jump to firmware at 0x08020000, an
 //! alternative to the stock PreenFM3 bootloader that the unit keeps today.
 

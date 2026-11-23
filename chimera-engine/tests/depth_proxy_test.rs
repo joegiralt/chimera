@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LFO DEPTH's routes through the door (ADR 0250): open, INIT's wheel
 //! opens LFO 1 DEPTH; closed, DEPTH takes no routes and plays as stored.
 //! The host builds its own door (`open_host`); the door is a process-wide

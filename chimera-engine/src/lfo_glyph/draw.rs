@@ -1,9 +1,12 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LFO pictures' raster: `render`, a pure function of an `LfoGauge`
 //! into a `Canvas`, and `curve`, the scope's columns of a `Wave`. With
 //! `bank2` this module is bank 2's (`bank2.x`), reached only through the
 //! door (`super::paint`, `super::curve`).
 //!
-//! The drawings follow the owner's mockup (`.superpowers/ledgers/
+//! The drawings follow the approved mockup (`.superpowers/ledgers/
 //! lfo-glyphs/`, the recommended pick of each): rows, Bresenham lines,
 //! discs of `r² + r`, the curves the LFO's own arithmetic.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb TYPEs' shared parts (reverb TYPEs spec § Shared machinery,
 //! § Level plan, § Arena) and the shared test helpers' own measures.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Derived marks and the Part actions (projects spec § Derived marks,
 //! § Copy rules): a Part's `*` and `◦`, the project's `*`, and the actions
 //! an edited or stale Part offers.

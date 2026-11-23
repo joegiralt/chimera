@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bytes the UI queues for DIN OUT or USB's IN (MIDI phase 1 spec § 4.2,
 //! § 9): a 256-byte single-producer single-consumer ring. The UI pushes
 //! whole messages or nothing; the TX interrupt, USB's poll (or the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ALGO's taps as stored routes and matrix rows (filter-types spec § 6, § 7):
 //! the `TapRoutes` record, the OP5 and OP6 rows, X cells, and the jacks'
 //! tap arms.

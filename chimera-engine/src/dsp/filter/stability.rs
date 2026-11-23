@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STABILITY on the 2040 and LADDER (ADR 0168): each voice's filter is its
 //! own chip with an exponential converter that is not temperature-
 //! compensated, as a Prophet-5's (SD411's R479 a plain 1 K; tech manual

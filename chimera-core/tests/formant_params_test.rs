@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The formant operators' stored parameters (spec § 2): their specs, INIT,
 //! display, snaps and the Sound cap.
 

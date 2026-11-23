@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The shells' pure helpers: loop timing, an answer's deadlines, the bench
 //! report, the serial number.
 

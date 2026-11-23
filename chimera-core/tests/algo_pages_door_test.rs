@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ALGO PAGES behind bank 2's door (ADR 0300), under `bank2` on a host,
 //! where the table answers only while the door cell is open. The
 //! operator-first chains' tables are bank 2's: closed, FIRST at OPS lays

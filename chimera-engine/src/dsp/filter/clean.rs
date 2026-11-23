@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CLEAN: the TPT state-variable filter with `sat_c1` on both states, in
 //! the feedback loop, so it bends instead of blowing up.
 //!

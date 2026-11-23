@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tap and hold from latched button edges: a tap acts on release, a hold
 //! fires once at `HOLD_MS` while still down.
 
@@ -99,8 +102,8 @@ impl SeqKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeqTurn {
     Untouched,
-    /// A turn on a Part's, mixer's or FX page, SEQ down: the owner's
-    /// ruling, a turn during a SEQ hold cancels its tap and ORBIT.
+    /// A turn on a Part's, mixer's or FX page, SEQ down: a turn
+    /// during a SEQ hold cancels its tap and ORBIT.
     Turned,
 }
 

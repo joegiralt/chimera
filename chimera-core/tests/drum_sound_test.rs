@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A pad's sound (ADR 0269): bytes round-trip, any bytes are a sound, and
 //! a pad copied from its Sound overlays exactly what the Sound holds.
 

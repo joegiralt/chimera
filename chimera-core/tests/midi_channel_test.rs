@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI channel selection end to end: CH on the mixer's PART page, the
 //! Part's `mix.channel`, the `AudioShared` publish and the Instrument's
 //! note-on filter.

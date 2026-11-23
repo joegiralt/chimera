@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each Part's channel EQ (ADR 0284, #342): TILT, dark to bright about
 //! 810 Hz, and LO CUT, a 150 Hz high-pass, at the end of the Part's
 //! channel, after its Sound and before its level, pan and sends. The

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed` on the mod matrix (ADR 0289, protocol 4's slice 2): routes as
 //! cells, `ed route`, `ed describe MTX-<ENGINE>`, FLT › MOD's route knobs
 //! and `since`'s ROUTES section.

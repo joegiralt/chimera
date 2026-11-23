@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! AM's OSC 1 (#660, ADR 0321): its plain render with its steps listed,
 //! not corrected, for AM's product to correct (`combine::AmKinks`). Its
 //! own module, so with `bank2` it links into an S4 group with AM's render

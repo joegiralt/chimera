@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SCRUB's jog (spec § 2 Machines; CHOMPI's jog scrub, ideas only, ADR
 //! 0093): the FINGER's encoder turns POSITION at the speed the hand turns
 //! it, and once the turns stop it glides to a stop through DRAG's

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's TAPE and AGE macros (spec § 2): each voice's own transport, wow
 //! and flutter as a speed deviation in cents (ADR 0053's `Transport`), and
 //! the wear: a falling one-pole, hiss and dropouts. Precedent: a Mellotron

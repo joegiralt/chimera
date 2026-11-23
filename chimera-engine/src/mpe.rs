@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MPE zones (ADR 0252): a lower zone, master channel 1 and its members
 //! from channel 2 up, and an upper zone, master 16 and its members down
 //! from 15. A zone's member channels play the Parts on its master channel,

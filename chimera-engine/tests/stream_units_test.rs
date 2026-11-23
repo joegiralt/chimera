@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_engine::stream::bench::Ratio;
 use chimera_engine::stream::units::*;
 use chimera_engine::voice_alloc::VoiceIdx;

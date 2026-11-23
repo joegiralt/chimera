@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Worst-case stack depth from a firmware disassembly (ADR 0025).
 
     { llvm-objdump -d --mcpu=cortex-m7 -C <elf>; llvm-objdump -s -j .rodata -j .data -j .bank2 <elf>; } \

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sources on the card (ADR 0087, ADR 0093): write-once `/CHIMERA/TAPES`
 //! files, sealed once verified, against power cuts and device errors at
 //! every block; and how a project load reads them (Review Focus 4).

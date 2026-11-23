@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Semantic parameter addresses (spec §2): an address names *what* a
 //! parameter is, not where it sits on a page or in a chain, so rearranging
 //! cells or reordering blocks never remaps a mod route.

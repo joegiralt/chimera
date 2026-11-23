@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's machine glyphs (#641, ADR 0173): one 64 × 48 picture a machine,
 //! still on MODEL (its identity), live on every other machine
 //! cell (drawn from the Part's set values).
@@ -229,7 +232,7 @@ impl Steps {
     }
 }
 
-/// How WALK is drawn. STRAIGHT ships (the owner's pick, ADR 0209); the
+/// How WALK is drawn. STRAIGHT ships (ADR 0209); the
 /// rest are the mockups it was picked from, kept for tests and
 /// `walk-styles` builds, never linked into firmware.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

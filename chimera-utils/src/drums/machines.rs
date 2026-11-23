@@ -1,7 +1,10 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The DRUM machines of the design note's table (2026-11-10), each a law
 //! over six knobs (0..1) on one of six kernels: body, fm, membrane, metal,
 //! burst, plain. Knob sets from the Machinedrum manual's descriptions only;
-//! no firmware, ROM or tables. Host-only prototypes for the owner's ear.
+//! no firmware, ROM or tables. Host-only prototypes, for listening.
 
 use super::parts::*;
 use super::vox;
@@ -596,7 +599,7 @@ pub fn build(id: Id, k: Knobs, vel: f32, seed: u32) -> Box<dyn Machine> {
     }
 }
 
-/// The prototypes as the owner first heard them (2cacaeae), for the
+/// The prototypes as first heard (2cacaeae), for the
 /// fixes' before/after: FM's pitch a block's, BODY on MODAL's bank.
 pub fn build_before(id: Id, k: Knobs, vel: f32, seed: u32) -> Box<dyn Machine> {
     match id {
@@ -1522,7 +1525,7 @@ impl Machine for Fm {
 const MODES: usize = 8;
 
 /// MODAL's STRUCTURE law (Rings' stiffness, `modal::rings`) as mode
-/// ratios, so BODY keeps the tuning the owner approved.
+/// ratios, so BODY keeps the tuning approved by ear.
 fn stretched(structure: f32) -> [f32; MODES] {
     let mut stiff = if structure < 0.24 {
         -0.0625 * (1.0 - structure / 0.24)

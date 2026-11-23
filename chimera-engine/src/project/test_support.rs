@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Project fixtures for tests: a project that fills every record kind, a
 //! comparison that says what differs, stores that fail on cue, and the
 //! card suite every `Store` passes.

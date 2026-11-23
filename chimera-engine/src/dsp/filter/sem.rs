@@ -1,3 +1,7 @@
+// After L. Köper, M. Holters, F. Esqueda, J. D. Parker, DAFx20in22 (CC BY 4.0; see THIRD_PARTY.md)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SEM: the Oberheim SEM-1A VCF as built (ADR 0192), ported from the
 //! circuit lab's firmware model (`chimera-utils/src/sem_circuit/fw.rs`,
 //! branch `sem-circuit-lab`, #720). Every constant below is the lab's,

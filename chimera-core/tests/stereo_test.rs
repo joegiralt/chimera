@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Sound's stereo (ADR 0294): OUT PAN places each note of ALGO, MODAL,
 //! VA and TAPE, set or routed, ramped across each block; WIDTH scales the
 //! Part's side, eased. Centre and unity are the mix as it was, bit for bit

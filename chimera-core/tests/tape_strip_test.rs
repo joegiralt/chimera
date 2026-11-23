@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's strip (TAPE Task 16, spec § 3): the source's overview, min/max
 //! a column, and the heads the audio stores once a block. The drawing is
 //! locked by the screen goldens (`tape_strip_*`).

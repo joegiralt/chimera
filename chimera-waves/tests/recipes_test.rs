@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_waves::{
     MAX_HARMONIC, MIPS, RECIPES, Recipe, Shape, WAVE_COUNT, WAVE_LEN, Waves, emit_rust,
     mip_harmonics, render, render_all, spectrum,

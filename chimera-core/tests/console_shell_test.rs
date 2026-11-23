@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::console::{
     self, ANSWER_MS, AnswerClock, LoopTimer, Report, RxHead, RxPark, STALL_MS, STORM_LIMIT, Served,
     Storm, StormKinds, StormWindow, park, serial_hex,

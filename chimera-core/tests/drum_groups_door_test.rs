@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's voice groups behind bank 2's door (`UiDoor::groups`, ADR 0280),
 //! under `bank2` on a host, where the table answers only while the door
 //! cell is open. Closed, no count is shown and a CHOKE edit onto a 9th

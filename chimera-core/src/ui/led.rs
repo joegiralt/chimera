@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The front-panel LED pulses ORBIT's beat: short on a beat, long on the
 //! bar's downbeat. Pure; the shell copies `on()` to the pin (#307).
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_midi::ctl::{DataValue, FreeCc};
 use chimera_midi::out::{Cc14Msb, Running, Writer, din_us};
 use chimera_midi::value::{Channel, U7, U14};

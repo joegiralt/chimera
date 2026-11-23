@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Loading a library Sound (library spec § Load): the re-peek, the scratch
 //! read, the budget and `Project::adopt`, which commits the source, the
 //! slot and the Part in one step or changes nothing.

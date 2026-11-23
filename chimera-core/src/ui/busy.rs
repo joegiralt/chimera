@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card overlay: a centred box over whatever the screen shows. BUSY
 //! is drawn and flushed before a card operation blocks the UI loop (boot);
 //! a toast is drawn after one, over the frames its time lasts (leaving

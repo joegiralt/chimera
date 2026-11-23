@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pool on the arena against a card that fails (ADR 0087, Review Focus
 //! 1): a load's second pass cut short leaves NEW's arena, not half of one;
 //! a 128-slot project save cut or refused at every block write keeps a

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed` on SETTINGS (ADR 0289, protocol 4's slice 3): `ed describe
 //! SETTINGS` from the tree's leaves with their crumbs, THEME, MIDI CONFIG
 //! and RANDOMIZE addressed, `since`'s SETTINGS section, and the project

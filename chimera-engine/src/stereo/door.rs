@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The stereo's table (ADR 0294): `kern`'s two blocks link into an S4
 //! group, reached through `StereoDoor` at its own address a stride after
 //! the meters' (`STEREO_DOOR_ADDR`). Without `bank2` it is bank 1's,

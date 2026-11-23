@@ -1,3 +1,7 @@
+// After L. Köper, M. Holters, F. Esqueda, J. D. Parker, DAFx20in22 (CC BY 4.0; see THIRD_PARTY.md)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Oberheim SEM-1A VCF (#720): a 12 dB OTA state-variable with a
 //! diode-damped resonance and a LP–notch–HP MODE pot. `docs/sem1a/` holds
 //! the labs' research, notes and validation tables.

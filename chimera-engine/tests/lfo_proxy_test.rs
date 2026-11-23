@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LFO page's raster through the door (ADR 0177): open (or with no
 //! door, a build without `bank2`) the glyph and the scope's curve are
 //! `draw`'s own; closed, nothing is drawn and the page keeps its ground.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Dirty region tracking for partial display updates.
 //!
 //! Each PageLayout defines screen regions with data snapshots.

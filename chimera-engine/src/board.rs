@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The PreenFM3 main board, from its strap (ADR 0140): pure, no register
 //! access. The shell reads PD0..PD3 at boot and wires the HC165 (the
 //! encoders and buttons) where `BoardId::hc165` says.

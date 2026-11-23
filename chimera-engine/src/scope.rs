@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Oscilloscope buffer: `ScopeWriter` accumulates audio-thread blocks into a
 //! back buffer twice the display width, finds a rising zero-crossing trigger
 //! point once it fills, and publishes the triggered window through a

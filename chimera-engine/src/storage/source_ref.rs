@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A source's ref (ADR 0087): what a project and a Sound store of a TAPE
 //! source, never its audio, and a Sound's tuning of a zone set. A storage
 //! type: `project` names it too.

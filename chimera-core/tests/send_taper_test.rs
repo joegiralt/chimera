@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A send's taper (ADR 0278, #1004): 0 off, the top today's unity, the low
 //! steps fading in from far below hearing instead of jumping to −42 dB.
 

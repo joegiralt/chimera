@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's EQ and SMART EQ are billed (ADR 0296): on the Part's first
 //! voice, as its knobs, so admission accounts for them. Flat and off,
 //! every bill is as before.

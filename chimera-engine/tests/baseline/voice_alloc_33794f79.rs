@@ -1,10 +1,13 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Digitone-style voice allocation (instrument-core spec § Voice
 //! allocation): pure bookkeeping over the `MAX_VOICES` pool, no DSP.
 //!
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
 //! 2. A Poly part re-striking a key it sounds, held or ringing, takes that
-//!    voice back if the budget allows: a re-plucked string (the owner's
+//!    voice back if the budget allows: a re-plucked string (found at
 //!    UAT, 2026-09-30); if not, the rules below.
 //!    Else a free voice, round-robin; with none free, a dying
 //!    one, nearest the end of its fade (its note starts when the fade ends).

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MST > LVL: the master VOL and PAN, the last gain on the DAC pairs. They
 //! sit after the limiter (ADR 0109): the limiter sees the same signal at
 //! any VOL, so its knee, its GR meter and the loudness reference do not

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! KIT's band (ADR 0265): the twelve pads, each its machine's icon (an
 //! instrument mark and its family's letter, `docs/mockups/drum-glyphs.html`)
 //! and its choke group; the selected pad framed, a sounding one lit.

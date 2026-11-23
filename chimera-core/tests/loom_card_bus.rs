@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A loom model of the card bus's wakeups (spec § 4.3): the audio wants
 //! and pends, the UI takes and gives, the card IRQ takes only through
 //! `take_or_want`. However they interleave, no want is left with the bus

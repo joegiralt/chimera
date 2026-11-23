@@ -1,5 +1,8 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Karplus-Strong string, the project owner's own code from their
-//! Carcosa firmware for the Ambika, relicensed here under MIT (ADR 0032).
+//! Carcosa firmware for the Ambika, brought in by its author (ADR 0032).
 
 use crate::dsp::clampf;
 use core::cell::Cell;
@@ -13,7 +16,7 @@ use super::loop_parts::{Allpass1, LoopGain, MIN_LINE, split};
 use crate::dsp::xorshift_noise;
 use crate::hw::SAMPLE_RATE;
 
-// ── Karplus-Strong delay line (from the owner's Carcosa firmware) ───
+// ── Karplus-Strong delay line (from an earlier Carcosa firmware) ───
 
 /// String ring length (ADR 0040, 0056): G1 (MIDI 31, 979.6 samples at
 /// 48 kHz) needs a 979-sample line and two more for the low-pass, so G1

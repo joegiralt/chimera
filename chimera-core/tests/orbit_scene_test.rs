@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's chord ring: key, segments over the loop, harmony per segment.
 
 use chimera_core::orbit::chords::{Bars, ChordRing, ScaleKind, Segs, harmony, segment_at};

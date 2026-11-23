@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Old Sounds in the slot (spec § Loading old Sounds): DRV's block 9 loads
 //! as SOFT PRE and the folder's block 11 as FOLD POST. A Sound that ran
 //! both keeps DRV; it needn't sound the same (no legacy compat).

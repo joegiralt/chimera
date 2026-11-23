@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! dosfstools, a second implementation: `mkfs.fat` images must parse and
 //! read as it laid them out, and `fsck.fat -n` must pass every image our
 //! layer wrote. Ignored by a plain `cargo test`; `just test-fat-tools` (in
@@ -524,7 +527,7 @@ fn sweep_matches_fsck() {
     assert!(seen.contains_key("stale, a live chain"), "{seen:?}");
 }
 
-/// `sweep_matches_fsck` on the owner's cluster size, 32 KB (spc 64), FAT32:
+/// `sweep_matches_fsck` on a large cluster size, 32 KB (spc 64), FAT32:
 /// a 2 GiB image, so a seed of each fault rather than the full run.
 #[test]
 #[ignore = "needs dosfstools: just test-fat-tools"]

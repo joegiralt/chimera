@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card interrupt's decisions (slice 1 § 7.2), pure so the board only
 //! runs them: the earliest Wanted slot it can read, claimed, with its
 //! file's registry row held for the read (#597), else the bus goes back;

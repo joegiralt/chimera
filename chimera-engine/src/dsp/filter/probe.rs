@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Static-cost probes (spec § Cost): each runs one block of one path,
 //! `#[inline(never)]`, so `tools/loop_count.py` finds its loops by name in the
 //! `filter-probes` ELF, whose `FILTER_PROBES` keeps them linked.

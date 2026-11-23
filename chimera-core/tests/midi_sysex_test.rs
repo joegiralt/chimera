@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SysEx controllers (#846, ADR 0241): learn diffs two messages of an old
 //! box's control to find its value, the cell maps to it, and later
 //! messages move the param; another address leaves it be. Through the

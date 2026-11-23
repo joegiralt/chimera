@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_image::crc::Crc32;
 use chimera_image::slot::{Evidence, SlotPlan, SlotRead, Word, guard, own_words};
 use chimera_image::*;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The desktop's card model (slice 1 § 10.5): Wanted slots served from
 //! `DirStore` files through the one `CardSide`, after a latency drawn
 //! from M1's reads.

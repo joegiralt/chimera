@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's mix settings (instrument-core spec § Data model).
 
 use chimera_core::MidiChannel;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A staged bank 2 installed at boot (spec § 7.3). NEW built while the
 //! door was closed decodes empty maps and takes its template so: open
 //! later, the boot's NEW reads Modified. So the board builds the UI, and

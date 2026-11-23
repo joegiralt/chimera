@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! An APPROVED Sound's renders against a baseline's (`--baseline`): the
 //! residual, and the engine changes it bisects to (`CAUSES`).
 

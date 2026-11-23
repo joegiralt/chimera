@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM slice 2 (ADR 0269): each pad's FILTER and AMP reach its hits,
 //! latched at the hit. The pad's FILTER is laid over the voice's played
 //! Sound; its AMP envelope ends the hit, ONE-SHOT past note-off, GATED

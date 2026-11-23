@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The bus's idle skips (#793) change no bit: a project played, let ring
 //! out until every effect is idle, then woken, renders the same DAC pairs
 //! with the skips as with `NEVER_SKIP`, through the whole engine. Run with

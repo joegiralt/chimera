@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! RANDOMIZE's roll behind bank 2's door (`UiDoor::roll`, ADR 0232), under
 //! `bank2` on a host, where the table answers only while the door cell is
 //! open. Closed, a turn rolls nothing and the cells read NEEDS UPDATE; open

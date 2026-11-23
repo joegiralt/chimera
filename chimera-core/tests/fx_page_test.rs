@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FLT's pages (#614, ADR 0155, front reordered by ADR 0167): KIND · FX ·
 //! Q or RES · MODE or VOICE · FX PLACE · FREQ or CUTOFF up front, the routes and jacks on
 //! FLT › MOD, and FLT › FX's INPUT, the type's pots and MIX.

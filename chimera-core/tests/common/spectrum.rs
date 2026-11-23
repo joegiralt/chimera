@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spectral measures for oscillator tests (VA plan, "Decided here"): the
 //! alias gate, the pitch method, the fundamental and the click reference.
 //! All in f64.

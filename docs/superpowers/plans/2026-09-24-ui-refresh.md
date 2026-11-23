@@ -25,7 +25,7 @@
 - "Redraw regions: keep the dirty-region system; add a `Focus` region; the scope strip region goes away … Changes only redraw their region (SPI bandwidth)."
 - "Focus tracking: `UiState` tracks the last-touched slot per page key; default slot 0. The Mixer PART and matrix pages use the same mechanism."
 - Bugs found go to GitHub issues; decisions go to ADRs (this plan only appends the font/flash addendum to ADR 0016).
-- Every commit passes `just check` (in this environment: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`). Baseline: core+hal 438 passed, 0 failed, 2 ignored; desktop 2 passed; firmware links.
+- Every commit passes `just check` (in this environment: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`). Baseline: core+hal 438 passed, 0 failed, 2 ignored; desktop 2 passed; firmware links.
 - Commit messages: conventional, ending with a blank line and `Co-Authored-By: <model> <noreply@anthropic.com>`.
 
 ## Review Focus

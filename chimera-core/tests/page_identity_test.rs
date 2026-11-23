@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A page is kept by its `BlockDef.id`, not its position (ADR P).
 
 use chimera_core::dsp::reverb::ReverbType;

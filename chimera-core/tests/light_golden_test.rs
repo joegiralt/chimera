@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Light-mode screen goldens (ADR 0126): a handful of the dark goldens'
 //! cases, drawn by the unchanged renderer and pushed through INVERT's
 //! palette (TEAL, BLACK -2) as the display shell does. Dark goldens live in

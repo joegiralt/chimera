@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The playable instrument (instrument-core spec § Audio path, § Threading):
 //! what the audio thread reads from the UI, and the voice pool that renders
 //! every Part into the three DAC pairs.
@@ -2610,7 +2613,7 @@ impl Instrument {
     /// notes restart on it, each fading first and waiting as another
     /// Part's steal does, so each restart's clear goes through the budget.
     /// Newest first, they are promised the free slots, so the last four
-    /// played ring and the rest play bare (the owner's rule, 2026-09-29,
+    /// played ring and the rest play bare (rule of 2026-09-29,
     /// spec § 4.5). Nothing is evicted.
     fn restart_switched(&mut self, shared: &AudioShared) {
         for (q, part) in PartId::ALL.into_iter().zip(&shared.parts) {

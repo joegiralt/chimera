@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The RSF Kobol Expander's filter (branch `exp-circuit-lab`): an SSM 2040
 //! in the data sheet's standard connection (10 K chain, 220 Ω legs, 1 nF,
 //! R24 100 K in), its resonance through a CA3080 (CI5) fed from OUT 4 by
@@ -10,7 +13,7 @@
 //! - `fw`: EXP-C (`Exp2`), the firmware's 2040 structure rebuilt term by
 //!   term from the circuit (f32, 1×), its `Offsets` and its degree-7
 //!   `tanh_q`.
-//! - `takes`: the measures, fits and stimuli the lab read the owner's
+//! - `takes`: the measures, fits and stimuli the lab read a
 //!   recorded Kobol with (the takes stay out of the repo: `KOBOL_DIR`).
 //!
 //! What shipped instead: the firmware's EXP voice (ADR 0105) kept its own

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VTL5C3's rates: Najnudel's ν± (identified on a VTL5C3/2) refit as
 //! scales to the VTL5C3 sheet's 40 mA turn-off curve. From the
 //! lpg-circuit lab (`fit_vtl5c3`, the `lpg-circuit-fit` command).

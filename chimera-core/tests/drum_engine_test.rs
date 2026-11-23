@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's engine slot (plan Task 4): a voice slot holds a hit's kernel,
 //! `EngineType::Drum` has its disk code, a DRUM Sound starts on INIT's
 //! shared blocks.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! NEW: the project every load fails back to, and its CRC. Only this
 //! module makes a `TemplateCrc`, so one always names a NEW as built.
 
@@ -137,7 +140,7 @@ impl Project {
 }
 
 /// The factory slots NEW's Parts 1–5 load, for the init scene's rings
-/// (the owner's pick at UAT): TX BASS, TX EPIANO, MORPH PAD, TX BELL and
+/// (chosen by ear at UAT): TX BASS, TX EPIANO, MORPH PAD, TX BELL and
 /// SAW LEAD. Part 6 stays INIT Algo.
 pub const NEW_PARTS: [SlotId; 5] = {
     let s = SlotId::ALL;
@@ -180,7 +183,7 @@ mod tests {
         assert_eq!(a.0, b.0);
     }
 
-    /// The owner's UAT pick: the init scene's Sounds, loaded clean, and NEW
+    /// The UAT pick: the init scene's Sounds, loaded clean, and NEW
     /// still reads as NEW.
     #[test]
     fn new_parts_hold_the_factory_sounds_clean() {

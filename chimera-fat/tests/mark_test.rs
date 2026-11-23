@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sweep mark (ADR 0094): a change that writes turns a clean mark
 //! dirty before its first write and clean after its last; a cut, torn or
 //! failed change anywhere in between leaves it owing a sweep; the boot

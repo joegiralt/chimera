@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's pad cells (ADR 0265): `BlockRef::Pad` edits the Part's selected
 //! pad, and a knob cell takes its label, short and readout from that pad's
 //! machine, empty where the machine has no such knob. The pad's sound's

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SPI-mode SD protocol, pure: command frames, CRC7/CRC16, the data-token
 //! scan and the CMD18 multi-block walk. The shell only moves bytes: it
 //! clocks what the walk asks for and hands them back.

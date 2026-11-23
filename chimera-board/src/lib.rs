@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The unit off the audio path (ADR 0108): its drivers, the boot and the UI
 //! loop, in a small-code profile. `chimera-stm32`, the binary, keeps the
 //! audio interrupt in the fast one and hands this crate its two audio steps
@@ -349,8 +352,8 @@ pub fn boot(mut cp: cortex_m::Peripherals, dp: pac::Peripherals, checked: dfu::C
     }
 }
 
-/// The boot sweep's mode: a dry run until `sweep-free`, which the owner's
-/// go enables.
+/// The boot sweep's mode: frees with `sweep-free` (the default), else a
+/// dry run.
 #[cfg(not(feature = "sd-probe"))]
 #[cfg(not(feature = "sweep-free"))]
 const SWEEP: chimera_hal::store::Sweep = chimera_hal::store::Sweep::DryRun;

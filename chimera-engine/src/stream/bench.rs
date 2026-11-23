@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The bench's streams (slice 0's gate): up to 8 virtual heads, each over
 //! its own bed on the card, every chunk checked against the bed's table,
 //! stream 0 played aloud on the master output.

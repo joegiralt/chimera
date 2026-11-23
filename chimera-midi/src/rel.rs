@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Relative encoder bytes: one CC value as a signed detent count.
 
 use crate::value::U7;

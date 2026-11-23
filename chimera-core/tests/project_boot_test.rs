@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Boot loads SYSTEM's last project (projects spec § Boot); the UI's save
 //! and load record it there (§ SYSTEM) and show their notes.
 
@@ -839,7 +842,7 @@ fn boot_shows_the_loaded_part() {
     }
 }
 
-/// A card whose SYSTEM holds the owner's theme (BRIGHT 40), and no last
+/// A card whose SYSTEM holds a saved theme (BRIGHT 40), and no last
 /// project.
 fn owner_card() -> (MemStore, SystemSettings) {
     let mut s = MemStore::new(1);
@@ -857,7 +860,7 @@ fn system_on(s: &mut impl Store) -> SystemSettings {
     SystemSync::boot(&mut Card::new(), s).1
 }
 
-/// Booted with no card, then the owner's card goes in: a save keeps its
+/// Booted with no card, then a card goes in: a save keeps its
 /// theme, adds the last project, and the UI takes the theme.
 #[test]
 fn a_save_after_a_late_card_keeps_its_theme() {

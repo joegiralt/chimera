@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Rebuilds build in place (ADR 0051): engine and model switches,
 //! Sympathetic included, run on a thread whose whole stack is one
 //! `SympatheticSet`, so a set or an engine built by value on the stack

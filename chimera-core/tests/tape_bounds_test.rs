@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Review Focus 3: whatever the params, source and `held`, no model reads
 //! outside the row (`SourceView::strict` panics on a tap past it) and every
 //! head stays within a clamp's step of it. And whatever changes mid-note,

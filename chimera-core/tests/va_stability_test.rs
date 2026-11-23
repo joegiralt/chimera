@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA STABILITY: drift, trim, HF tracking, scale error, jitter, seeds
 //! (spec § Stability, § Testing). Bounds are the plan's; the simulated
 //! values are in brackets beside each.

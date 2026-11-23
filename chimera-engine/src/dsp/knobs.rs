@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's knobs (ADR 0112, after 0107 and 0111): every Sound parameter
 //! whose spec declares `Smoothing::Knobs` glides here, once a block, toward
 //! its stored value before the Part's voices read it: a one-pole of the

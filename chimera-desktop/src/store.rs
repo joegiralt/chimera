@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The desktop simulator's card: a host directory behind `Store`.
 
 use chimera_hal::card_bus::{CardBus, CardFault};

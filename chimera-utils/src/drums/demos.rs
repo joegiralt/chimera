@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The added scope's demos (design note, "Added scope", 2026-11-10):
 //! ACCENT routing, RETRIG, kit macros and pad-to-pad modulation, rendered
 //! on the host prototypes for listening. Each is a law over the machines'

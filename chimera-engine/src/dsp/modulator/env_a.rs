@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Envelope A (spec § Envelope A): an AHDSR with the Cascadia's HOLD
 //! POSITION and SPEED ranges and one fixed RC shape: each stage approaches
 //! a target past its end, as a capacitor charging toward a rail.

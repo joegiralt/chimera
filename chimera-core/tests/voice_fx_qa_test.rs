@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice FX slot's desktop QA (issue #614, Task 14): the types are level
 //! matched at their normal points, and every pot sweeps without a click.
 

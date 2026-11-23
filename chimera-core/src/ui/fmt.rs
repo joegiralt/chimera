@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 pub use chimera_engine::fmt_buf::FmtBuf;
 
 use crate::ui::page::ValFmt;

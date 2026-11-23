@@ -2,6 +2,7 @@
 name = "chimera-desktop"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 chimera-core = { path = "../chimera-core", features = ["source-writer", "host-project"] }

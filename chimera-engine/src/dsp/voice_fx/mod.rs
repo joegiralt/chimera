@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice's one FX slot, PRE or POST the filter (ADR 0155): its type,
 //! place and pots (`params`), and `VoiceFx`, which runs them.
 

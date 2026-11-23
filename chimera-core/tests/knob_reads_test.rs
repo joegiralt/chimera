@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The audio takes only the moves a publish's delta carries (ADR 0115,
 //! 0116), and reads no knob: a knob turn is one move of that Part; an FX,
 //! mix or ORBIT edit, none; a Part that starts playing, none; a new Sound,

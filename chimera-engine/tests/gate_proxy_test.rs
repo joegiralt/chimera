@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VCA's gate through the door (ADR 0195): open, a gated Sound crosses
 //! to bank 2's kernel and is heard as the gate; closed, it plays bit for
 //! bit what the plain VCA plays. The host builds its own door

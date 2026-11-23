@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Fixed render harness shared by the refactor lock (`golden_test.rs`) and the
 //! sanity gate (`sanity_test.rs`).
 //! Spec: docs/superpowers/specs/2026-09-23-engine-refactor-design.md § Testing.

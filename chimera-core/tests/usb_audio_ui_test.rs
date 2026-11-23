@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › AUDIO ROUTING › USB AUDIO (ADR 0260): USB IN, the step the
 //! host's playback joins the main out at, 0 dB until turned.
 #![cfg(feature = "usb-audio")]

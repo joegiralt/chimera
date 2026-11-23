@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-voice modulators' pure parts (filter-routing spec § 1): the
 //! slider laws, Envelope A and Envelope B. `Envelope` and `Lfo` wrap them.
 

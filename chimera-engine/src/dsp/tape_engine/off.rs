@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE without the `tape` feature (ADR 0132): a silent engine with the
 //! real one's surface, for the bench builds without bank 2. A project's
 //! TAPE Part loads as TAPE (ADR 0141) and plays nothing here: a note on it

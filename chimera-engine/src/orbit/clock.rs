@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's clock types: the internal clock, and a MIDI clock to follow.
 
 use super::euclid::Steps;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TUNING picks a Scala file by name, MAPPING lays it on the keys (#907,
 //! ADR 0259). `TUNINGS` is global: every test here holds `LOCK`.
 

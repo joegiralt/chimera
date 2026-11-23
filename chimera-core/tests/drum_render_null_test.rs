@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Every DRUM machine renders as it did before the cost work (origin/0.4
 //! `262039d9`), bit for bit: its defaults, every knob at 0 and at 127 and
 //! each INIT pad's knobs, at three transposes and two seeds, up to 10 s a

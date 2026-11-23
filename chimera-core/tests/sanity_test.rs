@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Sanity gate (spec § Testing), run before goldens are recorded.
 //! Per engine init sound: finite, within ±1.0 (× a Modal model's output
 //! gain, ADR 0058), not silent, silent after

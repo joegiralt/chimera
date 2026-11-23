@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::MidiChannel;
 use chimera_core::hw::{BLOCK_SIZE, MAX_PARTS};
 use chimera_core::orbit::chords::{Bars, Segs, harmony};
@@ -593,7 +596,7 @@ fn scene_replays_identically() {
 fn init_scene_is_the_design_choice() {
     let s = Scene::init();
     assert_eq!(s.seed, 0x0B17_0001);
-    // The owner's pick at UAT (V4, sparse groove): ring 5 muted, to
+    // The pick at UAT (V4, sparse groove): ring 5 muted, to
     // bring in; rings 3 and 4 both the pad's, on Part 3.
     let muted: Vec<bool> = s.rings.iter().map(|r| r.ring.mute).collect();
     assert_eq!(muted, [false, false, false, false, true]);

@@ -1,7 +1,10 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Kobol lab's numbers, kept: EXP-C's small-signal behaviour, ring and
 //! drive (fast); EXP-C against the firmware's EXP (dev-dependency); EXP-C
 //! against the transistor-level circuit (needs ngspice); and the lab's
-//! readings of the owner's takes (needs `KOBOL_DIR`). Every threshold
+//! readings of the recorded takes (needs `KOBOL_DIR`). Every threshold
 //! names the ledger number behind it (`docs/ssm2040_kobol/`).
 
 use super::circuit::{self, Kobol, V_FULL};

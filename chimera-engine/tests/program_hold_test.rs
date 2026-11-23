@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #515 (owner decision 7): a program change holds its channel's notes in
 //! the audio's drain till the UI has applied it, or 40 ms, so a sequencer's
 //! downbeat plays the new Sound. One test at a time (`ONE`): `PROGRAM_IN`

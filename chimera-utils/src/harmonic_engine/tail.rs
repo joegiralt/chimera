@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! BRIGHT TAIL: the spectrum continued above the last exact partial to
 //! ~20 kHz by VA's band-limited saw (`VarOsc`, called), high-passed by
 //! CLEAN's HP4 and tilted by CLEAN's LP1 (the engine's filter, called).

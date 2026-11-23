@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's musical core: pure functions over plain data. Clock, MIDI and
 //! UI live in the shell. A step costs a mask lookup, and on a hit a draw,
 //! a walk and a snap; a Bjorklund pass runs only when a fill is re-laid.

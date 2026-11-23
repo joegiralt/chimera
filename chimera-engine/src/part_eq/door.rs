@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Parts' EQ behind bank 2's door (ADR 0284): `dsp::run` links into an
 //! S4 group (`bank2.x`, `*7part_eq3dsp*`), reached through `EqDoor` at its
 //! own address after VA's solos' table (`PART_EQ_DOOR_ADDR`): the door's

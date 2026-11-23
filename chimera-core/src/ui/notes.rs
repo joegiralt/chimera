@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The band's words for 0.4's tester cells: the matrix's VCA column says
 //! its routes are the amp, AMP's BASE says why it is dimmed (ADR 0292),
 //! REV › DUCK's cells what they do (ADR 0295), AMP › STEREO's (ADR 0294). Bank 2's (`bank2.x`'s `ui::notes` group): the matrix's words

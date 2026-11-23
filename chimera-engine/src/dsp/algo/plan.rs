@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The union of two algorithms' links, each weighted at MORPH 0 and 1, in
 //! an order where every link runs forward when it can (spec § Plan and morph).
 

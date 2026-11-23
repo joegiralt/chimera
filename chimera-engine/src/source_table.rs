@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The audio's view of the pool's sources (ADR 0087): a row per source,
 //! the gate the UI closes while it moves source bytes, and the mask of
 //! sources the audio's voices hold. Atomics only: the UI writes rows and

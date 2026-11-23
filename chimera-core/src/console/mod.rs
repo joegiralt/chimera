@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The USB console's command table and line parser: bytes in, requests out.
 
 use core::fmt;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Which of the VOWEL macro's formants an operator follows. The codes are
 //! frozen (ADR 0045), and the vowel table, FC's law and the slots
 //! (spec §§ 4-5).

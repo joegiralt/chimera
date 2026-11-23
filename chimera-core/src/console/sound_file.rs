@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `rm` and `get`: a library Sound's pair over the console (library spec
 //! § Audio and card rules), or a controller map's (ADR 0226); `rm` also a
 //! tuning file (ADR 0240, 0259). Only `/CHIMERA/SOUNDS/S#######`,

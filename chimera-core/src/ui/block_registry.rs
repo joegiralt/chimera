@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::addr::{BlockRef, Op};
 use crate::block::ParamId;
 use crate::dsp::algo::params::{AlgoOpParams, AlgoParams};
@@ -635,7 +638,7 @@ pub static MASTER: BlockDef = BlockDef {
 };
 
 /// MST › LEVEL: the legacy VOL and PAN, off the compressor's page (FX diet
-/// spec § UI; an assumed default, pending the owner's word); the
+/// spec § UI; an assumed default, pending sign-off); the
 /// compressor's MAKEUP, a level, moved here for KEY (ADR 0303); and SMART EQ
 /// and AMOUNT (ADR 0296), the master's own mix settings, and the reverb
 /// return's role in it (cell F, `LevelCell::WashRole`); its band every
@@ -719,8 +722,8 @@ pub static ALGO_D1L: BlockDef = env_group(51, "Decay 1 Lvl", "D1L", AlgoOpParams
 pub static ALGO_D2R: BlockDef = env_group(52, "Decay 2 Rate", "D2R", AlgoOpParams::D2R);
 pub static ALGO_RR: BlockDef = env_group(53, "Release Rate", "RR", AlgoOpParams::RR);
 pub static ALGO_RATE_SCALE: BlockDef = group(54, "Rate Scale", "RS", AlgoOpParams::RATE_SCALE);
-/// What FBK's group page shows in its band: the live scope (the owner's
-/// call, 2026-11-20, ADR 0298), where feedback is seen bending the wave.
+/// What FBK's group page shows in its band: the live scope (ADR 0298,
+/// 2026-11-20), where feedback is seen bending the wave.
 /// `VizType::AlgoDiagram` would show the chart and its loops here instead:
 /// the one line to flip.
 pub const FBK_BAND: VizType = VizType::None;

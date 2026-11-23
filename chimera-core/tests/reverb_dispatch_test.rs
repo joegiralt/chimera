@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb's dispatcher (reverb TYPEs plan, Task 4): QUAD through
 //! `Reverb` is bit for bit what `RingReverb` was. The goldens were recorded
 //! from `RingReverb` (695a6ef3), before the arena moved out of the ring.

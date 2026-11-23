@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Probe, not a gate: STRETCH's listening takes through the whole
 //! instrument (P1, the bus, the limiter, `(L + R) / 2`), raw levels, WAVs
 //! to `$PROBE_OUT` and a report beside them: CLASSIC, GRAIN and GRAIN on

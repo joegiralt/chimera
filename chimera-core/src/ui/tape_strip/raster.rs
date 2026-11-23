@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The strip's raster (ADR 0175): bank 2's with `bank2` (`bank2.x`'s
 //! `tape_strip6raster` glob), reached through the UI's table; the
 //! wrappers in `tape_strip` are bank 1's.

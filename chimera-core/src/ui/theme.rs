@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Direction A (ADR 0016): the single source of colours, fonts and layout.
 //! Dark ground, warm greys, one accent for the active element.
 

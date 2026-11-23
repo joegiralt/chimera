@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The TAPE factory set (spec § 7, TAPE Task 19): its CRCs pinned, a Sound
 //! on every source, six Parts in the arena beside NEW, and every factory
 //! TAPE Sound at the factory median (ADR 0063).

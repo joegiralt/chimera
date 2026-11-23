@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The `Block` record: block code `u8`, then (`ParamId` `u8`, value 4 B LE)*.
 //! A value is an `f32` in spec units, or an enum's frozen code as a `u32`.
 

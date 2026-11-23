@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI in, split at the source (MIDI map spec § 1): notes, bend, the
 //! pedal, channel mode and real-time go to the note queue; every other
 //! controller to the control ring, which the UI drains. A turning knob never

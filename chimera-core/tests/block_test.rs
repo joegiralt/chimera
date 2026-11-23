@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `Block` trait semantics (spec §1) and per-block conformance.
 
 use chimera_core::block::{

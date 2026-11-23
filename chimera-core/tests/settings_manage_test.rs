@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PROJECT › MANAGE PROJECTS against `MemStore` (settings spec
 //! § MANAGE PROJECTS): each command, behind its prompt.
 

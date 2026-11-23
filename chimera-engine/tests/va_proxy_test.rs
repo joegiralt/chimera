@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA FM's OSC 1, LOOPFM's render and SOFT SYNC's OSC 2 through the door
 //! (ADR 0163): with no door (a build without `bank2`) or open, they play
 //! every bit they played in bank 1; closed, such a voice is silent and the

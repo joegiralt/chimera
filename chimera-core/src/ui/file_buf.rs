@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A small file read whole into a fixed buffer (a tuning, ADR 0240). Bank
 //! 1's: `Store::read` takes a `&mut dyn ReadSink`, and the vtable a bank-2
 //! caller builds is anonymous rodata that lands in bank 1, so the methods

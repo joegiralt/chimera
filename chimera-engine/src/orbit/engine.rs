@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `block`: one audio block's worth of ORBIT, as a pure function of the
 //! state, the scene and the window it is handed.
 

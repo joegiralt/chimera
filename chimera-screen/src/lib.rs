@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The browser editor's glyphs: one Part's `UiState`, headless, drawn by
 //! the firmware's own `Renderer` into a 240x320 RGB565 buffer. Built for
 //! wasm32 (`just editor-screen`); the `extern "C"` ABI is in `abi`, and

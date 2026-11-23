@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The onset detector (`onset`): bank 2's with `bank2` (`bank2.x` globs
 //! this module), reached through `UiDoor::onset`.
 

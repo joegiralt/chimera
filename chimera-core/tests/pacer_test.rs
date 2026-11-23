@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `update` runs at UI_FPS however fast the loop spins: the delay rings
 //! raced on an idle unit, whose loop runs far faster than 20 Hz.
 

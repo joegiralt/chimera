@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each Part's controller layer (ADR 0226): read from the card when it
 //! goes stale (a pick, a load, an engine change, a save), the card's maps
 //! listed for MIDI MAP's pick, and the save and the row delete run as card

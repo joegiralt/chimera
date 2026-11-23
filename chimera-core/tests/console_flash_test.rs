@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::console::{
     BankRegs, FlashPeek, FlashRegs, area, protected_sectors, rdp_level, write_flash_peek,
     write_flash_regs,

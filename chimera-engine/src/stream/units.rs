@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Stream units: audio frames, the audio block clock, source rates and
 //! read steps, and the small indices a stream's slots and rings use.
 

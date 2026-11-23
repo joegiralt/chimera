@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The chorus slot's TYPEs side by side (#794): OFF, I, II, I+II, FLANGER
 //! and PHASER on a chord stab, a held sine and a pluck phrase, through the
 //! real `Instrument` (the Part's CHORUS send at 1, the dry beside the

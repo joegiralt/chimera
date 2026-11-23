@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A factory Sound's text Source (spec § 3, ADR 0134): `[[sound]]` tables
 //! read by `listen::lined_tables`, keyed by the frozen idents of
 //! `disk_codes_v1.txt`. Pure: text in, `Source`, `Sound` and card bytes
@@ -31,7 +34,7 @@ pub const REFERENCE_LUFS: f32 = -11.0;
 pub const LOUDNESS_LU: f32 = 2.0;
 
 /// The showcase's id block (ADR 0133); TAPE's is below it.
-/// Ids the owner retired (S9100028-30 formant placeholders, S9100060 ACID FM): never reassigned.
+/// Ids retired (S9100028-30 formant placeholders, S9100060 ACID FM): never reassigned.
 const RETIRED_IDS: [core::ops::RangeInclusive<u32>; 2] =
     [9_100_028..=9_100_030, 9_100_060..=9_100_060];
 pub const SHOWCASE_IDS: core::ops::RangeInclusive<u32> = 9_100_001..=9_199_999;
@@ -69,7 +72,7 @@ impl Script {
     }
 }
 
-/// The phrase a Sound is auditioned over on the owner's page (`qa`'s
+/// The phrase a Sound is auditioned over on the listening page (`qa`'s
 /// phrase tables): a listening render, never a gate. Every VA Sound names
 /// one (`phrase = "bass" | "lead" | "pad" | "arp" | "wonky" | "acid" | "sweep"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,7 +226,7 @@ pub struct ByEar {
     pub why: String,
 }
 
-/// The owner's listening round: `round 2`.
+/// The listening round: `round 2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Round(pub u8);
 
@@ -243,7 +246,7 @@ pub enum Status {
     Approved { round: Round, crc: u32 },
 }
 
-/// Where a Source stands with the owner, as the listening page badges it.
+/// Where a Source stands in listening review, as the page badges it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Badge {
     Approved,
@@ -294,7 +297,7 @@ pub fn crc(s: &Source) -> Result<u32, String> {
     Ok(sound_crc(&to_sound(s)?))
 }
 
-/// What `approved` binds: what the owner heard. CRC-32 over the Sound's
+/// What `approved` binds: what was heard. CRC-32 over the Sound's
 /// `sound_crc` (4 bytes, little-endian), then the render-shaping fields
 /// as text, `demo=poly\nhome=48\nplays=long texture\nphrase=pad\n`
 /// (`phrase=-` without one). Changing any of them demotes the Sound.
@@ -730,7 +733,7 @@ pub fn check(all: &[Source]) -> Result<(), String> {
                 s.at(s.id_line)
             ));
         }
-        // The owner auditions every VA Sound over a phrase (`qa`).
+        // Every VA Sound is auditioned over a phrase (`qa`).
         if s.engine == EngineType::Va && !s.is_placeholder() && s.phrase.is_none() {
             return Err(format!(
                 "{}: a VA Sound needs a phrase (phrase = \"bass\", \"lead\", \"pad\", \"arp\", \"wonky\" or \"sweep\")",
@@ -823,7 +826,7 @@ fn edits(v: &str) -> Option<Vec<(Edit, String)>> {
 
 /// The ports' walls (spec § 3, § 6): each has `from` and `edits`, an id in
 /// `PORT_IDS`, and is neither a placeholder nor approved (ports are
-/// private: the owner's rounds are for the public set).
+/// private: the listening rounds are for the public set).
 pub fn ports(all: &[Source]) -> Result<(), String> {
     for s in all {
         let at = |m: &str| Err(format!("{}: {m}", s.at(s.id_line)));

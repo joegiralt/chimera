@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Envelope B's block fill (#793), bit for bit as main gave it (bc20ae7c):
 //! ENV and BURST in every FORM over SHAPE (TILT) from 0 to 1, fast and slow
 //! slides, the key held then let go; and the per-sample `tick` beside it.

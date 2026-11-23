@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PROJECT › POOL: the pool's breakdown, read-only (sound-pool
 //! spec § The meter, and the UI). The meter, then what fills it.
 

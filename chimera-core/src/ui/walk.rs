@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WALK's UI work (ADR 0203), bank 2's: `bank2.x` links this module there
 //! and bank 1 reaches it only through the UI door (`UiDoor`, ADR 0175),
 //! so a closed door writes no machine defaults, dims no TAPE cell with a

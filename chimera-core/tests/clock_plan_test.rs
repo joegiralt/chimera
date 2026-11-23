@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::clock_plan::{
     Pll3Config, PllRange, SYSTICK_MAX_RELOAD, SiliconRev, VcoRange, cycles_for_ns, cycles_for_us,
     fs_of, pll3_for, systick_reload, vco_hz,

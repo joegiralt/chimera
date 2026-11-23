@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LEVEL (Filter 12): its law, and DRIVE's (Filter 2, retired) translation
 //! and re-address on load (spec § LEVEL, ADR 0096).
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The DRUM slice-1 fixture, rendered (`golden_test`'s `DRUM_GOLDENS`).
 //! Hit seeds are global and move from render to render: a binary renders
 //! it once for a golden to hold.

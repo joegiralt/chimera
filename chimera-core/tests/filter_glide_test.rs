@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A knob glide's block steps the filter's coefficients four times, each
 //! sub-block on the steady loop (ADR 0117), where a route's block ramps
 //! them per sample. The two must agree to a few percent (0.05 of a 0.8 saw), and a glide's cutoff step

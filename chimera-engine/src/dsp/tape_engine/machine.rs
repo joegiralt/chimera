@@ -1,7 +1,10 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The machines' label table (spec § 2 Machines, ADR 0093, ADR 0178):
 //! each machine labels the shared params its own way, shows only what it
 //! reads and has its own defaults, so a player is nudged toward what it
-//! does (Elektron Digitakt II, as the owner cites it; Octatrack manual OS
+//! does (Elektron Digitakt II, the precedent cited; Octatrack manual OS
 //! 1.25, § Machines). DECK holds MODEL and every knob that moves the
 //! machine's glyph; the model page TAPE, AGE and WOW in the same cells on
 //! every machine, then whatever else it reads.

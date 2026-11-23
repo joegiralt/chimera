@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The prompt's answers and the yes they carry (ADR 0066, 0149): an EDIT
 //! press on a prompt's confirming pill is the only `Said`, the guard's witness
 //! (`project::guard`). The UI draws the prompts

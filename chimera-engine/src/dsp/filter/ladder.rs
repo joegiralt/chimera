@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LADDER: the Moog transistor ladder (ADR 0104). Four TPT one-poles, each
 //! driven by the difference of its input's and its own output's saturator,
 //! `ẏ = ω(tanh x − tanh y)` (Zavalishin § 6.9), and the loop fed back from

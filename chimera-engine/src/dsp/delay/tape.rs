@@ -1,3 +1,8 @@
+// Copyright (C) 1993 Sun Microsystems, Inc.; Copyright (c) 2005-2020 Rich Felker, et al.;
+// Copyright (c) 2018 Jorge Aparicio (tanhf, expm1f via musl and libm; notices below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT AND SunPro
+
 //! TAPE's sample loop and the TYPE's dispatch, bank 2's (ADR 0213):
 //! `TapeDelay::run` calls `run` through the door.
 
@@ -222,6 +227,29 @@ pub(super) fn span<const FADE: bool, const RAMP: bool, const GLIDE: bool>(
 // ====================================================
 //
 // Conversion to float by Ian Lance Taylor, Cygnus Support, ian@cygnus.com.
+//
+// libm: Copyright (c) 2018 Jorge Aparicio. musl: Copyright © 2005-2020
+// Rich Felker, et al. Both under the MIT licence (libm also under
+// Apache-2.0; MIT is taken here):
+//
+// Permission is hereby granted, free of charge, to any person obtaining
+// a copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to
+// permit persons to whom the Software is furnished to do so, subject to
+// the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+// IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+// CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+// TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+// SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 /// `libm::tanhf`, the same operations in the same order, inlined into the
 /// loop: bit for bit libm's at every input (`tanh_is_libms`), without the

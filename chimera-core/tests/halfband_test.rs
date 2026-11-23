@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The half-band FIR (FX diet spec § Rate). Test tones are whole periods of
 //! every window so an RMS or a single DFT bin is exact.
 

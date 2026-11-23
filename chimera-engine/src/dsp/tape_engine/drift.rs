@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WALK's DRIFT (ADR 0203): at each note-on POSITION steps by a random
 //! amount of up to DRIFT windows either way, from where the last note's
 //! step left it, so repeats wander through the source (Octatrack's random

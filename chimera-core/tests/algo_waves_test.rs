@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Waves: the generated tables are band-limited per mip, fit their
 //! flash budget, and `WaveId` names them.
 

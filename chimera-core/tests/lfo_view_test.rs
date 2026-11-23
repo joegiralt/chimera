@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LFO page's playhead from the audio (ADR 0177): the watched Part's
 //! newest voice's phase, a word a slot, nothing unwatched. Its own binary:
 //! it plays notes through the global `LFO_VIEW` and sounding meter.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What an operator is: one of the wave tables, a formant or a noise band.
 //! WAVE's stored code is the kind's code (ADR 0045).
 

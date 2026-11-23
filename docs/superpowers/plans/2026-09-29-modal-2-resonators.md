@@ -8,7 +8,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-29-modal-2-resonators-design.md` (owner-approved, binding). Read it with this plan; § numbers below are the spec's.
 
-**Where it runs:** worktree `$SP/wt-m2`, branch `modal2-resonators`, based on `exclusive-state` (PR #213), where `SP=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad`. Every command runs from the worktree root.
+**Where it runs:** worktree `$SP/wt-m2`, branch `modal2-resonators`, based on `exclusive-state` (PR #213), where `SP=<scratchpad>/scratchpad`. Every command runs from the worktree root.
 
 ## Global Constraints
 

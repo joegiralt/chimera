@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Music theory as const data: pitch classes, intervals, scales, chords,
 //! snapping and names; Scala tunings (`tuning`). No heap; `libm` alone.
 #![no_std]

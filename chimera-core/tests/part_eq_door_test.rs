@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The per-Part EQ through bank 2's door (ADR 0284): open, the EQ plays;
 //! closed, every Part plays flat.
 #![cfg(feature = "bank2")]

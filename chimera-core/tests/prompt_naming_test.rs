@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The prompt panel and NAMING (settings spec § Screens): any encoder picks, EDIT
 //! confirms and MENU and SEQ cancel; B*n* drops either and acts.
 

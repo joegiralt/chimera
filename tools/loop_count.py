@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Static loop counts for the filter probes (spec § Cost, ADR 0056).
 
     python3 tools/loop_count.py <elf> <symbol-substring>

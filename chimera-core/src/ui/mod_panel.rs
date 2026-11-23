@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A modulator slot's page, per TYPE, MODE and FORM (spec § 1 "Page",
 //! § UI), as `const` data.
 

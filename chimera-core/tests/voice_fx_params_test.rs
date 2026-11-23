@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice FX block (ADR 0155): its frozen codes, PLACE's follow rule,
 //! its defaults and its `Block` round trip.
 
