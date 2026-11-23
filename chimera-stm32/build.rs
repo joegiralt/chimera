@@ -379,7 +379,9 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // helper in bank 1 calls into `ed`; they follow VA's solos' table.
     // `ui::ed_cue` (ADR 0285) goes with them: `ed set`'s cue on the box.
     // VA's solos (ADR 0283): `va::osc::solo`, the saw's runs on its
-    // anchor, the next S4 group. Its table heads the S4 groups
+    // anchor, the next S4 group; AM's corrected render and its OSC 1's
+    // listing instance (#660, ADR 0321: `VaEngine::render_am_kinks`,
+    // `va::osc::am`) after them, reached through the solos' table. Its table heads the S4 groups
     // (`VA_SOLO_DOOR_ADDR`): the door's own is full, and a slot in S0
     // would take S0-S3 under ADR 0251's 8 KB.
     // The Parts' EQ (ADR 0284): `part_eq::dsp`, its block, the next S4
@@ -398,7 +400,7 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // The tables' addresses and stride are `s4_tables.rs`'s, as Rust's.
     let (ed, ed_slot, ed_assert) = (
         &format!(
-            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    . = __bank2_part_peaks_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_stereo_door = .;\n    KEEP(*(.bank2.door.stereo));\n    . = __bank2_stereo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_comp_key_door = .;\n    KEEP(*(.bank2.door.comp_key));\n    . = __bank2_comp_key_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_kit_door = .;\n    KEEP(*(.bank2.door.kit));\n    . = __bank2_kit_door + 0x{KIT_DOOR_ROOM:X};\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n    *(.text.*6stereo4kern* .rodata.*6stereo4kern*);\n    *(.text.*8comp_key4kern* .rodata.*8comp_key4kern*);\n"
+            "    __bank2_va_solo_door = .;\n    KEEP(*(.bank2.door.va_solo));\n    . = __bank2_va_solo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_eq_door = .;\n    KEEP(*(.bank2.door.part_eq));\n    . = __bank2_part_eq_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_part_peaks_door = .;\n    KEEP(*(.bank2.door.part_peaks));\n    . = __bank2_part_peaks_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_stereo_door = .;\n    KEEP(*(.bank2.door.stereo));\n    . = __bank2_stereo_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_comp_key_door = .;\n    KEEP(*(.bank2.door.comp_key));\n    . = __bank2_comp_key_door + 0x{DOOR_TABLE_STRIDE:X};\n    __bank2_kit_door = .;\n    KEEP(*(.bank2.door.kit));\n    . = __bank2_kit_door + 0x{KIT_DOOR_ROOM:X};\n    *(.text.*12chimera_core7console2ed* .rodata.*12chimera_core7console2ed* .text.*12chimera_core2ui6ed_cue* .rodata.*12chimera_core2ui6ed_cue* .bank2_ed .bank2_ed.*);\n    *(.text.*2va3osc4solo* .rodata.*2va3osc4solo*);\n    *(.text.*8VaEngine15render_am_kinks* .rodata.*8VaEngine15render_am_kinks* .text.*2va3osc2am* .rodata.*2va3osc2am*);\n    *(.text.*7part_eq3dsp* .rodata.*7part_eq3dsp*);\n    *(.text.*10part_peaks4kern* .rodata.*10part_peaks4kern*);\n    *(.text.*6stereo4kern* .rodata.*6stereo4kern*);\n    *(.text.*8comp_key4kern* .rodata.*8comp_key4kern*);\n"
         ),
         "    . = __bank2_door + 0x400; __bank2_ed_door = .;\n    KEEP(*(.bank2.door.ed));\n",
         &format!(

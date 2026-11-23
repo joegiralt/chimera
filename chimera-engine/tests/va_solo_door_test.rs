@@ -123,7 +123,10 @@ fn plays_solos() {
         Mix, Sync, Ring, Xor, Bits, Fm, Am, Max, LoopFm, SoftSync, Phase,
     ] {
         let (saw, pair) = match mode {
-            Mix | Ring | Xor | Bits | Am | Max => ([Some(Alone); 2], [Some(Pair); 2]),
+            Mix | Ring | Xor | Bits | Max => ([Some(Alone); 2], [Some(Pair); 2]),
+            // AM's oscillators list their steps for its product (#660):
+            // pairs on every anchor
+            Am => ([Some(Pair); 2], [Some(Pair); 2]),
             Sync => ([Some(Alone), Some(Pair)], [Some(Pair); 2]),
             Fm | LoopFm | SoftSync | Phase => ([None; 2], [None; 2]),
         };
@@ -192,6 +195,16 @@ const OTHERS: [VaMode; 9] = [
 /// The first `n` of `OTHERS` on C3: held on each anchor, then `moving`.
 /// With bank 2's door closed only the first five play (the rest are its).
 fn other_prints(n: usize) -> Vec<u64> {
+    let v = other_prints_in(n);
+    if std::env::var_os("VA_SOLO_PRINT").is_some() {
+        for h in &v {
+            println!("    0x{h:016x},");
+        }
+    }
+    v
+}
+
+fn other_prints_in(n: usize) -> Vec<u64> {
     let blend = |p: VaParams| VaParams { amount: 1.0, ..p };
     let mut v = Vec::new();
     for &mode in &OTHERS[..n] {
@@ -205,8 +218,20 @@ fn other_prints(n: usize) -> Vec<u64> {
     v
 }
 
+/// AM's five rows of `OTHER` with bank 2's door closed: bank 1's
+/// uncorrected product, as at origin/0.4 `807e740d` (#660).
+#[cfg(all(feature = "bank2", feature = "test-support"))]
+const AM_CLOSED: [u64; 5] = [
+    0x8152a1739d7c09a5,
+    0x1a344d7a77fd13d5,
+    0xae9c956fc726637a,
+    0xbc77d3e7d72c6f9d,
+    0xb24d2c95850f4b46,
+];
+
 /// `other_prints` at origin/0.4 `807e740d` (VA's oscillators as at
-/// `262039d9`): five a MODE, the four anchors then `moving`.
+/// `262039d9`): five a MODE, the four anchors then `moving`. AM's five
+/// (15..20) re-taken for its corrected product (#660, ADR 0321).
 const OTHER: [u64; 45] = [
     0x44b546c94c265857,
     0x4c7711c123beaf92,
@@ -223,11 +248,11 @@ const OTHER: [u64; 45] = [
     0x6b288df36883fe17,
     0xa4b041a6f267ead9,
     0x1893a7b880b527e1,
-    0x8152a1739d7c09a5,
-    0x1a344d7a77fd13d5,
-    0xae9c956fc726637a,
-    0xbc77d3e7d72c6f9d,
-    0xb24d2c95850f4b46,
+    0x32d121963631df52,
+    0xc3b8a1e83cb31a90,
+    0x2b5b3ff0e111cd70,
+    0x7dbfee176a5f00b6,
+    0xf0a3317ade52f15f,
     0xa4141ee928f4c96c,
     0x152b7a359be93a4e,
     0x180e450ff9a25aac,
@@ -308,7 +333,10 @@ fn the_door_plays_solos_open_pairs_closed_as_before() {
     assert_eq!(held_prints(), HELD, "closed, held");
     let closed: Vec<u64> = moving_scenes().iter().map(|s| print(s)).collect();
     assert_eq!(closed, MOVING, "closed, moving");
-    assert_eq!(other_prints(5), OTHER[..25], "closed, the plain MODEs");
+    // closed, AM plays bank 1's uncorrected product (#660)
+    let mut plain = OTHER[..25].to_vec();
+    plain[15..20].copy_from_slice(&AM_CLOSED);
+    assert_eq!(other_prints(5), plain, "closed, the plain MODEs");
     DOOR_CELL.open_host();
     plays_solos();
     assert_eq!(held_prints(), HELD, "open, held");
