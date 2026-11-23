@@ -58,6 +58,34 @@ const GUN_X: i32 = 3;
 /// Pulses on the beam at once, fired twice a turn of the clock.
 const PULSES: usize = 4;
 
+/// MIX as the pictures draw it: off below 0.01, else the braid's level
+/// (`mix × 3`, 0 to 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mix {
+    Off,
+    Level(usize),
+}
+
+impl Mix {
+    fn of(mix: f32) -> Self {
+        if mix < 0.01 {
+            Mix::Off
+        } else {
+            Mix::Level(((mix * 3.0) as usize).min(2))
+        }
+    }
+}
+
+/// Rows a front bar or a pulse is drawn on, every `n`th: solid at MIX's
+/// top level, sparser below it; a focused part at MIX 0 every fourth,
+/// its faint mark.
+const fn rows_every(m: Mix) -> usize {
+    match m {
+        Mix::Off => 4,
+        Mix::Level(l) => 3 - l,
+    }
+}
+
 /// The clock's phase at the braid's `frame`, radians, unwrapped: RATE
 /// sets its speed as it does the braid's twist (0.05 to 0.5 a frame).
 fn clock(b: &Braid) -> f64 {
@@ -111,13 +139,19 @@ impl Gun {
     }
 }
 
-/// Pulse `i`'s left along the beam, 0..its length: four evenly spaced,
-/// fired twice a turn of the clock.
+/// The beam's length at DEPTH `k`, px, unrounded: the pulses are placed
+/// by it from the box's right, so they never jump as the gun's rounded
+/// shape grows.
+fn beam_len(k: f32) -> f32 {
+    (W - 1 - GUN_X - 4) as f32 - (17.0 + 5.0 * k)
+}
+
+/// Pulse `i`'s left, px from the box's left: four evenly spaced along
+/// the beam, fired twice a turn of the clock.
 fn pulse(b: &Braid, i: usize) -> f32 {
-    let len = Gun::at(b.depth).beam.2 as f32;
     let turns = wrap(clock(b) * 0.5, TAU) / core::f32::consts::TAU;
     let u = 2.0 * turns + i as f32 / PULSES as f32;
-    (u - libm::floorf(u)) * len
+    (W - 1) as f32 - (1.0 - (u - libm::floorf(u))) * beam_len(b.depth)
 }
 
 /// Where the motion is now and the span it repeats over, px: the front
@@ -127,10 +161,7 @@ pub fn travel(b: &Braid) -> (f32, f32) {
     match picture(b.mode) {
         Picture::Braid => (0.0, 1.0),
         Picture::Moire => (slide(b), pitch(b)),
-        Picture::RayGun => {
-            let len = Gun::at(b.depth).beam.2 as f32;
-            (pulse(b, 0), len / PULSES as f32)
-        }
+        Picture::RayGun => (pulse(b, 0), beam_len(b.depth) / PULSES as f32),
     }
 }
 
@@ -147,14 +178,15 @@ fn rect(on: &mut dyn Paint, (x, y, w, h): (i32, i32, i32, i32), c: Rgb565) {
 }
 
 /// `b`'s picture when it isn't the braid; false for the braid's modes.
-/// MIX's level is the braid's (`mix × 3`, 0 to 2). The focused param is
-/// marked in INK, as the braid marks it: MODE a dot under the left.
+/// The focused param is marked in INK, as the braid marks it: MODE a dot
+/// under the left; at MIX 0 a focused part MIX turns off still shows,
+/// faintly.
 pub fn draw(on: &mut dyn Paint, b: &Braid) -> bool {
-    let level = ((b.mix * 3.0) as usize).min(2);
+    let mix = Mix::of(b.mix);
     match picture(b.mode) {
         Picture::Braid => return false,
-        Picture::Moire => moire(on, b, level),
-        Picture::RayGun => ray_gun(on, b, level),
+        Picture::Moire => moire(on, b, mix),
+        Picture::RayGun => ray_gun(on, b, mix),
     }
     if b.focus == Some(BraidPart::Mode) {
         dot(on, X0 + MODE_DOT.0, Y0 + MODE_DOT.1, theme::INK);
@@ -162,13 +194,17 @@ pub fn draw(on: &mut dyn Paint, b: &Braid) -> bool {
     true
 }
 
+/// The front comb's most bars: its least pitch across the box, and one
+/// each side. A bound, so a bad pitch never runs the loop away.
+const FRONT_BARS: i32 = 22;
+
 /// The back comb in MID (INK with MIX in focus: the comb the front is
 /// weighed against, as the braid's dry line); the front comb's bars in
-/// ACCENT, INK2 where they cover a back bar, solid at MIX's top level and
-/// every second or third row below it, none at MIX 0. RATE in focus lights
-/// the front comb, DEPTH the bands where the bars line up (the rest of
-/// the front FAINT).
-fn moire(on: &mut dyn Paint, b: &Braid, level: usize) {
+/// ACCENT, INK2 where they cover a back bar, on `rows_every` MIX's rows,
+/// none at MIX 0. RATE in focus lights the front comb, DEPTH the bands
+/// where the bars line up (the rest of the front FAINT); at MIX 0 just
+/// those, faintly.
+fn moire(on: &mut dyn Paint, b: &Braid, mix: Mix) {
     let back = if b.focus == Some(BraidPart::Mix) {
         theme::INK
     } else {
@@ -178,14 +214,14 @@ fn moire(on: &mut dyn Paint, b: &Braid, level: usize) {
     for x in (0..W).step_by(BACK_PITCH as usize) {
         rect(on, (x, t, BAR_W.min(W - x), bot - t), back);
     }
-    if b.mix < 0.01 {
+    let marked = matches!(b.focus, Some(BraidPart::Rate | BraidPart::Depth));
+    if mix == Mix::Off && !marked {
         return;
     }
-    let step = 3 - level as i32;
+    let every = rows_every(mix);
     let (p, first) = (pitch(b), slide(b));
     let (t, bot) = FRONT_ROWS;
-    let mut n = -1;
-    loop {
+    for n in -1..FRONT_BARS {
         let left = libm::roundf(first + n as f32 * p) as i32;
         if left >= W {
             break;
@@ -194,27 +230,28 @@ fn moire(on: &mut dyn Paint, b: &Braid, level: usize) {
             let lined_up = cx % BACK_PITCH < BAR_W;
             let c = match (b.focus, lined_up) {
                 (Some(BraidPart::Rate), _) | (Some(BraidPart::Depth), true) => theme::INK,
+                (Some(BraidPart::Depth), false) if mix == Mix::Off => continue,
                 (Some(BraidPart::Depth), false) => theme::FAINT,
                 (_, true) => theme::INK2,
                 (_, false) => theme::ACCENT,
             };
-            if step == 1 {
+            if every == 1 {
                 rect(on, (cx, t, 1, bot - t), c);
             } else {
-                for y in (t..bot).step_by(step as usize) {
+                for y in (t..bot).step_by(every) {
                     rect(on, (cx, y, 1, 1), c);
                 }
             }
         }
-        n += 1;
     }
 }
 
 /// The gun in ACCENT (its guard MID, a panel slot cut in it), at DEPTH's
 /// shape; the beam's band FAINT or MID by MIX and its pulses MID, ACCENT
-/// or INK2, none at MIX 0. RATE in focus lights the pulses, DEPTH the
-/// gun's outline, MIX the beam's band (drawn at MIX 0 too).
-fn ray_gun(on: &mut dyn Paint, b: &Braid, level: usize) {
+/// or INK2, none at MIX 0. RATE in focus lights the pulses (at MIX 0 on
+/// every fourth row, faintly), DEPTH the gun's outline, MIX the beam's
+/// band (drawn at MIX 0 too).
+fn ray_gun(on: &mut dyn Paint, b: &Braid, mix: Mix) {
     let g = Gun::at(b.depth);
     for part in [g.body, g.grip, g.nozzle] {
         rect(on, part, theme::ACCENT);
@@ -234,29 +271,34 @@ fn ray_gun(on: &mut dyn Paint, b: &Braid, level: usize) {
             }
         }
     }
-    let lit = b.mix >= 0.01;
-    let band = match b.focus {
-        Some(BraidPart::Mix) => Some(theme::INK),
-        _ if lit => Some([theme::FAINT, theme::FAINT, theme::MID][level]),
-        _ => None,
+    let band = match (b.focus, mix) {
+        (Some(BraidPart::Mix), _) => Some(theme::INK),
+        (_, Mix::Level(l)) => Some([theme::FAINT, theme::FAINT, theme::MID][l]),
+        (_, Mix::Off) => None,
     };
     if let Some(c) = band {
         rect(on, g.beam, c);
     }
-    if !lit {
-        return;
-    }
-    let pc = match b.focus {
-        Some(BraidPart::Rate) => theme::INK,
-        _ => [theme::MID, theme::ACCENT, theme::INK2][level],
+    let pc = match (b.focus, mix) {
+        (Some(BraidPart::Rate), _) => theme::INK,
+        (_, Mix::Level(l)) => [theme::MID, theme::ACCENT, theme::INK2][l],
+        (_, Mix::Off) => return,
     };
     let (bx, by, len, bh) = g.beam;
     let pw = libm::roundf(3.0 + 4.0 * b.depth) as i32;
     for i in 0..PULSES {
-        let px = bx + libm::roundf(pulse(b, i)) as i32;
+        let px = (libm::roundf(pulse(b, i)) as i32).max(bx);
         let w = pw.min(bx + len - px);
-        if w > 0 {
-            rect(on, (px, by - 1, w, bh + 2), pc);
+        if w <= 0 {
+            continue;
+        }
+        match mix {
+            Mix::Level(_) => rect(on, (px, by - 1, w, bh + 2), pc),
+            Mix::Off => {
+                for y in (by - 1..by + bh + 1).step_by(rows_every(mix)) {
+                    rect(on, (px, y, w, 1), pc);
+                }
+            }
         }
     }
 }

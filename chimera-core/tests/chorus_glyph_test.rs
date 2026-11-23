@@ -108,14 +108,37 @@ fn they_move_with_the_clock_and_rate_smoothly() {
             moved(1.0, 0, 2) > 2.0 * moved(0.0, 0, 2),
             "{m:?} RATE speeds it"
         );
-        // Smooth at full RATE: never more than 5 px a frame, never back.
-        for f in 0..400 {
+        // Smooth at full RATE: never more than 5 px a frame, never back,
+        // from boot and after the clock has run for months (f64 phase).
+        for f in (0..400).chain(3_000_000_000..3_000_000_400) {
             let step = moved(1.0, f, f + 1);
             let (_, period) = travel(1.0, f + 1);
             assert!(
                 step <= 5.0 && step < period - 0.5,
                 "{m:?} frame {f}: {step} px"
             );
+        }
+        // RATE gliding as the UI eases it (a step a frame): early on the
+        // phase moves on smoothly. Late, a RATE change jumps it, as the
+        // braid's twist does (ADR 0324).
+        for f in 0..200u32 {
+            let (r0, r1) = (f as f32 / 400.0, (f + 1) as f32 / 400.0);
+            let (x0, _) = travel(r0, f);
+            let (x1, period) = travel(r1, f + 1);
+            let step = (x1 - x0).rem_euclid(period);
+            assert!(step <= 5.0, "{m:?} RATE gliding, frame {f}: {step} px");
+        }
+        // DEPTH gliding: a pulse or bar never jumps as the shape grows.
+        for frame in [3, 50, 77, 123, 301] {
+            for i in 0..200 {
+                let (d0, d1) = (i as f32 / 200.0, (i + 1) as f32 / 200.0);
+                let x = |d: f32| chorus::travel(&at(m, [0.5, d, 1.0], None, frame)).0;
+                assert!(
+                    (x(d1) - x(d0)).abs() < 0.6,
+                    "{m:?} frame {frame} DEPTH {d0}: {} px",
+                    x(d1) - x(d0)
+                );
+            }
         }
     }
 }
@@ -188,6 +211,49 @@ fn the_focused_part_lights_as_the_braids_do() {
         X0 + chorus::MODE_DOT.0 - 2..X0 + chorus::MODE_DOT.0 + 3,
         Y0 + chorus::MODE_DOT.1 - 2..Y0 + chorus::MODE_DOT.1 + 3,
     );
+    // At MIX 0 the focused part still shows, faintly: the beam's pulses
+    // and the front comb are off, so their marks are what the turn moves.
+    let mute = [set[0], set[1], 0.0];
+    for m in OURS {
+        let fb = |focus| shot(at(m, mute, focus, frame));
+        assert_eq!(
+            count(&fb(None), theme::INK),
+            0,
+            "{m:?} MIX 0: no INK unfocused"
+        );
+        for part in BraidPart::ALL {
+            assert!(
+                count(&fb(Some(part)), theme::INK) > 0,
+                "{m:?} MIX 0: {part:?} marked"
+            );
+        }
+    }
+    let g0 = Gun::at(mute[1]);
+    let (bxs, bys) = area(g0.beam);
+    let beam_rows = bys.start - 1..bys.end + 1;
+    let rate = shot(at(ChorusMode::Phaser, mute, Some(BraidPart::Rate), frame));
+    let lit = count_in(&rate, bxs, beam_rows, theme::INK);
+    assert!(
+        lit > 0 && lit == count(&rate, theme::INK),
+        "PHASER MIX 0 RATE: the pulses"
+    );
+    let front = Y0 + 9..Y0 + 41;
+    let cols = X0..X0 + 76;
+    for part in [BraidPart::Rate, BraidPart::Depth] {
+        let fb = shot(at(ChorusMode::Flanger, mute, Some(part), frame));
+        let lit = count_in(&fb, cols.clone(), front.clone(), theme::INK);
+        assert!(
+            lit > 0 && lit == count(&fb, theme::INK),
+            "FLANGER MIX 0 {part:?}: the front"
+        );
+        assert!(
+            lit < count(
+                &shot(at(ChorusMode::Flanger, set, Some(part), frame)),
+                theme::INK
+            ),
+            "faintly"
+        );
+    }
     for m in OURS {
         let fb = |focus| shot(at(m, set, focus, frame));
         assert_eq!(count(&fb(None), theme::INK), 0, "{m:?}: no INK unfocused");
@@ -236,7 +302,8 @@ fn the_focused_part_lights_as_the_braids_do() {
     let depth = ph(Some(BraidPart::Depth));
     let (gxs, gys) = area(g.body);
     assert!(
-        count_in(&depth, gxs.clone(), gys.clone(), theme::INK) >= (2 * (g.body.2 + g.body.3) - 4) as usize
+        count_in(&depth, gxs.clone(), gys.clone(), theme::INK)
+            >= (2 * (g.body.2 + g.body.3) - 4) as usize
     );
     assert_eq!(
         count_in(&depth, bxs.clone(), beam_rows.clone(), theme::INK),
