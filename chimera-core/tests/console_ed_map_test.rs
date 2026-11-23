@@ -217,7 +217,7 @@ fn map_fixture() {
     let mut f = Fake::new();
     let text = ask(&mut f, "ed describe MAP 0\n");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../editor/tests/fixtures/map-schema.txt");
+        .join("tests/fixtures/editor/map-schema.txt");
     if std::env::var_os("BLESS").is_some() {
         std::fs::write(&path, &text).unwrap();
     }
