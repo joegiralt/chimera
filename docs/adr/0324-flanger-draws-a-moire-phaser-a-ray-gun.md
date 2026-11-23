@@ -22,7 +22,7 @@ The focus band drew one glyph, the braid (`glyph::Braid`), for every chorus MODE
 - **The door call inline in the generic `braid`:** +108 B in `draw_gauge`; one out-of-line helper is smaller.
 
 ## Consequences
-- Flash, measured on the merge with origin/0.4: bank 1 +192 B on ORBIT (910,932 B), +168 B default and BANK2-GATE, +160 to +184 B on the bench sets: the door call (`bank2::chorus`, 76 B, and its call in `draw_gauge`) and codegen churn; the call inline in `braid` measured the same, and in `draw_gauge`'s arm more (+248 B on ORBIT). Bank 2 +1,984 B on ORBIT, +2,016 B default: `ui::notes::chorus`. Every line in `tools/bank1-budget.txt` and `tools/bank2-budget.txt` is set to these measures.
+- Flash, measured on the merge with origin/0.4 952ba3ea2: bank 1 +192 B on ORBIT (911,124 B), +168 B default (896,452 B) and BANK2-GATE, +160 to +192 B on the other sets: the door call (`bank2::chorus`, 76 B, and its call in `draw_gauge`) and codegen churn; the call inline in `braid` measured the same, and in `draw_gauge`'s arm more (+248 B on ORBIT). Bank 2 +2,016 B on every set: `ui::notes::chorus`. Every line in `tools/bank1-budget.txt` and `tools/bank2-budget.txt` is set to these measures.
 - New goldens `mixer_fx_chorus_flanger` and `mixer_fx_chorus_phaser` (and their master-tape rows), with their docs screenshots.
 - A future chorus MODE must choose its picture: `picture` is exhaustive.
 
