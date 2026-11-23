@@ -5,8 +5,8 @@
 
 use chimera_engine::MidiNote;
 use chimera_engine::stream::admit::{
-    ATTACK_BLOCKS, Admit, Age, Bill, LOUD, ReadRatio, STREAM_BUDGET_BPS, Swell, WOW_CENTS, admit,
-    bill, head_frames, notes_at_root, ratio_max,
+    ATTACK_BLOCKS, Admit, Age, Bill, LOUD, Raise, ReadRatio, STREAM_BUDGET_BPS, Swell, WOW_CENTS,
+    admit, bill, head_frames, notes_at_root, raise_room, ratio_max,
 };
 use chimera_engine::stream::units::{Blocks, Cents, SourceRate};
 use chimera_engine::voice_alloc::{VoiceIdx, VoiceSet};
@@ -385,5 +385,45 @@ fn a_card_steal_keeps_to_the_stealable_voices() {
         admit(b, p, STREAM_BUDGET_BPS, VoiceSet::EMPTY),
         Admit::Refuse,
         "nothing stealable: refused"
+    );
+}
+
+/// #764: a mid-note raise counts a dying voice's bill until it is freed;
+/// it steals released voices only, the oldest first, never a dying or a
+/// held one, while the live voices leave no room; and none if even all
+/// of them wouldn't.
+#[test]
+fn a_raise_waits_for_fades_and_steals_released_only() {
+    use chimera_hal::units::BytesPerSec;
+    let v = |i: usize| VoiceIdx::ALL[i];
+    let all = VoiceSet::ALL;
+    let budget = BytesPerSec::new(100);
+    let o = |i, b, a, d| (v(i), Bill::new(b), a, d);
+    // 30 held, 20 dying: 40 more fits, 60 doesn't.
+    let fade = [o(0, 30, age(false, 9), false), o(1, 20, Age::DYING, true)];
+    assert_eq!(
+        raise_room(Bill::new(40), fade.into_iter(), budget, all),
+        Raise::Fits
+    );
+    assert_eq!(
+        raise_room(Bill::new(60), fade.into_iter(), budget, all),
+        Raise::Wait(VoiceSet::EMPTY),
+        "only the fade is over: wait, steal nothing"
+    );
+    // Live 90: 30 held, 30 released long ago, 30 released lately.
+    let three = [
+        o(0, 30, age(false, 9), false),
+        o(1, 30, age(true, 50), false),
+        o(2, 30, age(true, 5), false),
+    ];
+    assert_eq!(
+        raise_room(Bill::new(30), three.into_iter(), budget, all),
+        Raise::Wait(VoiceSet::EMPTY.with(v(1))),
+        "the oldest released"
+    );
+    assert_eq!(
+        raise_room(Bill::new(80), three.into_iter(), budget, all),
+        Raise::Hold,
+        "both released wouldn't make room: none goes"
     );
 }

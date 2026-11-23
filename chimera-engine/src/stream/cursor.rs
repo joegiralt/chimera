@@ -355,7 +355,8 @@ fn flow_of(src: SpanSrc) -> Flow {
 /// `DROP_FADE`, the quiet's over `QUIET_FADE`); `None` reading freely.
 fn hush(bus: &CardBus) -> Option<i16> {
     match (bus.fault(), bus.quiet()) {
-        (CardFault::Read, _) => Some(DROP_STEP),
+        // Another card mounted (#1083): as a fault, its rows about to go.
+        (CardFault::Read | CardFault::Moved, _) => Some(DROP_STEP),
         (CardFault::Clear, Quiet::Asked | Quiet::Held) => Some(QUIET_STEP),
         (CardFault::Clear, Quiet::Off) => None,
     }
@@ -561,14 +562,13 @@ impl Cursor {
                 self.state = Flow::Quiet;
                 self.gain.step = self.gain.step.min(-step);
             }
-            // Released: on from the head, as a start there would, if tape
-            // time is still inside it, rising over `DROP_FADE` (#608).
+            // Released: on from the head if it holds this block and the
+            // fade ahead of it, rising over `DROP_FADE` (#608); else cold,
+            // so a head about to end never counts an underrun (#1083).
             (None, true) => {
                 let file = self.file();
-                match self
-                    .head
-                    .filter(|&h| head_span(h, file).is_some_and(|s| s.holds(i0)))
-                {
+                let holds = |s: Span| s.holds(i0) && s.last >= SpanEnd::At(look);
+                match self.head.filter(|&h| head_span(h, file).is_some_and(holds)) {
                     Some(h) => {
                         self.state = Flow::Head(h.idx);
                         self.gain.step = DROP_STEP;

@@ -2480,6 +2480,15 @@ impl Instrument {
         })
     }
 
+    /// Voice `v` stolen as a card steal stops it (`kill`, `shed`): it
+    /// fades out, still billed. For the tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn steal_for_test(&mut self, v: usize) {
+        let vi = VoiceIdx::ALL[v];
+        self.alloc.kill(vi);
+        self.shed(vi);
+    }
+
     /// The load net (ADR 0273): a block ran past `BlockBudget::shed_at`,
     /// so one voice fades out before the next, the one a budget shed takes
     /// among those sounding and not yet fading (a silent or fading one

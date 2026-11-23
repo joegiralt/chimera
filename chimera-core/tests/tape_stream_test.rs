@@ -1463,6 +1463,11 @@ fn raised_reach_is_readmitted_and_followed() {
 
 /// Eight held streamed notes that fill the card, and two let go.
 fn eight_held(released: &[u8]) -> (Played<'static>, u32) {
+    held_notes(50..58, released)
+}
+
+/// Held streamed notes `notes` on Part 1, `released` let go.
+fn held_notes(notes: core::ops::Range<u8>, released: &[u8]) -> (Played<'static>, u32) {
     let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
     let (rings, third) = rings();
     let (rings, third) = (Box::leak(rings), Box::leak(third));
@@ -1473,7 +1478,7 @@ fn eight_held(released: &[u8]) -> (Played<'static>, u32) {
     };
     let src = OneSource::new(&st.card.held(&[0], HF));
     let mut pl = Played::new(st, src, &[(0, p)]);
-    for n in 50..58 {
+    for n in notes {
         pl.on(0, n);
     }
     for _ in 0..10 {
@@ -1522,16 +1527,15 @@ fn a_knob_turn_steals_released_voices_only() {
     let (mut pl, _) = eight_held(&[50, 51]);
     let gone = [pl.voice_of(0, 50).unwrap(), pl.voice_of(0, 51).unwrap()];
     pl.rig.shared.parts[0].params.pitch.pitch = 6.0;
-    for k in 0..20 {
+    // A stolen voice's bill counts until it is freed (#764): never over,
+    // the raise waits for the fades.
+    for _ in 0..20 {
         pl.block();
-        // A stolen voice's bill counts until its fade ends.
-        if k > 3 {
-            assert!(
-                pl.billed() <= STREAM_BUDGET_BPS.get(),
-                "{} over",
-                pl.billed()
-            );
-        }
+        assert!(
+            pl.billed() <= STREAM_BUDGET_BPS.get(),
+            "{} over",
+            pl.billed()
+        );
     }
     let slots = pl.rig.inst.allocator().slots();
     for (v, s) in slots.iter().enumerate() {
@@ -1543,6 +1547,257 @@ fn a_knob_turn_steals_released_voices_only() {
         slots[gone[0]].is_free() || slots[gone[0]].dying(),
         "50 went first"
     );
+}
+
+/// The first note above 56 that the held notes leave no room for, but
+/// that fits behind `freed`'s fade on its voice (one ring: the larger
+/// bill of the two).
+fn a_note_that_needs(pl: &Played<'_>, freed: u8) -> u8 {
+    let p = TapeEngineParams {
+        tape: 0.0,
+        ..one_hold()
+    };
+    let bills = pl.rig.inst.stream_bills();
+    let w = bills[pl.voice_of(0, freed).unwrap()].unwrap().get();
+    let (used, budget) = (pl.billed(), STREAM_BUDGET_BPS.get());
+    (57..110)
+        .find(|&n| {
+            let b = bill_of(&p, n, 0);
+            used + b > budget && used - w + b.max(w) <= budget
+        })
+        .expect("a note one steal makes room for")
+}
+
+/// #764: a stolen voice streams through its fade, so its bill stays until
+/// it is freed, and the note it was stolen for waits behind that fade on
+/// its voice (one ring, one bill), not on a free one: the card's load
+/// never passes its budget, and one steal is all a note takes.
+#[test]
+fn a_stolen_voice_keeps_its_bill_until_freed() {
+    let (mut pl, _) = held_notes(50..57, &[50]);
+    let (w, free) = (
+        pl.voice_of(0, 50).unwrap(),
+        pl.rig
+            .inst
+            .allocator()
+            .slots()
+            .iter()
+            .position(|s| s.is_free())
+            .unwrap(),
+    );
+    let n = a_note_that_needs(&pl, 50);
+    pl.on(0, n);
+    assert_eq!(pl.voice_of(0, n), Some(w), "behind the stolen voice's fade");
+    let slots = pl.rig.inst.allocator().slots();
+    assert!(slots[free].is_free(), "the free voice stays free");
+    let kept = (51..57).all(|k| pl.voice_of(0, k).is_some());
+    assert!(kept, "one steal: every other note plays on");
+    for _ in 0..40 {
+        assert!(
+            pl.billed() <= STREAM_BUDGET_BPS.get(),
+            "{} over",
+            pl.billed()
+        );
+        pl.block();
+    }
+    assert!(pl.rig.inst.active()[w], "the note plays once the fade ends");
+}
+
+/// #764: a dying voice is never a steal's victim: the next note that needs
+/// room takes a live released one.
+#[test]
+fn a_dying_voice_is_never_stolen() {
+    let (mut pl, _) = held_notes(50..57, &[50, 51]);
+    let (w, r) = (pl.voice_of(0, 50).unwrap(), pl.voice_of(0, 51).unwrap());
+    let n = a_note_that_needs(&pl, 50);
+    pl.on(0, n);
+    assert_eq!(pl.voice_of(0, n), Some(w), "behind 50's fade");
+    // In the same block, before the fade ends: another note that needs
+    // room, which 51's voice can give.
+    let m = a_note_that_needs(&pl, 51);
+    pl.on(0, m);
+    assert_eq!(pl.voice_of(0, m), Some(r), "behind 51's fade");
+    assert_eq!(pl.voice_of(0, n), Some(w), "50's fade's note kept");
+    for _ in 0..40 {
+        assert!(
+            pl.billed() <= STREAM_BUDGET_BPS.get(),
+            "{} over",
+            pl.billed()
+        );
+        pl.block();
+    }
+}
+
+/// #764: a note that one steal can't make room for is refused, and nothing
+/// is stolen for it: a second victim's bill would stay until its fade
+/// ended, so it frees nothing in time.
+#[test]
+fn a_note_one_steal_cant_fit_is_refused_and_steals_nothing() {
+    let (mut pl, _) = held_notes(50..57, &[50, 51]);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        ..one_hold()
+    };
+    let bills = pl.rig.inst.stream_bills();
+    let of = |n: u8| bills[pl.voice_of(0, n).unwrap()].unwrap().get();
+    let (used, budget) = (pl.billed(), STREAM_BUDGET_BPS.get());
+    let big = of(50).max(of(51));
+    let n = (57..127)
+        .find(|&n| {
+            let b = bill_of(&p, n, 0);
+            used - big + b > budget && used - of(50) - of(51) + b <= budget
+        })
+        .expect("a note two steals would fit");
+    let refused = pl.rig.inst.allocator().refused();
+    pl.on(0, n);
+    assert_eq!(pl.voice_of(0, n), None, "refused");
+    assert_eq!(pl.rig.inst.allocator().refused(), refused + 1);
+    let slots = pl.rig.inst.allocator().slots();
+    assert!(slots.iter().all(|s| !s.dying()), "nothing stolen");
+}
+
+/// #705's path, scripted (#764): two Parts' six-note chords at a 32nd
+/// apart over a card they fill, each chord stealing what the last let go.
+/// Every steal's fade keeps its bill, so the card's load never passes its
+/// budget in any block.
+#[test]
+fn hammered_chords_never_pass_the_budget() {
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.2,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
+    // A 32nd at 140 BPM: 54 ms, about 40 blocks.
+    let chord = |k: usize| -> Vec<u8> {
+        let root = 52 + (k * 5 % 12) as u8;
+        (0..6).map(|i| root + 2 * i).collect()
+    };
+    let mut held: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
+    let mut most = 0;
+    for k in 0..24 {
+        let part = k % 2;
+        for n in held[part].drain(..) {
+            pl.off(part, n);
+        }
+        for n in chord(k) {
+            pl.on(part, n);
+        }
+        held[part] = chord(k);
+        for _ in 0..40 {
+            assert!(
+                pl.billed() <= STREAM_BUDGET_BPS.get(),
+                "chord {k}: {} over",
+                pl.billed()
+            );
+            most = most.max(pl.billed());
+            pl.block();
+        }
+    }
+    assert!(
+        most * 10 > STREAM_BUDGET_BPS.get() * 9,
+        "the chords fill the card: {most}"
+    );
+}
+
+/// The first note above `from` whose bill `ok` takes, on `p` (no bend).
+fn first_note(from: u8, p: &TapeEngineParams, ok: impl Fn(u32) -> bool) -> u8 {
+    (from..120)
+        .find(|&n| ok(bill_of(p, n, 0)))
+        .expect("a note the card's arithmetic allows")
+}
+
+/// I1 (#1086's review): a MONO retrigger that needs room never lands on
+/// another Part's fade: its old note would hold on, two voices on a MONO
+/// Part. Refused; the Part keeps its one voice.
+#[test]
+fn a_mono_retrigger_never_doubles_onto_a_fade() {
+    use chimera_core::part::PartMode;
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
+    pl.rig.shared.parts[0].mix.set_mode(PartMode::Mono);
+    for n in 50..56 {
+        pl.on(1, n);
+    }
+    pl.on(0, 48);
+    for _ in 0..4 {
+        pl.block();
+    }
+    let d = pl.voice_of(1, 50).unwrap();
+    pl.rig.inst.steal_for_test(d);
+    let mono = pl.voice_of(0, 48).unwrap();
+    let bills = pl.rig.inst.stream_bills();
+    let (bd, bm) = (bills[d].unwrap().get(), bills[mono].unwrap().get());
+    let (used, budget) = (pl.billed(), STREAM_BUDGET_BPS.get());
+    // Not on its own ring; but behind the fade it would fit.
+    let n = first_note(49, &p, |b| {
+        used - bm + b.max(bm) > budget && used - bd + b.max(bd) <= budget
+    });
+    pl.on(0, n);
+    let slots = pl.rig.inst.allocator().slots();
+    let part0 = slots
+        .iter()
+        .filter(|s| s.part() == Some(PartId::ALL[0]) && !s.is_free() && !s.dying())
+        .count();
+    assert_eq!(part0, 1, "one voice on the MONO Part");
+    assert_ne!(pl.voice_of(0, n), Some(d), "never on Part 2's fade");
+}
+
+/// I1 (#1086's review): a Part at its cap (ADR 0281) never takes another
+/// Part's fade for a note: that would be a voice over its cap.
+#[test]
+fn a_capped_part_never_takes_another_parts_fade() {
+    use chimera_core::voice_limit::{Asked, MaxVoices, VoiceCap};
+    let whole = held_plain(&sine(RATE, 300.0, FRAMES), RATE);
+    let (rings, third) = rings();
+    let st = Stream::new(&rings, &third, &whole, 0);
+    let p = TapeEngineParams {
+        tape: 0.0,
+        ..one_hold()
+    };
+    let src = OneSource::new(&st.card.held(&[0], HF));
+    let mut pl = Played::new(st, src, &[(0, p), (1, p)]);
+    pl.rig.shared.parts[0].mix.set_voices(Asked {
+        max: MaxVoices::Cap(VoiceCap::new(1).unwrap()),
+        reserve: chimera_core::voice_limit::Reserve::NONE,
+    });
+    for n in 50..56 {
+        pl.on(1, n);
+    }
+    pl.on(0, 48);
+    for _ in 0..4 {
+        pl.block();
+    }
+    let d = pl.voice_of(1, 50).unwrap();
+    pl.rig.inst.steal_for_test(d);
+    let own = pl.voice_of(0, 48).unwrap();
+    let bills = pl.rig.inst.stream_bills();
+    let (bd, bo) = (bills[d].unwrap().get(), bills[own].unwrap().get());
+    let (used, budget) = (pl.billed(), STREAM_BUDGET_BPS.get());
+    let n = first_note(49, &p, |b| {
+        used + b > budget && used - bd + b.max(bd) <= budget && used - bo + b.max(bo) > budget
+    });
+    pl.on(0, n);
+    assert_ne!(pl.voice_of(0, n), Some(d), "never on Part 2's fade");
+    let part0 = pl
+        .rig
+        .inst
+        .allocator()
+        .slots()
+        .iter()
+        .filter(|s| s.part() == Some(PartId::ALL[0]) && !s.is_free() && !s.dying())
+        .count();
+    assert!(part0 <= 1, "{part0} voices on a Part capped at 1");
 }
 
 /// #595 (b): a note started while its source moves is admitted once it
@@ -2632,8 +2887,10 @@ fn a_card_steal_keeps_off_a_reserved_parts_streams() {
 
 /// R2 (ruling, 2026-11-18): a MONO TAPE Part at its cap of 1
 /// re-strikes beside another Part's released stream, its new note billing
-/// more than the card has left: it stops that stream, as on AUTO. The cap
-/// limits only its own voice count.
+/// more than the card has left: it does as on AUTO; the cap limits only
+/// its own voice count. Since #764 a stolen voice's bill stays until its
+/// fade ends, and a retrigger can't move behind it: refused on both, the
+/// other stream kept.
 fn capped_mono_admits(capped: bool) -> (bool, bool) {
     use chimera_core::part::PartMode;
     use chimera_core::voice_limit::{Asked, MaxVoices, VoiceCap};
@@ -2674,6 +2931,6 @@ fn capped_mono_admits(capped: bool) -> (bool, bool) {
 #[test]
 fn a_capped_mono_part_steals_card_room_as_auto() {
     let auto = capped_mono_admits(false);
-    assert_eq!(auto, (true, true), "AUTO: admitted, the tail stopped");
+    assert_eq!(auto, (false, false), "AUTO: refused, the tail kept (#764)");
     assert_eq!(capped_mono_admits(true), auto, "capped at 1: the same");
 }

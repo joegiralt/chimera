@@ -214,7 +214,7 @@ impl<'r> CardStream<'r> {
                 }
                 None => {}
             }
-            if self.bus.fault() == CardFault::Read || self.bus.quiet() != Quiet::Off {
+            if self.bus.fault() != CardFault::Clear || self.bus.quiet() != Quiet::Off {
                 return;
             }
             let ServeStep::Read { claimed, row } = serve_step(

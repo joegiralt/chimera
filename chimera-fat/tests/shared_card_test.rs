@@ -101,7 +101,7 @@ fn log() -> Vec<(&'static str, Owner)> {
 /// A card that logs every call by name; `want`: each read marks the bus
 /// wanted, as the card IRQ's take does.
 struct Fake {
-    disk: RamDisk,
+    disk: &'static RamDisk,
     bus: &'static CardBus,
     want: bool,
 }
@@ -141,6 +141,7 @@ impl Medium for Fake {
 
     fn mounted(&self) -> Result<(), StoreError> {
         note("mounted", self.bus);
+        FAULT_AT_MOUNTED.set(Some(self.bus.fault()));
         Ok(())
     }
 
@@ -149,18 +150,27 @@ impl Medium for Fake {
     }
 }
 
+thread_local! {
+    /// The read fault as `mounted` (which publishes the card's address)
+    /// found it.
+    static FAULT_AT_MOUNTED: Cell<Option<CardFault>> = const { Cell::new(None) };
+}
+
 fn leak<T>(t: T) -> &'static T {
     Box::leak(Box::new(t))
 }
 
 fn card(want: bool) -> (SharedCard<Fake>, &'static CardBus, &'static CardAddr) {
+    card_on(leak(fat16(16_384, 7)), want)
+}
+
+fn card_on(
+    disk: &'static RamDisk,
+    want: bool,
+) -> (SharedCard<Fake>, &'static CardBus, &'static CardAddr) {
     fresh();
     let (bus, addr) = (leak(CardBus::new()), leak(CardAddr::new()));
-    let fake = Fake {
-        disk: fat16(16_384, 7),
-        bus,
-        want,
-    };
+    let fake = Fake { disk, bus, want };
     let hooks = Hooks { pend, now };
     (SharedCard::new(fake, bus, addr, hooks, TAKE), bus, addr)
 }
@@ -445,4 +455,53 @@ fn a_saturated_stream_load_gives_the_ui_a_turn() {
     );
     assert!(!bus.turn_asked());
     assert_eq!(PENDS.get(), 1, "the UI's give woke the streams");
+}
+
+/// #1083: a mount that finds another volume than the last one stops the
+/// card IRQ (`CardFault::Moved`) until the UI has dropped the old card's
+/// stream rows and clears it; the same volume again raises nothing.
+#[test]
+fn a_mount_on_another_volume_stops_the_streams() {
+    let disk = leak(fat16(16_384, 7));
+    let (c, bus, _) = card_on(disk, false);
+    let mut store = FatStore::new(c);
+    let flip = || disk.0.borrow_mut()[image::PART_LBA as usize][0x27] ^= 1;
+    let first = store.mount().unwrap();
+    assert_eq!(
+        bus.fault(),
+        CardFault::Clear,
+        "the first mount knows no last"
+    );
+    assert_eq!(store.mount(), Ok(first));
+    assert_eq!(bus.fault(), CardFault::Clear, "the same volume");
+    flip();
+    assert_ne!(store.mount().unwrap(), first);
+    assert_eq!(bus.fault(), CardFault::Moved, "another volume");
+    store.clear_read_fault();
+    flip();
+    assert_eq!(store.mount(), Ok(first));
+    assert_eq!(bus.fault(), CardFault::Moved, "and back");
+}
+
+/// I2 (#1086's review): a mount on another volume stops the streams before
+/// the card's address is published, never after: no IRQ window between.
+/// And a pending read fault stays `Read` (its re-init still runs).
+#[test]
+fn moved_is_raised_before_the_address_and_never_over_a_read_fault() {
+    let disk = leak(fat16(16_384, 7));
+    let (c, bus, _) = card_on(disk, false);
+    let mut store = FatStore::new(c);
+    store.mount().unwrap();
+    disk.0.borrow_mut()[image::PART_LBA as usize][0x27] ^= 1;
+    store.mount().unwrap();
+    assert_eq!(
+        FAULT_AT_MOUNTED.get(),
+        Some(CardFault::Moved),
+        "before the address"
+    );
+    store.clear_read_fault();
+    bus.set_fault(CardFault::Read);
+    disk.0.borrow_mut()[image::PART_LBA as usize][0x27] ^= 1;
+    store.mount().unwrap();
+    assert_eq!(bus.fault(), CardFault::Read, "a read fault stays");
 }

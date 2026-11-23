@@ -261,8 +261,9 @@ pub trait Store {
     }
     /// The card IRQ may read again: its caller has dropped what belonged
     /// to another card first (#610). Its store `Release`s the fault, the
-    /// IRQ `Acquire`s it before it reads a stream row.
-    fn clear_read_fault(&mut self) {}
+    /// IRQ `Acquire`s it before it reads a stream row. A store no stream
+    /// reads clears nothing, but says so.
+    fn clear_read_fault(&mut self);
     /// Each op below: open volume, check id == vol (else `VolumeChanged`,
     /// nothing touched), act, close every handle.
     fn list(

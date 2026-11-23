@@ -233,6 +233,7 @@ fn boot_with_an_unreadable_system_says_why() {
 struct Timeout;
 
 impl Store for Timeout {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         Err(StoreError::Timeout)
     }
@@ -623,6 +624,7 @@ struct CountWrites<S> {
 }
 
 impl<S: Store> Store for CountWrites<S> {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -769,6 +771,7 @@ fn replaced_ui_snaps() {
 struct NoSystemWrites(MemStore);
 
 impl Store for NoSystemWrites {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }
@@ -889,6 +892,7 @@ fn a_save_after_a_late_card_keeps_its_theme() {
 struct Flaky(MemStore, bool);
 
 impl Store for Flaky {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }

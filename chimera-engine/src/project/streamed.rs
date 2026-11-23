@@ -6,7 +6,7 @@
 //! its runs in the stream registry for the card interrupt. The SOURCE
 //! cell's load and a project load's pass 2 both take this path.
 
-use chimera_hal::store::{FileRuns, Seal, Store};
+use chimera_hal::store::{FileRuns, Seal, Store, VolumeId};
 use chimera_hal::units::Bytes;
 
 use super::arena::Cost;
@@ -84,7 +84,7 @@ pub fn load_kind(h: &SourceHead, free: Cost, p: &TapeEngineParams) -> LoadKind {
 /// left out for room that now fit whole, another's read having missed:
 /// the loader reads those whole after it (#765).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Streamed {
+pub struct StreamedPass {
     pub n: u8,
     pub whole: SourceSet,
 }
@@ -96,14 +96,33 @@ pub struct Streamed {
 pub struct LoadDoor {
     heads_for: fn(SourceRef, &TapeEngineParams) -> Result<Heads, Refusal>,
     step: fn(&mut StreamLoad, &mut dyn Store, &Ready, &mut Project, usize) -> StreamStep,
-    sources: fn(&mut dyn Store, &Ready, &mut Project, SourceSet) -> Streamed,
+    /// The rest, one entry: the door table is full (`LoadAsk`).
+    ask: fn(LoadAsk<'_>),
+}
+
+/// `LoadDoor`'s other questions, one entry for all.
+pub enum LoadAsk<'a> {
+    /// A project load's streamed pass (`load::stream_sources`).
+    Sources {
+        s: &'a mut dyn Store,
+        r: &'a Ready,
+        p: &'a mut Project,
+        ids: SourceSet,
+        out: &'a mut StreamedPass,
+    },
+    /// The stream rows follow card `v` (#1083: `Project::follow_card`).
+    Follow {
+        p: &'a mut Project,
+        v: VolumeId,
+        out: &'a mut bool,
+    },
 }
 
 impl LoadDoor {
     pub const DOOR: LoadDoor = LoadDoor {
         heads_for: crate::stream::stage::heads_in,
         step: load::step,
-        sources: load::stream_sources,
+        ask: load::ask,
     };
 
     #[inline(always)]
@@ -134,8 +153,28 @@ impl LoadDoor {
         r: &Ready,
         p: &mut Project,
         ids: SourceSet,
-    ) -> Streamed {
-        (self.sources)(s, r, p, ids)
+    ) -> StreamedPass {
+        let mut out = StreamedPass::default();
+        (self.ask)(LoadAsk::Sources {
+            s,
+            r,
+            p,
+            ids,
+            out: &mut out,
+        });
+        out
+    }
+
+    #[inline(always)]
+    #[optimize(size)]
+    pub(crate) fn follow(&self, p: &mut Project, v: VolumeId) -> bool {
+        let mut out = false;
+        (self.ask)(LoadAsk::Follow {
+            p,
+            v,
+            out: &mut out,
+        });
+        out
     }
 
     /// `f` on the door: bank 2's through the door with `bank2`, `None`
@@ -148,6 +187,15 @@ impl LoadDoor {
         #[cfg(not(feature = "bank2"))]
         Some(f(&Self::DOOR))
     }
+}
+
+/// Why `StreamLoad::found` started nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotFound {
+    /// The file's runs don't hold its samples: `SOURCE MISSING`.
+    File,
+    /// Its heads don't fit the gap: `POOL FULL` (#765).
+    NoRoom,
 }
 
 /// Why a streamed load published nothing.
@@ -189,6 +237,9 @@ pub struct StreamLoad {
     /// that mounted another volume, `lose_streams`) refuses the commit, so
     /// no row names the old card's blocks.
     epoch: Option<CardEpoch>,
+    /// The volume its first pass read: a pass on another refuses (#1083),
+    /// whether or not any row followed the card.
+    on: Option<VolumeId>,
 }
 
 /// Where a `StreamLoad` is.
@@ -229,27 +280,30 @@ impl StreamLoad {
             phase: Phase::Find,
             stage,
             epoch: p.pool.streams().map(|r| r.epoch()),
+            on: None,
         })
     }
 
     /// `start`, its file's runs found and its head read already (a
     /// project load's pass 2): no first pass, unless the file is unsealed
     /// (never checked against its CRC): that first pass checks it whole
-    /// and seals it. `None` as `start`, or when the runs don't hold its
-    /// samples.
+    /// and seals it. Refused, saying why, as `start` (no room for the
+    /// heads) or when the runs don't hold its samples.
     #[optimize(size)]
     pub fn found(
         p: &mut Project,
         head: SourceHead,
         heads: Heads,
         runs: FileRuns,
-    ) -> Option<StreamLoad> {
-        let file = StreamFile::from_layout(&SourceLayout::whole(head)?, runs)?;
-        let l = Self::start(p, head, heads)?;
+    ) -> Result<StreamLoad, NotFound> {
+        let file = SourceLayout::whole(head)
+            .and_then(|l| StreamFile::from_layout(&l, runs))
+            .ok_or(NotFound::File)?;
+        let l = Self::start(p, head, heads).ok_or(NotFound::NoRoom)?;
         if runs.seal != Seal::Sealed {
-            return Some(l);
+            return Ok(l);
         }
-        Some(StreamLoad {
+        Ok(StreamLoad {
             phase: Phase::heads(file),
             ..l
         })
@@ -271,6 +325,7 @@ impl StreamLoad {
             phase: Phase::heads(file),
             stage,
             epoch: Some(epoch),
+            on: p.pool.streams_on,
         })
     }
 

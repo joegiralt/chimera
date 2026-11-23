@@ -649,6 +649,7 @@ fn a_kit_with_pad_sounds_missing_takes_the_sounds() {
 struct BadKit(MemStore);
 
 impl Store for BadKit {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }

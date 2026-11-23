@@ -118,6 +118,7 @@ impl ByteSink for Buf<'_> {
 }
 
 impl Store for MemStore {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         if self.present {
             Ok(self.id)

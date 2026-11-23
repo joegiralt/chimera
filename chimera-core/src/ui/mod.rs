@@ -1373,9 +1373,11 @@ impl UiState {
         let base =
             view::SourceState::of(&sound.params.tape, sound.source_ref(), self.project.pool())
                 .tape_routed(view::tape_routed(sound));
-        let ctx = ctx
-            .on_source(self.src.state(self.active_part, base, &self.project))
-            .on_route(self.sel_route);
+        let ctx = SlotCtx {
+            heads: view::heads_hint(&self.project, self.active_part),
+            ..ctx.on_source(self.src.state(self.active_part, base, &self.project))
+        }
+        .on_route(self.sel_route);
         let ctx = match PartChain::of(sound) {
             PartChain::Drum => ctx.on_drum(),
             PartChain::Algo

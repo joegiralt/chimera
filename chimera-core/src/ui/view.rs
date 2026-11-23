@@ -100,6 +100,9 @@ pub struct SlotCtx {
     pub keys_place: bool,
     /// TAPE's SOURCE as SRC reads it.
     pub src: SourceState,
+    /// SOURCE's hint when the streamed source's RAM heads are another
+    /// Part's (#599, `notes::heads_hint`).
+    pub heads: Option<Hint>,
     /// The chorus MODE the CHORUS send hints.
     pub chorus: ChorusMode,
     /// The reverb panel REV and REV › MORE show (`reverb_panel::shown`).
@@ -180,6 +183,7 @@ impl SlotCtx {
             unpitched: get(BlockRef::TapeEngine, T::PERIOD) == 0.0,
             keys_place: get(BlockRef::TapeEngine, T::KEY) == 0.0,
             src: SourceState::None,
+            heads: None,
             rev: reverb_panel::shown(rev.kind),
             // The project's, not a Sound's: `UiState::ctx` sets it.
             delay: DelayType::Tape,
@@ -709,6 +713,7 @@ impl View {
         match self {
             View::Route { .. } => return Words::Own(crate::ui::mod_grid::DELETE),
             View::SelectPad | View::SelectRoute => return Words::Pad,
+            View::Source(_) => return ctx.heads.map_or(Words::Plain, Words::Own),
             _ => {}
         }
         match self.addr() {
@@ -851,6 +856,17 @@ const MUTE_HINT: Hint = &[Gesture("MIX + B1-5", "MUTES THAT RING")];
 pub const ROLL_HINT: Hint = &[Gesture("TURN", "ROLLS THE SOUND")];
 /// START and END: MIX + a turn snaps to the next onset its way (#698).
 pub const ONSET_HINT: Hint = &[Gesture("MIX + TURN", "NEXT ONSET")];
+/// SOURCE's hint on `part` when its streamed source's RAM heads are
+/// another Part's (#599): `notes`' answer, bank 2's. Closed, none.
+pub(crate) fn heads_hint(
+    p: &crate::project::Project,
+    part: crate::project::PartId,
+) -> Option<Hint> {
+    let mut out = None;
+    crate::bank2::ui_door(|u| u.notes(crate::ui::notes::Ask::Heads(p, part, &mut out)));
+    out
+}
+
 /// SCRUB's FINGER at KEY POSITION (ADR 0205): a key places the finger,
 /// which then moves from there.
 pub const KEY_HINT: Hint = &[Gesture("KEYS", "PLACE THE FINGER")];

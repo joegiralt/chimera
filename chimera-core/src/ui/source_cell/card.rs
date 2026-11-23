@@ -29,7 +29,8 @@ fn heads_key(heads: &Heads) -> HeadsKey {
 
 /// The first streamed source a Part's START, loop or XFADE moved off its
 /// heads that `ready` lets re-stage, and the heads it wants. A source two
-/// Parts play takes its first Part's heads (#599).
+/// Parts play takes its first Part's heads (#599); SOURCE names that Part
+/// on the other's band (`view::heads_of`).
 #[cfg(feature = "tape")]
 fn moved_heads(p: &Project, ready: impl Fn(SourceId, &Heads) -> bool) -> Option<(SourceId, Heads)> {
     let pool = p.pool();

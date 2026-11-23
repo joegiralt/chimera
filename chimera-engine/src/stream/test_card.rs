@@ -199,7 +199,7 @@ impl<'r> TestCard<'r> {
                     continue;
                 }
             }
-            if self.bus.fault() == CardFault::Read {
+            if self.bus.fault() != CardFault::Clear {
                 return;
             }
             let open = rings.wants().filter(|&(v, s, _)| !passed.contains(&(v, s)));

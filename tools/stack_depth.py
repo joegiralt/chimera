@@ -102,7 +102,6 @@ CLASS = " as usb_device::class::UsbClass<"
 DOOR_ONLY = {
     "chimera_stm32::bench::enter": ("chimera_board::synth", "chimera_stm32::bench"),
 }
-
 # Functions only ever called directly, never through a pointer, whose
 # address a plain data word has matched by chance: a `BlockDef`'s packed
 # bytes read 0x08050401 when the link put bank 2's install at 0x08050400
@@ -111,7 +110,7 @@ DOOR_ONLY = {
 # its address must never be taken.
 # ponytail: a name list is the ceiling: each link may collide anew. The
 # real fix counts only words in relocated function-pointer tables or
-# sections, not any data word that happens to match.
+# sections, not any data word that happens to match (#1088).
 DIRECT_ONLY = ("chimera_board::bank2::boot_install::<",)
 
 HEADER = re.compile(r"^([0-9a-f]{8}) <(.+)>:$")

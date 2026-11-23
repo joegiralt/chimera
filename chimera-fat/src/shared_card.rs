@@ -233,6 +233,12 @@ impl<D: Medium> Medium for SharedCard<D> {
         self.bus.set_fault(CardFault::Clear);
     }
 
+    /// Before the mount's caller sees the volume: no read of the old
+    /// card's rows lands on this one (#1083).
+    fn moved(&self) {
+        let _ = self.bus.raise_moved();
+    }
+
     fn cap(&self, ms: Option<u32>) {
         self.dev.cap(ms);
     }

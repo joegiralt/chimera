@@ -409,6 +409,7 @@ struct CountWrites {
 }
 
 impl Store for CountWrites {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -557,6 +558,7 @@ struct DeleteLog {
 }
 
 impl Store for DeleteLog {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -639,6 +641,7 @@ impl ByteSink for LogSink<'_> {
 }
 
 impl Store for PutLog {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -713,6 +716,7 @@ struct ChangeOnRead {
 }
 
 impl Store for ChangeOnRead {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -812,6 +816,7 @@ struct FailRead {
 }
 
 impl Store for FailRead {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }

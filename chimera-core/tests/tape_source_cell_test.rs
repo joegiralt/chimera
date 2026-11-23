@@ -114,6 +114,9 @@ struct Log {
     /// from then on, so another card's rows must be gone first).
     watch: Option<(&'static StreamRegistry, SourceId)>,
     live_at_clear: Option<bool>,
+    /// The last volume a mount found: another one raises `Moved`, as
+    /// `FatStore`'s mount does (#1083).
+    last: Option<VolumeId>,
 }
 
 impl Log {
@@ -138,7 +141,13 @@ impl ReadSink for Counted<'_> {
 
 impl Store for Log {
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
-        self.inner.mount()
+        let v = self.inner.mount()?;
+        // As `FatStore`: a pending read fault stays (its recover follows).
+        if self.last.is_some_and(|l| l != v) && self.fault == CardFault::Clear {
+            self.fault = CardFault::Moved;
+        }
+        self.last = Some(v);
+        Ok(v)
     }
     fn read_fault(&self) -> CardFault {
         self.fault
@@ -146,7 +155,7 @@ impl Store for Log {
     fn recover(&mut self) -> Result<VolumeId, StoreError> {
         self.recovers += 1;
         self.recovery?;
-        self.inner.mount()
+        self.mount()
     }
     fn clear_read_fault(&mut self) {
         self.clear();
@@ -236,6 +245,7 @@ impl Rig {
             recovers: 0,
             watch: None,
             live_at_clear: None,
+            last: None,
         };
         let mut card = Card::new();
         for (h, d) in on_card {
@@ -1438,6 +1448,143 @@ fn an_ops_mount_on_another_card_loses_the_streams() {
     );
     assert!(rig.registry().get(id).is_none(), "its row gone");
     assert_eq!(rig.band(), SOURCE_MISSING);
+}
+
+/// #599: a streamed source two Parts play keeps the first Part's RAM
+/// heads; touching SOURCE on the other says whose they are, in full words
+/// inside the band; on the first, nothing.
+#[test]
+fn a_shared_stream_names_whose_heads_it_keeps() {
+    use chimera_core::ui::hint;
+    use chimera_core::ui::nav::Location;
+    use chimera_core::ui::notes::{HEADS_HINTS, heads_of};
+    use chimera_core::ui::theme;
+    let b = bed(6);
+    let mut rig = streamed_rig(&b);
+    let p2 = PartId::ALL[1];
+    rig.ui.load_for_test(chimera_core::project::PartSource {
+        part: p2,
+        from: chimera_core::project::PartFrom::Init(EngineType::Tape),
+    });
+    {
+        let s = rig.ui.project_mut().edit_part(p2).sound;
+        s.params.tape.set_way(Way::One);
+        s.source = Some(b.0.sref.into());
+    }
+    assert_eq!(heads_of(rig.ui.project(), P1), None, "Part 1's own");
+    assert_eq!(heads_of(rig.ui.project(), p2), Some(P1));
+    // SOURCE touched: its band's hint.
+    let touch_source = |rig: &mut Rig, part| {
+        let chain = chimera_core::ui::nav::chain_def_for(EngineType::Tape);
+        for node in 0..chain.blocks.len() {
+            let mut sub = 0;
+            while let Some(at) = chain.page(node, sub) {
+                sub += 1;
+                rig.ui.go_for_test(Location::pages(part, at));
+                for k in 0..6 {
+                    rig.ui.focus_for_test(k);
+                    if rig.ui.focus_label_for_test().as_str() == "SOURCE" {
+                        return rig.ui.focus_hint_for_test();
+                    }
+                }
+            }
+        }
+        panic!("no SOURCE cell");
+    };
+    assert_eq!(touch_source(&mut rig, p2), HEADS_HINTS[0]);
+    assert_eq!(touch_source(&mut rig, P1), hint::NONE);
+    for h in HEADS_HINTS {
+        assert!(hint::width(h) <= theme::CONTENT_W, "{:?}", h);
+    }
+}
+
+/// #1083: with nothing faulted, a card op's mount that finds another card
+/// stops the card IRQ at once (`Moved`), before any pass's `recover`; the
+/// next one drops the old card's rows, then clears it.
+#[test]
+fn a_swap_with_no_fault_stops_the_card_until_its_rows_go() {
+    let b = bed(4);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    rig.s.watch = Some((rig.registry(), id));
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    rig.s.inner.swap(2);
+    let op = rig.card.run(&mut rig.s, |_, _| Ok::<(), StoreError>(()));
+    assert!(matches!(op.map(|o| o.event), Ok(CardEvent::Swapped { .. })));
+    assert_eq!(rig.s.fault, CardFault::Moved, "no read before recover");
+    rig.work();
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    assert_eq!(
+        rig.s.live_at_clear,
+        Some(false),
+        "cleared with its row live"
+    );
+    assert!(rig.registry().get(id).is_none());
+    assert_eq!(rig.band(), SOURCE_MISSING);
+}
+
+/// C1 (#1086's review): a mount that bypasses the UI's `Card` (the
+/// console's `ls`, a sweep, the bank-2 install) finds another card: the
+/// next pass follows the volume the store mounts, not the one `Card`
+/// last saw, and the old card's rows go before the fault clears.
+#[test]
+fn a_raw_mount_on_another_card_loses_the_streams() {
+    let b = bed(4);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    rig.s.watch = Some((rig.registry(), id));
+    rig.s.inner.swap(2);
+    rig.s.mount().unwrap();
+    assert_eq!(rig.s.fault, CardFault::Moved);
+    rig.work();
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    assert_eq!(
+        rig.s.live_at_clear,
+        Some(false),
+        "cleared with its row live"
+    );
+    assert!(rig.registry().get(id).is_none());
+}
+
+/// C1 (#1086's review): a card pulled mid-read faults `Read`; a raw mount
+/// of another card since doesn't turn it into `Moved`: the re-init still
+/// runs, and the rows still go.
+#[test]
+fn a_read_fault_survives_a_raw_mount() {
+    let b = bed(5);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    rig.s.fault = CardFault::Read;
+    rig.s.inner.swap(2);
+    rig.s.mount().unwrap();
+    assert_eq!(rig.s.fault, CardFault::Read, "still owed its re-init");
+    let n = rig.s.recovers;
+    rig.work();
+    assert_eq!(rig.s.recovers, n + 1, "re-inited");
+    assert_eq!(rig.s.fault, CardFault::Clear);
+    assert!(rig.registry().get(id).is_none());
+}
+
+/// #1083: the stream rows follow their own card: the same volume again
+/// keeps them; another loses them, once.
+#[test]
+fn stream_rows_follow_their_card() {
+    let b = bed(5);
+    let mut rig = streamed_rig(&b);
+    let id = rig.ui.project().pool().find_source(b.0.sref).unwrap();
+    let vol = rig.s.inner.mount().unwrap();
+    assert!(!rig.ui.project_mut().follow_card(vol), "its own card");
+    assert!(rig.registry().get(id).is_some());
+    let other = VolumeId {
+        serial: vol.serial ^ 1,
+        ..vol
+    };
+    assert!(rig.ui.project_mut().follow_card(other), "another card");
+    assert!(rig.registry().get(id).is_none());
+    assert!(
+        !rig.ui.project_mut().follow_card(vol),
+        "nothing left to lose"
+    );
 }
 
 /// The same card mounts again: its rows stay.

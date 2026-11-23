@@ -146,6 +146,7 @@ struct MidPass2 {
 }
 
 impl Store for MidPass2 {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }

@@ -7,6 +7,7 @@
 
 use super::arena::{Cost, MAX_SOURCES};
 use super::{PartId, PartSet, Project, SlotId, bounded_index};
+use chimera_hal::store::VolumeId;
 
 bounded_index!(
     /// One of the pool's source slots, and its `SourceTable` row.
@@ -330,17 +331,37 @@ impl Project {
         moved
     }
 
-    /// The card under the streamed sources changed (a re-init after a read
-    /// fault mounted another volume): each streamed source out of the
-    /// index, so its Parts read SOURCE MISSING, and every stream row
-    /// freed, so no read lands another card's blocks. A voice holding a
-    /// retired source is never cut (ADR 0087); its wants go unserved.
+    /// The stream rows' card is `v` (#1083): rows on another volume go
+    /// (`lose_streams`), before the card IRQ reads again or a row of
+    /// `v`'s goes in. True if any went.
+    /// Bank 2's (`LoadDoor`): closed, nothing streams, nothing to lose.
+    #[optimize(size)]
+    pub fn follow_card(&mut self, v: VolumeId) -> bool {
+        super::LoadDoor::with(|d| d.follow(self, v)).unwrap_or(false)
+    }
+
+    /// `follow_card`, behind the load door: inlined there, so bank 2's.
+    #[inline(always)]
+    pub(super) fn follow_card_in(&mut self, v: VolumeId) -> bool {
+        let moved = self.pool.streams_on.is_some_and(|on| on != v);
+        if moved {
+            self.lose_streams();
+        }
+        moved
+    }
+
+    /// The card under the streamed sources changed (a mount found another
+    /// volume: `follow_card`): each streamed source out of the index, so
+    /// its Parts read SOURCE MISSING, and every stream row freed, so no
+    /// read lands another card's blocks. A voice holding a retired source
+    /// is never cut (ADR 0087); its wants go unserved.
     #[optimize(size)]
     pub fn lose_streams(&mut self) {
         let Some(reg) = self.pool.streams() else {
             return;
         };
         self.bump();
+        self.pool.streams_on = None;
         for s in SourceId::ALL {
             if self.pool.source(s).is_some_and(|e| self.pool.streamed(e.r)) {
                 self.pool.source_free(s);
@@ -348,13 +369,18 @@ impl Project {
         }
         // SAFETY: every `get` reference is formed and dropped inside one
         // entry of the audio or card interrupt, both above this thread,
-        // so none is live here; `clear` leaves the card's held row; and
-        // the pool reuses no freed id before its drain (ADR 0087), so no
-        // row is rewritten under a voice that latched it.
-        // A row the card IRQ still holds (none is expected under a fault: a
-        // retry's hold drops at its next look) is left stale: no read
-        // after the one in flight finds it, and its source's drain frees it
-        // on a later pass (`drain_retired`).
+        // so none is live here; `clear_all` leaves the row the card IRQ
+        // holds; and the pool reuses no freed id before its drain (ADR
+        // 0087), so no row is rewritten under a voice that latched it.
+        // On the firmware this runs with the card's fault set: `Read`, or
+        // the `Moved` that `FatStore`'s mount raised before it published
+        // the other card's address (`follow_card` from `recover`, or from a
+        // streamed commit on that card). The IRQ starts no read then, but
+        // one already in flight holds its row to its end; and a store that
+        // raises no `Moved` (a host's) may call it with the IRQ live. Either
+        // way a held row is left stale: no later `get` or `hold` finds it,
+        // and its source's drain frees it on a later pass
+        // (`drain_retired`).
         let _ = unsafe { reg.clear_all() };
     }
 

@@ -79,6 +79,12 @@ pub enum Ask<'a> {
     },
     /// `key`: KEY's hint on the frame's status line.
     Key(&'a Frame<'a>, &'a mut Option<Hint>),
+    /// `heads_of`'s hint for `part`'s SOURCE (#599).
+    Heads(
+        &'a crate::project::Project,
+        crate::project::PartId,
+        &'a mut Option<Hint>,
+    ),
     /// `Lanes::ease`: a UI pass of the lanes off the page, from the edited
     /// Part `part`'s stored values and the FX's.
     Ease {
@@ -138,6 +144,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         } => loops(on, algo, at, &links),
         Ask::OpsChain { formant, out } => *out = Some(ops_chain(formant)),
         Ask::Key(f, out) => *out = key(f),
+        Ask::Heads(p, part, out) => *out = heads_of(p, part).map(|q| HEADS_HINTS[q.index()]),
         Ask::Stage {
             addr,
             value,
@@ -159,6 +166,39 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         }
         Ask::Chorus { on, braid, drew } => *drew = chorus::draw(on, braid),
     }
+}
+
+/// A streamed source two Parts play keeps one pair of RAM heads, placed
+/// for the first TAPE Part that plays it (#599): on another, SOURCE says
+/// whose they are, since that Part's own START and loop start cold.
+pub const HEADS_HINTS: [Hint; 6] = [
+    &[Gesture("PART 1", "HOLDS THE RAM HEADS")],
+    &[Gesture("PART 2", "HOLDS THE RAM HEADS")],
+    &[Gesture("PART 3", "HOLDS THE RAM HEADS")],
+    &[Gesture("PART 4", "HOLDS THE RAM HEADS")],
+    &[Gesture("PART 5", "HOLDS THE RAM HEADS")],
+    &[Gesture("PART 6", "HOLDS THE RAM HEADS")],
+];
+const _: () = assert!(HEADS_HINTS.len() == crate::project::PartId::ALL.len());
+
+/// The Part whose START and loop `part`'s streamed source's RAM heads
+/// hold, when another (#599): the first TAPE Part playing it, the one
+/// `source_cell`'s re-stage places them for.
+pub fn heads_of(
+    p: &crate::project::Project,
+    part: crate::project::PartId,
+) -> Option<crate::project::PartId> {
+    let tape = |q: crate::project::PartId| {
+        let s = &p.part(q).sound;
+        (s.engine() == crate::params::EngineType::Tape)
+            .then(|| s.source_ref())
+            .flatten()
+    };
+    let r = tape(part).filter(|&r| p.pool().streamed(r))?;
+    crate::project::PartId::ALL
+        .into_iter()
+        .find(|&q| tape(q) == Some(r))
+        .filter(|&q| q != part)
 }
 
 /// Lanes for a glyph's params off its page: TAPE's machine reads the most.

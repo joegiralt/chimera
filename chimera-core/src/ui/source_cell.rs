@@ -15,7 +15,7 @@ use core::ops::ControlFlow;
 use core::num::NonZeroU32;
 
 use chimera_hal::card_bus::CardFault;
-use chimera_hal::store::{ReadSink, Store, StoreError, VolumeId};
+use chimera_hal::store::{ReadSink, Store, StoreError};
 
 use crate::dsp::tape_engine::params::TapeEngineParams;
 #[cfg(feature = "tape")]
@@ -510,9 +510,6 @@ pub struct SourceCell {
     stuck: [Option<HeadsKey>; MAX_SOURCES],
     /// The card IRQ's read fault, as the last UI pass met it.
     read: Recovery,
-    /// The volume the last pass found mounted: the streamed sources' card.
-    /// NO CARD forgets nothing here, so the same card back keeps them.
-    vol: Option<VolumeId>,
 }
 
 /// A stream read fault, from the UI's side: the card IRQ sets it, the UI
@@ -592,25 +589,33 @@ impl SourceCell {
         #[cfg(feature = "tape")]
         stuck: [None; MAX_SOURCES],
         read: Recovery::Clear,
-        vol: None,
     };
 
     /// Once a pass, before any card work: under a stream read fault the
-    /// card re-inited and mounted (`Store::recover`). A volume other than
-    /// the last pass's, by this mount or a card op's since, takes the
-    /// streamed sources with it (`Project::lose_streams`); only then is
-    /// the fault cleared, so the card IRQ never reads another card's
-    /// blocks through a stale row (#610).
+    /// card re-inited and mounted (`Store::recover`); under `Moved` (a
+    /// mount found another card) no re-init. A volume other than the
+    /// stream rows' takes the streamed sources with it
+    /// (`Project::follow_card`); only then is the fault cleared, so the
+    /// card IRQ never reads another card's blocks through a stale row
+    /// (#610, #1083).
     pub fn recover<S: Store>(&mut self, card: &mut Card, s: &mut S, p: &mut Project) {
         let mut mounted = false;
         self.read = match (s.read_fault(), self.read) {
             (CardFault::Clear, _) => Recovery::Clear,
-            (CardFault::Read, Recovery::Stuck(Backoff(n)))
+            (CardFault::Read | CardFault::Moved, Recovery::Stuck(Backoff(n)))
                 if n > 0 && !matches!(card, Card::Ready(_)) =>
             {
                 Recovery::Stuck(Backoff(n - 1))
             }
-            (CardFault::Read, was) => match s.recover() {
+            // A mount found another card (#1083), maybe one that bypassed
+            // `card` (the console's, the install's): mounted again here, no
+            // re-init, so `card` and the rows follow what the store holds.
+            // A read fault re-inits first.
+            (f @ (CardFault::Read | CardFault::Moved), was) => match if f == CardFault::Moved {
+                s.mount()
+            } else {
+                s.recover()
+            } {
                 Err(StoreError::Busy) => Recovery::Owed,
                 r => {
                     (*card, _) = after_mount(*card, r);
@@ -623,15 +628,15 @@ impl SourceCell {
                 }
             },
         };
-        if let Card::Ready(v) = *card {
-            if self.vol.is_some_and(|was| was != v) {
-                p.lose_streams();
-                #[cfg(feature = "tape")]
-                {
-                    self.stuck = [None; MAX_SOURCES];
-                }
+        // The rows follow the card mounted now: another's go (#610, #1083).
+        // NO CARD forgets nothing here, so the same card back keeps them.
+        if let Card::Ready(v) = *card
+            && p.follow_card(v)
+        {
+            #[cfg(feature = "tape")]
+            {
+                self.stuck = [None; MAX_SOURCES];
             }
-            self.vol = Some(v);
         }
         // `lose_streams`' clears happen before this `Release`; the card
         // IRQ `Acquire`s the fault before it reads a row (`serving`).

@@ -224,6 +224,19 @@ fn a_stream_take_drops_a_stale_abort() {
     assert!(b.take_abort());
 }
 
+/// #1086's re-review: the mount's `Moved` is one compare-exchange from
+/// `Clear`, so a `Read` the card IRQ sets between a look and the raise is
+/// never overwritten.
+#[test]
+fn moved_never_overwrites_a_read_fault() {
+    let b = CardBus::new();
+    assert!(b.raise_moved(), "from Clear");
+    assert_eq!(b.fault(), CardFault::Moved);
+    b.set_fault(CardFault::Read);
+    assert!(!b.raise_moved(), "a read fault stays");
+    assert_eq!(b.fault(), CardFault::Read);
+}
+
 /// #766: the watchdog's abort carries the hold it judged; the IRQ drops
 /// one whose hold isn't its transfer's (a give and retake between the
 /// judge and the ask), or that a burst renewed since.

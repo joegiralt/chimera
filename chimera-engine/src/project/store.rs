@@ -22,7 +22,7 @@ use super::note::{Differ, ProjectNote, Subject};
 use super::{
     Absence, Confirmed, DeleteTarget, LoadLink, NEW_PROJECT_NAME, Origin, OverwriteTarget, PartId,
     Project, ProjectCheck, ProjectDecoder, ProjectFile, ProjectSource, Seen, SoundStatus,
-    SourceSet, Streamed, Swap, encode_project, project_crc, sound_status,
+    SourceSet, StreamedPass, Swap, encode_project, project_crc, sound_status,
 };
 
 #[optimize(size)]
@@ -475,15 +475,15 @@ fn load_into<S: Store>(
 /// With bank 2 shut none.
 #[cfg(feature = "tape")]
 #[optimize(size)]
-fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> Streamed {
+fn stream_sources<S: Store>(s: &mut S, r: &Ready, p: &mut Project, ids: SourceSet) -> StreamedPass {
     super::LoadDoor::with(|d| d.sources(s, r, p, ids)).unwrap_or_default()
 }
 
 /// No TAPE: nothing streams.
 #[cfg(not(feature = "tape"))]
 #[optimize(size)]
-fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet) -> Streamed {
-    Streamed::default()
+fn stream_sources<S: Store>(_: &mut S, _: &Ready, _: &mut Project, _: SourceSet) -> StreamedPass {
+    StreamedPass::default()
 }
 
 /// Reads sources `ids` into their absent entries, inside the load's epoch

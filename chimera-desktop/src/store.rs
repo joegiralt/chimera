@@ -20,6 +20,9 @@ pub struct DirStore {
     /// The card model's bus (`card_stream`): its read fault, cleared by
     /// `recover`.
     bus: Option<&'static CardBus>,
+    /// The volume the last mount found: another one stops the streams, as
+    /// `FatStore` does (#1083).
+    last: Option<VolumeId>,
 }
 
 fn io_err(e: io::Error) -> StoreError {
@@ -46,7 +49,11 @@ pub fn sim_card() -> PathBuf {
 
 impl DirStore {
     pub fn new(root: PathBuf) -> Self {
-        DirStore { root, bus: None }
+        DirStore {
+            root,
+            bus: None,
+            last: None,
+        }
     }
 
     /// The store the card model's streams fault through.
@@ -184,7 +191,14 @@ impl Store for DirStore {
                 .map_or(0, |d| d.as_nanos());
             self.write_volume(t as u32, *b"CHIMERA    ")?;
         }
-        self.read_volume()
+        let v = self.read_volume()?;
+        if self.last.is_some_and(|l| l != v)
+            && let Some(b) = self.bus
+        {
+            let _ = b.raise_moved();
+        }
+        self.last = Some(v);
+        Ok(v)
     }
 
     fn list(

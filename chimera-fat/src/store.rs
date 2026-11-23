@@ -57,6 +57,9 @@ pub trait Medium: BlockDevice {
     }
     /// `Store::clear_read_fault`.
     fn clear_read_fault(&self) {}
+    /// A mount found another volume than the last: `CardFault::Moved`,
+    /// only over `Clear` (`CardBus::raise_moved`).
+    fn moved(&self) {}
 }
 
 /// Where the SD bus is: acquiring at the init clock under `SD_ACQUIRE_MS`,
@@ -248,6 +251,8 @@ pub struct FatStore<D: Medium> {
     orphan: Keyed<Orphan>,
     /// Files the streams read: `write` and `delete` refuse them.
     streamed: fn(FileName) -> bool,
+    /// The volume the last mount found: another one is `Medium::moved`.
+    last: Option<VolumeId>,
 }
 
 type FsResult<T, D> = Result<T, FsError<PartError<<D as BlockDevice>::Error>>>;
@@ -262,6 +267,7 @@ impl<D: Medium> FatStore<D> {
             stale: Keyed::new(),
             orphan: Keyed::new(),
             streamed: |_| false,
+            last: None,
         }
     }
 
@@ -611,7 +617,16 @@ impl<D: Medium> Store for FatStore<D> {
                 return Err(e);
             }
         };
+        // Another card than the last mount's: the streams stop before the
+        // card's address is published (`mounted`) and before any caller
+        // sees it (#1083). Only over `Clear` (`Medium::moved`, one
+        // compare-exchange): a read fault stays, its re-init follows the
+        // new card all the same.
+        if self.last.is_some_and(|l| l != id) {
+            self.dev.moved();
+        }
         self.dev.mounted()?;
+        self.last = Some(id);
         Ok(id)
     }
 

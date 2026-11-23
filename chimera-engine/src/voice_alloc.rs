@@ -341,7 +341,7 @@ impl Allocator {
     }
 
     /// Part `part`'s note may take no more voices: it is at its cap.
-    fn capped(&self, part: PartId) -> bool {
+    pub(crate) fn capped(&self, part: PartId) -> bool {
         match self.shares.ask(part).max {
             MaxVoices::Auto => false,
             m @ MaxVoices::Cap(_) => m.reached(self.live(part).count()),

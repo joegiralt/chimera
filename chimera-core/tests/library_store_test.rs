@@ -326,6 +326,7 @@ fn peek_never_panics_on_cut_input() {
 struct LandsThenFails(MemStore);
 
 impl Store for LandsThenFails {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }
@@ -451,6 +452,7 @@ impl Counting {
 }
 
 impl Store for Counting {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }

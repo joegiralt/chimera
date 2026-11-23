@@ -595,6 +595,29 @@ fn a_short_quiet_returns_warm_from_its_head() {
     assert_eq!(underruns(&rig), 0);
 }
 
+/// #1083: a quiet released just short of the head's end, where the head
+/// can't hold the block and its fade ahead, starts cold: no underrun
+/// counted for a drop-out that never sounded.
+#[test]
+fn a_quiet_released_at_the_heads_end_starts_cold() {
+    let rig = Rig::new();
+    let mut p = rig.play();
+    rig.bus.ask_quiet(Ms(0));
+    p.start(4_500, Some(HEAD));
+    for _ in 0..3 {
+        p.block(1.0);
+    }
+    let at = p.pos as u32;
+    assert!(
+        at < HEAD.end.get() && at + 64 + DROP > HEAD.end.get(),
+        "{at}"
+    );
+    p.quiet_off();
+    p.block(1.0);
+    assert_eq!(p.cur.flow(), Flow::Cold);
+    assert_eq!(underruns(&rig), 0);
+}
+
 /// A note-on under a write's quiet, on a head, starts silent: it never
 /// sounds mid-save, nor keeps the quiet waiting (`loud`); released, it
 /// fades in from where its tape reached.

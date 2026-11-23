@@ -9,7 +9,7 @@
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
 
-use chimera_hal::store::{ByteSink, StoreError};
+use chimera_hal::store::{ByteSink, StoreError, VolumeId};
 
 use crate::block::DiskCode;
 use crate::midi_map::KeptMap;
@@ -117,6 +117,8 @@ pub struct Pool {
     /// Moved by every hand-out of the scratch to a writer (ADR 0305): a
     /// library read's `ReadPart` adopts only at the epoch it read at.
     scratch_epoch: u16,
+    /// The volume the stream rows' files are on; `None` with none (#1083).
+    pub(in crate::project) streams_on: Option<VolumeId>,
 }
 
 /// A source slot.
@@ -157,7 +159,7 @@ struct Index {
 }
 
 // `init_in_place` writes each field: a new one fails to build here first.
-crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch, scratch_kept, scratch_epoch });
+crate::in_place::field_list!(Pool => Pool { index, sources, clock, new_skipped, arena, scratch, scratch_kept, scratch_epoch, streams_on });
 crate::in_place::field_list!(Index => Index { slots, gens });
 
 impl Pool {
@@ -192,6 +194,7 @@ impl Pool {
             addr_of_mut!((*p).scratch).write(Sound::neutral(EngineType::Algo));
             addr_of_mut!((*p).scratch_kept).write(KeptMap::EMPTY);
             addr_of_mut!((*p).scratch_epoch).write(0);
+            addr_of_mut!((*p).streams_on).write(None);
             slot.assume_init_mut()
         }
     }
@@ -363,15 +366,18 @@ impl Pool {
         self.arena.set_streams(r);
     }
 
-    /// `source_commit` for a streamed source: its file's row goes in the
-    /// registry first, so the card can read it before any voice finds the
-    /// pool row (slice 1 § 5.5). Nothing is published on a refusal.
+    /// `source_commit` for a streamed source whose file is on volume `on`
+    /// (the rows already there are on it: `Project::follow_card`): its
+    /// file's row goes in the registry first, so the card can read it
+    /// before any voice finds the pool row (slice 1 § 5.5). Nothing is
+    /// published on a refusal.
     #[optimize(size)]
     pub(in crate::project) fn source_commit_streamed(
         &mut self,
         r: SourceRef,
         len: usize,
         file: StreamFile,
+        on: VolumeId,
     ) -> Result<SourceId, StreamRefused> {
         let reg = self.arena.streams().ok_or(StreamRefused::Full)?;
         let first = |s| {
@@ -390,7 +396,9 @@ impl Pool {
                 pool.sources.owed = pool.sources.owed.with(s);
             }
         };
-        self.commit_with(r, len, first, undo)
+        let id = self.commit_with(r, len, first, undo)?;
+        self.streams_on = Some(on);
+        Ok(id)
     }
 
     /// Whether source `s`'s heads can be re-staged now (#598): no voice

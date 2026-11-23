@@ -13,6 +13,7 @@ use chimera_hal::store::{
 pub enum NoCard {}
 
 impl Store for NoCard {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         match *self {}
     }

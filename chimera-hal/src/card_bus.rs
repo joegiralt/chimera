@@ -115,6 +115,9 @@ pub enum ProtoError {
 pub enum CardFault {
     Clear = 0,
     Read = 1,
+    /// A mount found another volume than the last (#1083): the card IRQ
+    /// reads nothing until the UI has dropped the old card's stream rows.
+    Moved = 2,
 }
 
 /// A `Stream` hold as the watchdog judged it: its stamp. An abort carries
@@ -349,6 +352,20 @@ impl CardBus {
             .is_ok()
     }
 
+    /// `Moved`, only over `Clear`: one compare-exchange, so a `Read` the
+    /// card IRQ sets meanwhile stands (its re-init follows the new card
+    /// all the same). True if raised.
+    pub fn raise_moved(&self) -> bool {
+        self.fault
+            .compare_exchange(
+                CardFault::Clear as u8,
+                CardFault::Moved as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
     pub fn set_fault(&self, f: CardFault) {
         self.fault.store(f as u8, Ordering::Release);
     }
@@ -356,6 +373,7 @@ impl CardBus {
     pub fn fault(&self) -> CardFault {
         match self.fault.load(Ordering::Acquire) {
             0 => CardFault::Clear,
+            2 => CardFault::Moved,
             _ => CardFault::Read,
         }
     }

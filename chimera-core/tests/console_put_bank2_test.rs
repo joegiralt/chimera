@@ -16,6 +16,7 @@ use std::collections::VecDeque;
 struct Mem(MemStore);
 
 impl Store for Mem {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }

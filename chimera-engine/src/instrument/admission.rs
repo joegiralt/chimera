@@ -12,8 +12,6 @@ use core::sync::atomic::Ordering::Relaxed;
 use chimera_hal::card_bus::CardFault;
 use chimera_theory::Note;
 
-use chimera_hal::units::BytesPerSec;
-
 use super::{AudioShared, Instrument, NoteOrigin, Paid};
 use crate::MidiNote;
 use crate::hw::{Cost, MAX_VOICES};
@@ -21,7 +19,9 @@ use crate::params::EngineType;
 use crate::part::PartMode;
 use crate::project::{PartId, SourceId};
 use crate::source_table::GateView;
-use crate::stream::admit::{Admit, Age, Bill, ReadRatio, STREAM_BUDGET_BPS, admit};
+use crate::stream::admit::{
+    Admit, Bill, Raise, ReadRatio, STREAM_BUDGET_BPS, admit_on, raise_room,
+};
 use crate::stream::stats::StreamStats;
 use crate::voice_alloc::{VoiceIdx, VoiceSet};
 
@@ -336,79 +336,83 @@ impl Instrument {
         self.knobs[p.index()].0.bend().max(target).max(0.0)
     }
 
-    /// Admits a streamed note billed `new` against the voices streaming
-    /// now, but those `gone` (stolen already, or replaced by the note):
-    /// `Steal(v)` frees one more, released first, the oldest (umbrella open
-    /// question 2). A voice still fading counts until it is freed; a shed
-    /// one goes first. Under a card fault nothing streams: refused, no
-    /// voice stolen. Only a voice that isn't another Part's guarded one
-    /// goes (`Allocator::card_stealable`, ADR 0281), at the note's Part's
-    /// cap too: the cap limits voices, not bandwidth.
-    fn admit_stream(&self, new: Bill, gone: VoiceSet, part: PartId, fault: CardFault) -> Admit {
-        if fault == CardFault::Read {
+    /// Admits a streamed note billed `new` onto voice `on`'s ring (`None`:
+    /// a voice the note takes whole), against every
+    /// other voice streaming now (`admit_on`): a dying voice's bill counts
+    /// until it is freed and it is never a victim (#764); `Steal(w)`
+    /// frees one live voice, released first, the oldest (umbrella open
+    /// question 2), for the note to take behind its fade. Under a card
+    /// fault nothing streams: refused, no voice stolen. Only a voice that
+    /// isn't another Part's guarded one goes (`Allocator::card_stealable`,
+    /// ADR 0281), at the note's Part's cap too: the cap limits voices, not
+    /// bandwidth.
+    fn admit_stream(
+        &self,
+        new: Bill,
+        on: Option<VoiceIdx>,
+        part: PartId,
+        fault: CardFault,
+    ) -> Admit {
+        if fault != CardFault::Clear {
             return Admit::Refuse;
         }
-        let playing = VoiceIdx::ALL
+        let others = VoiceIdx::ALL
             .iter()
             .zip(&self.streaming)
-            .filter_map(|(&v, s)| {
-                let b = s.billed().filter(|_| !gone.contains(v))?;
-                Some((v, b, self.age_now(v, s.age)))
-            });
-        admit(
+            .filter(|&(&v, _)| Some(v) != on)
+            .filter_map(|(&v, s)| Some((v, s.billed()?, s.age)));
+        let here = on
+            .and_then(|v| self.streaming[v.index()].billed())
+            .unwrap_or(Bill::ZERO);
+        admit_on(
             new,
-            playing,
+            here,
+            others,
             STREAM_BUDGET_BPS,
-            self.alloc.card_stealable(part),
+            self.card_victims(part),
         )
     }
 
-    /// Voice `v`'s age as a steal sees it: shed or cut this block (dying
-    /// before its block's `age_stream`), the first to go.
-    fn age_now(&self, v: VoiceIdx, age: Age) -> Age {
-        if self.alloc.slots()[v.index()].dying() {
-            Age::DYING
-        } else {
-            age
-        }
+    /// The voices a card steal for Part `part` may take: its stealable
+    /// ones, none dying (#764).
+    fn card_victims(&self, part: PartId) -> VoiceSet {
+        let dying = VoiceIdx::ALL
+            .into_iter()
+            .filter(|&v| self.alloc.slot(v).dying())
+            .fold(VoiceSet::EMPTY, VoiceSet::with);
+        self.alloc.card_stealable(part).without(dying)
     }
 
-    /// Admits voice `v`'s bill `new` mid-note (#595): only released voices
-    /// go, each fading out as a shed one does; a held note is never cut.
-    /// Only voices that aren't another Part's guarded ones go
-    /// (`Allocator::card_stealable`, ADR 0281). False: it doesn't fit,
-    /// nothing stolen.
+    /// Admits voice `v`'s bill `new` mid-note (#595): it fits beside every
+    /// other voice's bill, a dying one's too (#764). Else released voices
+    /// go, the first `Age::rank` gives, each fading out as a shed one does,
+    /// until the live voices leave room; the note holds at its cap until
+    /// their fades end and a later block admits it. A held note is never
+    /// cut, nor a dying one taken; if even every released voice wouldn't
+    /// make room, none goes. Only voices that aren't another Part's
+    /// guarded ones go (`Allocator::card_stealable`, ADR 0281). False: it
+    /// doesn't fit now.
     fn admit_mid(&mut self, v: VoiceIdx, new: Bill) -> bool {
-        let mut gone = VoiceSet::EMPTY.with(v);
         let Some(part) = self.alloc.slot(v).part() else {
             return false;
         };
-        // Each steal adds a voice to `gone`: at most one a voice.
-        for _ in 0..=MAX_VOICES {
-            let st = &self.streaming;
-            let others = || {
-                VoiceIdx::ALL
-                    .iter()
-                    .zip(st)
-                    .filter(|&(&w, _)| !gone.contains(w))
-                    .filter_map(|(&w, s)| Some((w, s.billed()?, self.age_now(w, s.age))))
-            };
-            let held = others()
-                .filter(|o| !o.2.released())
-                .fold(0u32, |a, o| a.saturating_add(o.1.get()));
-            let released = others().filter(|o| o.2.released());
-            let room = BytesPerSec::new(STREAM_BUDGET_BPS.get().saturating_sub(held));
-            match admit(new, released, room, self.alloc.card_stealable(part)) {
-                Admit::Ok => return true,
-                Admit::Steal(w) => {
-                    gone = gone.with(w);
+        let alloc = &self.alloc;
+        let others = VoiceIdx::ALL
+            .iter()
+            .zip(&self.streaming)
+            .filter(|&(&w, _)| w != v)
+            .filter_map(|(&w, s)| Some((w, s.billed()?, s.age, alloc.slot(w).dying())));
+        match raise_room(new, others, STREAM_BUDGET_BPS, self.card_victims(part)) {
+            Raise::Fits => true,
+            Raise::Hold => false,
+            Raise::Wait(gone) => {
+                for w in VoiceIdx::ALL.into_iter().filter(|&w| gone.contains(w)) {
                     self.alloc.kill(w);
                     self.shed(w);
                 }
-                Admit::Refuse => return false,
+                false
             }
         }
-        false
     }
 
     /// Voice `v`'s note, paid for, now reaches `new` (#595): re-admitted
@@ -477,13 +481,15 @@ impl Instrument {
         }
     }
 
-    /// The voice a streamed note-on books (`Allocator::pick_where`), once
-    /// its admission has freed what the card needs: each voice it steals
-    /// fades out through the allocator, as a shed one does, and the pick
-    /// is asked again, so the note takes a stolen voice when it needs one.
-    /// A Mono retrigger or a re-strike replaces its voice's stream; a STEAL
-    /// GLIDE one carries on the held note, so it is admitted mid-note
-    /// (`raise`). Returns what the note is paid; `None`: refused, counted.
+    /// The voice a streamed note-on books (`Allocator::pick_where`), and
+    /// the card's room for it (`admit_on`, #764): on the picked voice's own
+    /// ring (a free or dying one, the note's own, or any at the Part's cap)
+    /// if it fits; else, a note free to move (not a MONO retrigger or a
+    /// re-strike, its Part under its cap), behind a fade already running
+    /// (a cut's, a shed's) that has room, else behind one live victim it
+    /// steals, the top-ranked; else refused, nothing stolen. A STEAL GLIDE
+    /// retrigger carries on the held note, admitted mid-note (`raise`).
+    /// Returns what the note is paid; `None`: refused, counted.
     fn pick_streamed(
         &mut self,
         at: PickAt,
@@ -491,12 +497,7 @@ impl Instrument {
         new: Paid,
         (stats, fault): (Option<&StreamStats>, CardFault),
     ) -> Option<(VoiceIdx, Option<Paid>)> {
-        let mut gone = VoiceSet::EMPTY;
-        // Each steal adds a voice to `gone`: at most one a voice.
-        for _ in 0..=MAX_VOICES {
-            let Some(vi) = self.pick_one(at, cost) else {
-                break;
-            };
+        if let Some(vi) = self.pick_one(at, cost) {
             let v = vi.index();
             let s = *self.alloc.slot(vi);
             let replaces = !s.dying()
@@ -507,15 +508,38 @@ impl Instrument {
                 self.raise(vi, new, stats);
                 return Some((vi, self.streaming[v].paid));
             }
-            let ask = if replaces { gone.with(vi) } else { gone };
-            match self.admit_stream(new.bill, ask, at.part, fault) {
-                Admit::Ok => return Some((vi, Some(new))),
-                Admit::Steal(w) => {
-                    gone = gone.with(w);
-                    self.alloc.kill(w);
-                    self.shed(w);
-                }
-                Admit::Refuse => break,
+            // At its cap a Part keeps to the voice the allocator gave it
+            // (ADR 0281): taking another's would be one over.
+            let capped = self.alloc.capped(at.part);
+            // A free or dying voice, the note's own, or a capped Part's: the
+            // note's ring. A live one the allocator would steal stays
+            // billed, so the card's own victim rule picks (`admit_on`).
+            let ring = (s.is_free() || s.dying() || replaces || capped).then_some(vi);
+            let first = self.admit_stream(new.bill, ring, at.part, fault);
+            if first == Admit::Ok {
+                return Some((vi, Some(new)));
+            }
+            // A note bound to its own voice (a MONO retrigger, a re-strike)
+            // can't move: its old note would hold on beside it, two voices.
+            let moves = !replaces && !capped;
+            // Behind a fade already running (a cut's, a shed's), the note
+            // shares that ring's bill: no steal (#764, #706).
+            let behind = VoiceIdx::ALL.into_iter().filter(|_| moves).find(|&d| {
+                self.alloc.slot(d).dying()
+                    && self.admit_stream(new.bill, Some(d), at.part, fault) == Admit::Ok
+            });
+            if let Some(d) = behind {
+                return Some((d, Some(new)));
+            }
+            // Else one live victim, the note behind its fade: one ring, one
+            // bill. Not for a note that can't move: the victim's bill stays
+            // until its fade ends, so refused, nothing stolen.
+            if let Admit::Steal(w) = first
+                && moves
+            {
+                self.alloc.kill(w);
+                self.shed(w);
+                return Some((w, Some(new)));
             }
         }
         self.alloc.refuse();

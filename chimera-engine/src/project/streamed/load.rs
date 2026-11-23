@@ -13,7 +13,9 @@ use super::super::arena::ARENA_BYTES;
 use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
 use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
-use super::{LoadKind, Phase, StreamFail, StreamLoad, StreamStep, Streamed, load_kind};
+use super::{
+    LoadKind, NotFound, Phase, StreamFail, StreamLoad, StreamStep, StreamedPass, load_kind,
+};
 use crate::dsp::tape_engine::read::{DESC_LEN, write_head_table};
 use crate::storage::{
     CardError, CardFault, Crc32, LoadError, Ready, SourceLayout, SourceReadError, held_len,
@@ -66,6 +68,10 @@ impl StreamLoad {
         p: &mut Project,
         budget: usize,
     ) -> Result<Option<SourceId>, StreamFail> {
+        // Every pass on the card the first one read (#1083).
+        if *self.on.get_or_insert(r.volume()) != r.volume() {
+            return Err(StreamFail::Read(SourceReadError::Load(LoadError::Missing)));
+        }
         let (file, at) = match self.phase {
             Phase::Heads { file, at } => (file, at),
             Phase::Find => return self.find(s, r).map(|()| None),
@@ -121,8 +127,10 @@ impl StreamLoad {
                 .map(Some)
                 .ok_or(StreamFail::Sounding);
         }
+        // Rows of another card than this read's go first (#1083).
+        follow(p, r.volume());
         p.pool
-            .source_commit_streamed(self.sref, len, file)
+            .source_commit_streamed(self.sref, len, file, r.volume())
             .map(Some)
             .map_err(|e| match e {
                 StreamRefused::Pool(e) => StreamFail::Pool(e),
@@ -248,15 +256,17 @@ impl StreamLoad {
 
 /// The sources `ids`, too big for the arena, that a TAPE Part plays
 /// forward load as their heads (slice 1 § 5.6), as the SOURCE cell's load
-/// does; one every stream row refuses, or in too many runs, stays absent
-/// and says why. How many streamed. A card fault ends them.
+/// does; one every stream row refuses, in too many runs, or with no room
+/// for its heads stays absent and says why. Returns how many streamed,
+/// and those that fit whole since another's read missed, for the loader
+/// to read whole (#765). A card fault ends them.
 // Not size-optimised: its frame grows on the stack check's deepest chain (ADR 0267).
 pub(super) fn stream_sources(
     s: &mut dyn Store,
     r: &Ready,
     p: &mut Project,
     ids: SourceSet,
-) -> Streamed {
+) -> StreamedPass {
     let (mut n, mut fault, mut whole) = (0u8, false, SourceSet::EMPTY);
     for id in ids.iter() {
         let Some(e) = p.pool.source(id) else { continue };
@@ -311,17 +321,16 @@ pub(super) fn stream_sources(
                 continue;
             }
         };
-        // Its runs don't hold its samples (the file's), or its heads don't
-        // fit the gap (didn't fit, #765).
-        let Some(mut l) = StreamLoad::found(p, head, heads, runs) else {
-            let file = SourceLayout::whole(head).and_then(|l| StreamFile::from_layout(&l, runs));
-            let why = if file.is_some() {
-                Absence::NoRoom
-            } else {
-                Absence::Missing
-            };
-            p.pool.mark_absent(id, why);
-            continue;
+        let mut l = match StreamLoad::found(p, head, heads, runs) {
+            Ok(l) => l,
+            Err(NotFound::File) => {
+                p.pool.mark_absent(id, Absence::Missing);
+                continue;
+            }
+            Err(NotFound::NoRoom) => {
+                p.pool.mark_absent(id, Absence::NoRoom);
+                continue;
+            }
         };
         // One card operation, as `read_sources`' whole reads (ADR 0087),
         // `ARENA_BYTES` a pass: the heads are the arena's, so they take one
@@ -350,5 +359,21 @@ pub(super) fn stream_sources(
             p.pool.mark_absent(id, w);
         }
     }
-    Streamed { n, whole }
+    StreamedPass { n, whole }
+}
+
+/// `Project::follow_card`, bank 2's (#1083). Out of line: its
+/// `lose_streams` stays off the streamed load's frame (the stack check's
+/// deepest chain runs through it).
+#[inline(never)]
+pub(super) fn follow(p: &mut Project, v: chimera_hal::store::VolumeId) -> bool {
+    p.follow_card_in(v)
+}
+
+/// `LoadDoor`'s `ask` entry.
+pub(super) fn ask(a: super::LoadAsk<'_>) {
+    match a {
+        super::LoadAsk::Sources { s, r, p, ids, out } => *out = stream_sources(s, r, p, ids),
+        super::LoadAsk::Follow { p, v, out } => *out = follow(p, v),
+    }
 }

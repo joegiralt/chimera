@@ -34,6 +34,9 @@ pub const WOW_CENTS: Cents = Cents::new(33.0);
 pub struct Bill(u32);
 
 impl Bill {
+    /// Nothing on the card.
+    pub const ZERO: Bill = Bill(0);
+
     /// Any bill: for the tests' fakes.
     #[cfg(any(test, feature = "test-support"))]
     pub const fn new(bps: u32) -> Bill {
@@ -174,7 +177,7 @@ impl Age {
     /// oldest is usually the chord's root (#698), and a slow pad's newest
     /// notes, still swelling, are kept. Of notes all in their attack, the
     /// oldest goes.
-    fn rank(self) -> (bool, u32, bool, u32) {
+    pub(crate) fn rank(self) -> (bool, u32, bool, u32) {
         match self {
             Age::Released { since } => (true, since.get(), false, 0),
             Age::Held {
@@ -223,6 +226,101 @@ pub fn admit(
         return Admit::Ok;
     }
     victim.map_or(Admit::Refuse, |(i, _)| Admit::Steal(i))
+}
+
+/// Admits `new` onto a voice whose ring carries `on` already (a fade
+/// queued ahead of it, or nothing): one ring serves one stream at a time,
+/// so the two bill the larger. `others` is every other voice's bill, a
+/// dying one's too: a fade streams until its voice is freed (#764).
+/// `Steal(w)`: `w`, a live voice in `stealable` (never a dying one), the
+/// first `Age::rank` gives, takes the note behind its own fade, if that
+/// makes room; else `Refuse`, nothing stolen: a second victim's bill
+/// would stay until its fade ended, freeing nothing in time.
+pub fn admit_on(
+    new: Bill,
+    on: Bill,
+    others: impl Iterator<Item = (VoiceIdx, Bill, Age)>,
+    budget: BytesPerSec,
+    stealable: VoiceSet,
+) -> Admit {
+    let budget = budget.get();
+    if new.0 > budget {
+        return Admit::Refuse;
+    }
+    let mut used = 0u32;
+    let mut victim: Option<(VoiceIdx, Bill, Age)> = None;
+    for (i, b, age) in others {
+        used = used.saturating_add(b.0);
+        if stealable.contains(i) && victim.is_none_or(|(_, _, v)| age.rank() > v.rank()) {
+            victim = Some((i, b, age));
+        }
+    }
+    if used.saturating_add(new.0.max(on.0)) <= budget {
+        return Admit::Ok;
+    }
+    match victim {
+        Some((w, b, _))
+            if used
+                .saturating_add(on.0)
+                .saturating_sub(b.0)
+                .saturating_add(new.0.max(b.0))
+                <= budget =>
+        {
+            Admit::Steal(w)
+        }
+        _ => Admit::Refuse,
+    }
+}
+
+/// What a mid-note raise to `new` does (#595, #764).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Raise {
+    /// It fits beside every other bill, a dying voice's too.
+    Fits,
+    /// Not yet: these released victims go, and once their fades end a
+    /// later block admits it; none, if only the fades in flight are over.
+    Wait(VoiceSet),
+    /// Even every released victim wouldn't make room: nothing goes.
+    Hold,
+}
+
+/// A raise to `new` beside `others` (every other voice's bill, its age and
+/// whether it is dying): a dying voice's bill counts until it is freed,
+/// and only released voices in `stealable` (never a dying one) go, the
+/// first `Age::rank` gives, while the live voices leave no room.
+pub fn raise_room(
+    new: Bill,
+    others: impl Iterator<Item = (VoiceIdx, Bill, Age, bool)> + Clone,
+    budget: BytesPerSec,
+    stealable: VoiceSet,
+) -> Raise {
+    let budget = budget.get();
+    let (mut live, mut all) = (0u32, 0u32);
+    for (_, b, _, dying) in others.clone() {
+        all = all.saturating_add(b.0);
+        if !dying {
+            live = live.saturating_add(b.0);
+        }
+    }
+    if all.saturating_add(new.0) <= budget {
+        return Raise::Fits;
+    }
+    let victim = |(i, _, age, dying): &(VoiceIdx, Bill, Age, bool)| {
+        !dying && age.released() && stealable.contains(*i)
+    };
+    let mut gone = VoiceSet::EMPTY;
+    while live.saturating_add(new.0) > budget {
+        let Some((i, b, _, _)) = others
+            .clone()
+            .filter(|o| victim(o) && !gone.contains(o.0))
+            .max_by_key(|o| o.2.rank())
+        else {
+            return Raise::Hold;
+        };
+        live = live.saturating_sub(b.0);
+        gone = gone.with(i);
+    }
+    Raise::Wait(gone)
 }
 
 /// Streamed notes at ROOT a source of `rate` fits in the budget, `wow`

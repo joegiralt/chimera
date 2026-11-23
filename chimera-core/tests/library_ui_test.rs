@@ -53,6 +53,7 @@ struct Counted {
 }
 
 impl Store for Counted {
+    fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }

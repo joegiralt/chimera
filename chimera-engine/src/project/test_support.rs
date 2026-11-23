@@ -293,6 +293,12 @@ impl ByteSink for Half<'_> {
 }
 
 impl<S: Store> Store for FullOnWrite<S> {
+    fn read_fault(&self) -> chimera_hal::card_bus::CardFault {
+        self.0.read_fault()
+    }
+    fn clear_read_fault(&mut self) {
+        self.0.clear_read_fault()
+    }
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.0.mount()
     }
@@ -396,6 +402,12 @@ impl ReadSink for Flip<'_> {
 }
 
 impl<S: Store> Store for FlipOnSecondRead<S> {
+    fn read_fault(&self) -> chimera_hal::card_bus::CardFault {
+        self.inner.read_fault()
+    }
+    fn clear_read_fault(&mut self) {
+        self.inner.clear_read_fault()
+    }
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }
@@ -479,6 +491,12 @@ impl<S> FailOnSecondRead<S> {
 }
 
 impl<S: Store> Store for FailOnSecondRead<S> {
+    fn read_fault(&self) -> chimera_hal::card_bus::CardFault {
+        self.inner.read_fault()
+    }
+    fn clear_read_fault(&mut self) {
+        self.inner.clear_read_fault()
+    }
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
         self.inner.mount()
     }

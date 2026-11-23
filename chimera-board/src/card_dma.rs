@@ -1976,7 +1976,7 @@ mod bench {
             if CARD_ADDR.get().is_none() {
                 return Err(ReadFail::Unmounted);
             }
-            if BUS.fault() == CardFault::Read {
+            if BUS.fault() != CardFault::Clear {
                 return Err(ReadFail::Fault);
             }
             match MAIL.state() {
