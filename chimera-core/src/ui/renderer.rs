@@ -1,6 +1,7 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use crate::dsp::chorus::ChorusMode;
 use crate::dsp::clampf;
 use crate::dsp::reverb::ReverbType;
 use embedded_graphics::draw_target::DrawTarget;
@@ -1158,11 +1159,16 @@ impl Renderer {
                 // Which of the composite's params has focus.
                 let focus = id.params().iter().position(|&a| Some(a) == focused);
                 match id {
-                    CompositeId::ChorusBraid => Gauge::Braid(Braid::from_set(
-                        self.eased_set(f, BRAID_PARAMS),
-                        focus.map(|i| BraidPart::ALL[i]),
-                        frame,
-                    )),
+                    // MODE is a choice: read as stored, never through the
+                    // modes between on its way (ADR 0324).
+                    CompositeId::ChorusBraid => Gauge::Braid(Braid {
+                        mode: ChorusMode::from_u8(f.fx.chorus.mode),
+                        ..Braid::from_set(
+                            self.eased_set(f, BRAID_PARAMS),
+                            focus.map(|i| BraidPart::ALL[i]),
+                            frame,
+                        )
+                    }),
                     CompositeId::DelayRings => Gauge::Rings(Rings::from_set(
                         self.eased_set(f, RINGS_PARAMS),
                         focus.map(|i| RingsPart::ALL[i]),

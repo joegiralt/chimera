@@ -568,6 +568,25 @@ impl UiDoor {
     }
 }
 
+/// FLANGER's moiré or PHASER's ray gun through the UI door's `notes`
+/// (ADR 0324), out of line for the generic `braid`: whether it drew.
+/// Closed, false: the braid.
+#[inline(never)]
+pub(crate) fn chorus(
+    on: &mut dyn crate::ui::tape_strip::Paint,
+    braid: &crate::ui::glyph::Braid,
+) -> bool {
+    let mut drew = false;
+    ui_door(|u| {
+        u.notes(crate::ui::notes::Ask::Chorus {
+            on,
+            braid,
+            drew: &mut drew,
+        })
+    });
+    drew
+}
+
 /// MAX VOICES and RESERVE through the UI door's `voices` (ADR 0281): one
 /// out-of-line call for every bank-1 stub. Closed, `None`.
 #[inline(never)]

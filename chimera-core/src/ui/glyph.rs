@@ -943,6 +943,6 @@ pub const fn anim_key(animates: bool, frame: u32) -> u32 {
 
 /// `x` (0 or more, a frame count's worth) into 0..period: whole periods
 /// off by a truncating cast, not f64 `fmod`, which costs 3.6 KB of flash.
-fn wrap(x: f64, period: f64) -> f32 {
+pub(crate) fn wrap(x: f64, period: f64) -> f32 {
     (x - period * (x / period) as u32 as f64).max(0.0) as f32
 }

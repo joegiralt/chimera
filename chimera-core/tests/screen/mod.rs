@@ -1190,6 +1190,7 @@ pub type ScreenCase = (&'static str, fn(&mut UiState));
 /// (ADR 0055). The mixer opens on SENDS, node 1 (ADR 0057); the FX come
 /// after the Part's SENDS.
 const MST: usize = if cfg!(feature = "master-tape") { 6 } else { 5 };
+pub const CHO: usize = 2;
 pub const DLY: usize = 3;
 pub const REV: usize = 4;
 #[cfg(feature = "master-tape")]
@@ -2076,6 +2077,15 @@ pub const CASES: &[ScreenCase] = &[
     ("mixer_sends", |ui| {
         feed(ui, Input::chord(ButtonId::Mix, ButtonId::B1));
         feed(ui, Input::turn(EncoderId::C, 40));
+    }),
+    // The chorus's FLANGER moiré and PHASER ray gun (ADR 0324), MODE in focus.
+    ("mixer_fx_chorus_flanger", |ui| {
+        to_fx(ui, CHO);
+        feed(ui, Input::turn(EncoderId::A, 3)); // MODE I → FLANGER
+    }),
+    ("mixer_fx_chorus_phaser", |ui| {
+        to_fx(ui, CHO);
+        feed(ui, Input::turn(EncoderId::A, 4)); // MODE I → PHASER
     }),
     ("mixer_fx_delay", |ui| to_fx(ui, DLY)),
     ("mixer_fx_reverb", |ui| {

@@ -1126,6 +1126,11 @@ where
     use crate::dsp::fast_sin;
     use core::f32::consts::{FRAC_PI_2, TAU};
     const STEP: i32 = 4;
+    // FLANGER's moiré and PHASER's ray gun are bank 2's (ADR 0324); closed,
+    // the braid.
+    if crate::bank2::chorus(&mut crate::ui::tape_strip::On(d), b) {
+        return;
+    }
     // Strands kept 2 px inside the box, so their thickness never leaves it.
     let (x0, w, h) = (theme::BRAID_X + 2, theme::BRAID_W - 4, theme::BRAID_H);
     let cy = theme::BRAID_Y + h / 2;

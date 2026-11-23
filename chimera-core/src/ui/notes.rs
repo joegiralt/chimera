@@ -10,7 +10,10 @@
 //! DECAY 1 LEVEL's under a held decay, the ratio CRSE, FINE and DETUN
 //! come to, the chart's feedback loops; ALGO PAGES' operator-first
 //! chains (ADR 0300). The compressor's KEY (ADR 0303): what each choice
-//! listens to, on MST's status line.
+//! listens to, on MST's status line. The chorus's FLANGER and PHASER
+//! glyphs (ADR 0324, `chorus`).
+
+pub mod chorus;
 
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::ParamId;
@@ -99,6 +102,13 @@ pub enum Ask<'a> {
         sources: &'a [f32; MAX_MOD_SOURCES],
         out: &'a mut Option<f32>,
     },
+    /// `chorus::draw`: FLANGER's moiré or PHASER's ray gun in the braid's box,
+    /// `drew` set; the braid's modes leave it false (ADR 0324).
+    Chorus {
+        on: &'a mut dyn Paint,
+        braid: &'a crate::ui::glyph::Braid,
+        drew: &'a mut bool,
+    },
 }
 
 /// The page an operator's cell is on: one parameter across OP1-OP6, the
@@ -147,6 +157,7 @@ pub(crate) fn ask_in(a: Ask<'_>) {
                 *out = v;
             }
         }
+        Ask::Chorus { on, braid, drew } => *drew = chorus::draw(on, braid),
     }
 }
 
