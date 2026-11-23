@@ -8,11 +8,13 @@
 
 ## Decision
 - **The fold.** `SINE_LUT` folds each entry onto ±π/2 (`sin(π − x) = sin x`) before the series. That is exact to f32 there (the x¹³ term is 3.5e-7), so `fast_sin_turns` errs only by its interpolation, under 6e-6. Table data only: no code or size change.
-- **WAVE MORPH is frozen.** Its recipe keeps `origin = "render"` (MORPH PAD 48, swept, as before) and adds `frozen = "frozen/WAVE-MORPH.f32"`. That file holds the 96,000 48 kHz samples origin/0.4 (6fb04d0e) rendered, as raw f32 LE. `factory_tapes::audio` reads it back bit for bit instead of rendering. The rest of the build is unchanged, so its CRC stays FD87A9B7 and TINZ stays the owner's file.
+- **WAVE MORPH is frozen.** Its recipe keeps `origin = "render"` (MORPH PAD 48, swept, as before) and adds `frozen = "frozen/WAVE-MORPH.f32"`, which parses to `Origin::Frozen { file, from: Render }`. That file holds the 96,000 48 kHz samples origin/0.4 (6fb04d0e) rendered, as raw f32 LE. `factory_tapes::audio` reads it back bit for bit instead of rendering, and refuses a file whose length isn't its render's (`Render::frames`). The rest of the build is unchanged, so its CRC stays FD87A9B7 and TINZ stays the owner's file.
+- **TINZ with the wheel up.** TINZ's LFO 1 is a SINE that walks POSITION once the wheel opens its DEPTH. With the wheel up it reads the folded table: up to 4.6e-4 off 0.4's, about −67 dB. The owner accepted this on 2026-11-22: TINZ's LFO plays the corrected sine. With the wheel at rest TINZ is 0.4's, bit for bit.
 - **Pinned by tests.**
   - `wave_morph_is_frozen` holds the CRC.
   - `factory_tinz_is_the_owners` holds TINZ's record.
-  - `tinz_plays_as_on_0_4` holds TINZ's two seconds through the Instrument, at 0.4's hash.
+  - `tinz_plays_as_on_0_4` holds TINZ's two seconds through the Instrument with the wheel at rest, at 0.4's hash.
+  - `tinz_with_the_wheel_up_plays_the_folded_sine` pins TINZ with the wheel up at the new value, naming the accepted difference.
   - `manifest_crcs_are_pinned` now lists every source off its pin, not only the first.
 - **Where it lives.** The file is an input of the host tool that builds the card's factory pack (`just factory-tapes`, then the card). It is neither firmware nor flash: it costs 384,000 B in the repo and none on the unit.
 

@@ -16,7 +16,7 @@ use chimera_core::scope::{ScopeWriter, scope_buffer};
 use chimera_core::source_table::{AudioToken, GateView};
 use chimera_core::{MidiNote, Velocity};
 use chimera_desktop::factory_tapes::{
-    ROOT, Recipes, build_all, held, manifest_crcs, originals, read_recipes, tape_sound,
+    Origin, ROOT, Recipes, build_all, held, manifest_crcs, originals, read_recipes, tape_sound,
 };
 use chimera_desktop::import::tape::Built;
 use chimera_desktop::listen::lufs;
@@ -401,12 +401,15 @@ fn wave_morph_is_frozen() {
         .sref
         .crc;
     assert_eq!(crc, 0xFD87_A9B7, "{crc:08X}");
+    assert!(
+        matches!(r.sources[i].origin, Origin::Frozen { .. }),
+        "kept as a file"
+    );
 }
 
-/// TINZ, on its source, at its root for two seconds through the Instrument:
-/// P1 bit for bit as origin/0.4 (6fb04d0e) played it.
-#[test]
-fn tinz_plays_as_on_0_4() {
+/// TINZ on its source at its root for two seconds through the Instrument,
+/// LFO 1's DEPTH at `depth` (its wheel: 0 at rest, 1 fully up): P1's hash.
+fn tinz(depth: f32) -> u64 {
     let (r, built) = set();
     let s = r.sounds.iter().find(|s| s.name.as_str() == "TINZ").unwrap();
     let b = r
@@ -416,20 +419,40 @@ fn tinz_plays_as_on_0_4() {
         .find(|(x, _)| x.name == s.source)
         .and_then(|(_, b)| b.as_ref())
         .unwrap();
-    let snd = tape_sound(s, &b.head);
+    let mut snd = tape_sound(s, &b.head);
+    snd.params.lfos[0].depth = depth;
     let (mut p, _) = Project::boxed();
     let id = p.source_store(b.head.sref, &held(b)).unwrap();
     let tok = p.pool().table().reader().unwrap();
     let out = Rig::new(&snd, Some(tok), Some(id)).play(((b.head.root + 50) / 100) as u8, 2 * BPS);
-    let h = out
-        .iter()
+    assert!(out.iter().any(|x| x.abs() > 1e-3), "silent");
+    out.iter()
         .flat_map(|v| v.to_bits().to_le_bytes())
         .fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
             (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-        });
-    assert!(out.iter().any(|x| x.abs() > 1e-3), "silent");
+        })
+}
+
+/// TINZ with the wheel at rest: P1 bit for bit as origin/0.4 (6fb04d0e)
+/// played it.
+#[test]
+fn tinz_plays_as_on_0_4() {
+    let h = tinz(0.0);
     assert_eq!(h, TINZ_0_4, "0x{h:016x}");
 }
+
+/// TINZ with the wheel up: its LFO 1 SINE walks POSITION on the folded
+/// table, up to 4.6e-4 (about −67 dB) off 0.4's, the one difference the
+/// owner accepted (2026-11-22, ADR 0325). Pinned at the new value.
+#[test]
+fn tinz_with_the_wheel_up_plays_the_folded_sine() {
+    let h = tinz(1.0);
+    assert_eq!(h, TINZ_WHEEL_UP, "0x{h:016x}");
+}
+
+/// `tinz_with_the_wheel_up_plays_the_folded_sine`'s hash on the folded
+/// table.
+const TINZ_WHEEL_UP: u64 = 0xad94_b20d_1e80_420c;
 
 /// `tinz_plays_as_on_0_4`'s hash on origin/0.4 (6fb04d0e).
 const TINZ_0_4: u64 = 0xaea6_c69f_d102_d3e6;
