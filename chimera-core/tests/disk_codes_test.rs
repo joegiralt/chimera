@@ -10,7 +10,7 @@ use chimera_core::block::{Block, DiskCode, ParamId, ValFmt};
 use chimera_core::dsp::algo::algorithms::{ALGO_IDENTS, ALGO_NAMES};
 use chimera_core::dsp::algo::kinds::{OP_KIND_IDENTS, OP_KIND_NAMES};
 use chimera_core::dsp::drum::sound::{AmpMode, LfoMode, RouteDest, RouteSource};
-use chimera_core::dsp::drum::types::{ChokeGroup, Machine};
+use chimera_core::dsp::drum::types::{ChokeGroup, PadMachine};
 use chimera_core::dsp::filter::FilterKind;
 use chimera_core::dsp::fx_bus::FxParams;
 use chimera_core::dsp::modulator::{EnvForm, EnvSlot, FuncMode, LfoForm};
@@ -154,7 +154,9 @@ fn table() -> Vec<String> {
     );
     coded(
         "DRUM_MACHINE",
-        &mut Machine::ALL.iter().map(|m| (m.disk_code(), m.disk_ident())),
+        &mut PadMachine::ALL
+            .iter()
+            .map(|m| (m.disk_code(), m.disk_ident())),
     );
     coded(
         "CHOKE",

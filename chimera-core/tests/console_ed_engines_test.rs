@@ -21,7 +21,7 @@ use chimera_core::ui::nav::{Location, PartChain};
 use chimera_engine::addr::{BlockRead, BlockRef};
 use chimera_engine::block::Scale;
 use chimera_engine::dsp::drum::sound::RouteId;
-use chimera_engine::dsp::drum::types::{Machine, PadId};
+use chimera_engine::dsp::drum::types::{Machine, PadId, PadMachine};
 use chimera_engine::dsp::filter::FilterKind;
 use chimera_engine::dsp::tape_engine::params::TapeMachine;
 use chimera_engine::dsp::voice_fx::params::FxType;
@@ -334,7 +334,7 @@ fn every_engine_variant_is_a_panel() {
         let mut f = Fake::new();
         page_texts(&mut f, EngineType::Drum).join("")
     };
-    for m in Machine::ALL {
+    for m in PadMachine::ALL {
         let v = machine_variant(m).replace(' ', "-");
         assert!(v != "-", "{m:?}");
         assert!(drum.contains(&format!("panel PAD7_MCH {v}\n")), "{m:?}");
@@ -1159,7 +1159,7 @@ fn a_pad_edit_is_a_diff_and_choosing_a_pad_is_nothing() {
     let (lines, _, _) = since(&mut f, m);
     let want = format!(
         "panel PAD4_MCH {}",
-        machine_variant(Machine::ALL[to]).replace(' ', "-")
+        machine_variant(Machine::ALL[to].into()).replace(' ', "-")
     );
     assert!(lines.contains(&want), "{lines:?}");
     assert!(vals(&lines) > 300, "{}", vals(&lines));
@@ -1655,6 +1655,31 @@ fn writes_editor_engines_fixture() {
         on_disk == text,
         "the engines changed: BLESS=1 rewrites {}",
         path.display()
+    );
+}
+
+/// ADR 0318: NONE is MACHINE's last option and a panel of its own (no
+/// knobs); the editor sets it by its number and reads it back.
+#[test]
+fn none_is_a_machine_option_and_panel() {
+    let mut f = fake(EngineType::Drum);
+    let text = page_texts(&mut f, EngineType::Drum).join("");
+    let none = Machine::ALL.len();
+    assert!(
+        text.contains(&format!("opt PAD1.MACHINE {none} \"NONE\"\n")),
+        "NONE listed last"
+    );
+    assert!(text.contains("panel PAD1_MCH NONE\n"));
+    let (_, m, _) = since(&mut f, 0);
+    set(&mut f, "PAD4.MACHINE", &format!("#{none}"));
+    assert_eq!(
+        get(&mut f, "PAD4.MACHINE"),
+        (none as f32, "NONE".to_string())
+    );
+    let (lines, _, _) = since(&mut f, m);
+    assert!(
+        lines.contains(&"panel PAD4_MCH NONE".to_string()),
+        "{lines:?}"
     );
 }
 

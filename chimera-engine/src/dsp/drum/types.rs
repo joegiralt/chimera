@@ -507,6 +507,99 @@ impl DiskCode for Machine {
     }
 }
 
+/// A pad's MACHINE (ADR 0318): a machine, or NONE: no machine, so a
+/// strike plays nothing and takes no voice, and its kit's bill skips it.
+#[derive(Clone, Copy, Debug, Eq)]
+pub enum PadMachine {
+    Machine(Machine),
+    None,
+}
+
+impl PadMachine {
+    /// MACHINE's values: `Machine::ALL`'s, in its order, then NONE, so no
+    /// machine's value moves (ADR 0318).
+    pub const ALL: [PadMachine; Machine::ALL.len() + 1] = {
+        let mut a = [PadMachine::None; Machine::ALL.len() + 1];
+        let mut i = 0;
+        while i < Machine::ALL.len() {
+            a[i] = PadMachine::Machine(Machine::ALL[i]);
+            i += 1;
+        }
+        a
+    };
+
+    /// NONE's disk code: the next free one, never reused (ADR 0045).
+    pub const NONE_CODE: u8 = 13;
+
+    /// NONE's name: its ident, option, cell and header.
+    pub const NONE_NAME: &'static str = "NONE";
+
+    /// Its place in `ALL`: MACHINE's value.
+    pub const fn index(self) -> usize {
+        match self {
+            PadMachine::Machine(m) => m.index(),
+            PadMachine::None => Machine::ALL.len(),
+        }
+    }
+
+    pub const fn from_index(i: usize) -> Option<PadMachine> {
+        if i < Self::ALL.len() {
+            Some(Self::ALL[i])
+        } else {
+            None
+        }
+    }
+
+    /// The machine it runs; `None` on NONE.
+    pub const fn machine(self) -> Option<Machine> {
+        match self {
+            PadMachine::Machine(m) => Some(m),
+            PadMachine::None => None,
+        }
+    }
+
+    pub const fn code(self) -> u8 {
+        match self {
+            PadMachine::Machine(m) => m.code(),
+            PadMachine::None => Self::NONE_CODE,
+        }
+    }
+}
+
+/// By MACHINE's value: one byte compared, its layout's (the derive's
+/// match cost bank 1 96 B in the UI's context compare).
+impl PartialEq for PadMachine {
+    fn eq(&self, o: &PadMachine) -> bool {
+        self.index() == o.index()
+    }
+}
+
+impl From<Machine> for PadMachine {
+    fn from(m: Machine) -> PadMachine {
+        PadMachine::Machine(m)
+    }
+}
+
+impl DiskCode for PadMachine {
+    fn disk_code(self) -> u8 {
+        self.code()
+    }
+
+    fn disk_ident(self) -> &'static str {
+        match self {
+            PadMachine::Machine(m) => m.disk_ident(),
+            PadMachine::None => Self::NONE_NAME,
+        }
+    }
+
+    fn from_disk_code(c: u8) -> Option<Self> {
+        match c {
+            Self::NONE_CODE => Some(PadMachine::None),
+            c => Machine::from_disk_code(c).map(PadMachine::Machine),
+        }
+    }
+}
+
 /// A pad's choke group: a hit cuts the sounding pads of its group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChokeGroup {
@@ -684,7 +777,7 @@ impl Tonal {
 /// voice at the hit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pad {
-    machine: Machine,
+    machine: PadMachine,
     knobs: KnobSet,
     level: U7,
     pan: Pan,
@@ -703,7 +796,7 @@ impl Pad {
         retrig: Retrig,
     ) -> Pad {
         Pad {
-            machine,
+            machine: PadMachine::Machine(machine),
             knobs,
             level,
             pan,
@@ -726,7 +819,7 @@ impl Pad {
         &mut self.sound
     }
 
-    pub const fn machine(&self) -> Machine {
+    pub const fn machine(&self) -> PadMachine {
         self.machine
     }
 
@@ -750,7 +843,7 @@ impl Pad {
         self.retrig
     }
 
-    pub fn set_machine(&mut self, m: Machine) {
+    pub fn set_machine(&mut self, m: PadMachine) {
         self.machine = m;
     }
 
@@ -797,19 +890,19 @@ impl Pad {
     pub fn from_bytes(b: PadBytes, d: &Pad) -> Pad {
         let [m, knobs @ .., level, pan, choke, retrig] = b;
         let u7 = |v: u8| U7::new(v).unwrap_or(U7::MAX);
-        let (machine, knobs) = match Machine::from_disk_code(m) {
+        let (machine, knobs) = match PadMachine::from_disk_code(m) {
             Some(m) => (m, KnobSet::new(knobs.map(|k| KnobValue::new(u7(k))))),
             None => (d.machine, d.knobs),
         };
-        Pad::new(
+        Pad {
             machine,
             knobs,
-            u7(level),
-            Pan::clamped(pan as i8),
-            ChokeGroup::from_disk_code(choke).unwrap_or(d.choke),
-            Retrig::from_disk_code(retrig).unwrap_or(d.retrig),
-        )
-        .with_sound(d.sound)
+            level: u7(level),
+            pan: Pan::clamped(pan as i8),
+            choke: ChokeGroup::from_disk_code(choke).unwrap_or(d.choke),
+            retrig: Retrig::from_disk_code(retrig).unwrap_or(d.retrig),
+            sound: d.sound,
+        }
     }
 }
 
@@ -949,13 +1042,29 @@ impl KitNote {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrumHit {
     pad: PadId,
+    machine: Machine,
     params: Pad,
     pitch: Transpose,
 }
 
 impl DrumHit {
-    pub const fn new(pad: PadId, params: Pad, pitch: Transpose) -> DrumHit {
-        DrumHit { pad, params, pitch }
+    /// `params` struck on `pad`; `None` on a NONE pad, which plays no hit
+    /// (ADR 0318).
+    pub const fn new(pad: PadId, params: Pad, pitch: Transpose) -> Option<DrumHit> {
+        match params.machine {
+            PadMachine::Machine(machine) => Some(DrumHit {
+                pad,
+                machine,
+                params,
+                pitch,
+            }),
+            PadMachine::None => None,
+        }
+    }
+
+    /// The machine it plays: its pad's at the hit.
+    pub const fn machine(&self) -> Machine {
+        self.machine
     }
 
     pub const fn pad(&self) -> PadId {

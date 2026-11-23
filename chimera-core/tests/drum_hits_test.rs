@@ -452,10 +452,12 @@ fn the_view_reads_what_was_published() {
     k.pad_mut(pad(3)).set_pan(Pan::clamped(-20));
     w.publish(PartId::ALL[2], &k);
     for p in PadId::ALL {
-        let h = KIT_VIEW.hit(
-            PartId::ALL[2],
-            chimera_core::MidiNote::new(p.index() as u8).unwrap(),
-        );
+        let h = KIT_VIEW
+            .hit(
+                PartId::ALL[2],
+                chimera_core::MidiNote::new(p.index() as u8).unwrap(),
+            )
+            .unwrap();
         assert_eq!(h.params(), *k.pad(p));
     }
 }

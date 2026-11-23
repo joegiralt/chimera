@@ -8,7 +8,7 @@
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 
-use crate::dsp::drum::types::{ChokeGroup, Kit, Machine, PadId, PadSet};
+use crate::dsp::drum::types::{ChokeGroup, Kit, Machine, PadId, PadMachine, PadSet};
 use crate::ui::{draw, region, theme};
 
 /// What a machine's icon shows of it: 22 marks cover the 28 machines;
@@ -71,10 +71,18 @@ pub const fn family(m: Machine) -> Family {
     }
 }
 
+/// `m`'s whole name: its machine's, or `NONE`.
+pub fn name(m: PadMachine) -> &'static str {
+    match m {
+        PadMachine::Machine(m) => crate::dsp::drum::laws::spec(m).name,
+        PadMachine::None => PadMachine::NONE_NAME,
+    }
+}
+
 /// `m`'s name's last word, its instrument (`SNARE`, `COWBELL`): where
 /// the whole name doesn't fit, the icon's badge says the family.
-pub fn word(m: Machine) -> &'static str {
-    let name = crate::dsp::drum::laws::spec(m).name;
+pub fn word(m: PadMachine) -> &'static str {
+    let name = name(m);
     name.rsplit(' ').next().unwrap_or(name)
 }
 
@@ -97,7 +105,7 @@ pub struct Mark([u32; MARK_H as usize]);
 impl Mark {
     /// From the mockup's rows: `#` full, `+` dim, `.` none. A row of
     /// another width or character fails the build.
-    const fn of(rows: [&str; MARK_H as usize]) -> Mark {
+    pub(crate) const fn of(rows: [&str; MARK_H as usize]) -> Mark {
         let mut m = [0; MARK_H as usize];
         let mut y = 0;
         while y < rows.len() {
@@ -367,8 +375,11 @@ fn dim(ink: Rgb565) -> Rgb565 {
     }
 }
 
+/// The mark's left column in an icon: right of the badge's and a gap.
+pub const MARK_X: i32 = 6;
+
 /// An icon's width and height: the badge's column, a gap, the mark.
-pub const ICON_W: i32 = 6 + MARK_W;
+pub const ICON_W: i32 = MARK_X + MARK_W;
 pub const ICON_H: i32 = MARK_H;
 
 /// The badge's left column in an icon.
@@ -405,7 +416,7 @@ fn inks(m: Machine) -> impl Iterator<Item = (i32, i32, Ink)> {
     let marks = (0..MARK_H * MARK_W).filter_map(move |i| {
         let (px, py) = (i % MARK_W, i / MARK_W);
         let t = mk.at(px, py);
-        (t != Tone::None).then_some((6 + px, py, Ink::Mark(t)))
+        (t != Tone::None).then_some((MARK_X + px, py, Ink::Mark(t)))
     });
     let letters = (0..15).filter_map(move |i| {
         let (px, py) = (i % 3, i / 3);
@@ -416,11 +427,25 @@ fn inks(m: Machine) -> impl Iterator<Item = (i32, i32, Ink)> {
 
 /// Machine `m`'s icon from `(x, y)`, `ICON_W` x `ICON_H` at `s`: the mark
 /// in `ink` and its dim tone, the badge in `badge`.
-pub fn icon<D>(d: &mut D, m: Machine, x: i32, y: i32, s: Scale, ink: Rgb565, badge: Rgb565)
+pub fn icon<D>(d: &mut D, m: PadMachine, x: i32, y: i32, s: Scale, ink: Rgb565, badge: Rgb565)
 where
     D: DrawTarget<Color = Rgb565>,
 {
     let soft = dim(ink);
+    // NONE's box is bank 2's (`ui::notes`, ADR 0318): closed, none drawn.
+    let PadMachine::Machine(m) = m else {
+        let on = &mut crate::ui::tape_strip::On(d);
+        let blank = crate::ui::notes::Ask::Blank {
+            on,
+            x,
+            y,
+            px: s.px(),
+            ink,
+            soft,
+        };
+        crate::bank2::ui_door(|u| u.notes(blank));
+        return;
+    };
     let colour = |k| match k {
         Ink::Mark(Tone::Dim) => soft,
         Ink::Mark(_) => ink,
@@ -434,7 +459,7 @@ where
 
 /// Machine `m`'s icon large at the focus band's right, its bottom on the
 /// value's baseline.
-pub fn big_icon<D>(d: &mut D, m: Machine)
+pub fn big_icon<D>(d: &mut D, m: PadMachine)
 where
     D: DrawTarget<Color = Rgb565>,
 {

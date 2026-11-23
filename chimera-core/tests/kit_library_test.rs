@@ -82,11 +82,14 @@ fn drum_project() -> (Box<Project>, TemplateCrc) {
 fn edit_kit(p: &mut Project, part: PartId) {
     for (i, pad) in PadId::ALL.into_iter().enumerate() {
         let k = p.kit_mut(part).pad_mut(pad);
-        k.set_machine(if i % 2 == 0 {
-            Machine::MetalJingle
-        } else {
-            Machine::BodyShaker
-        });
+        k.set_machine(
+            if i % 2 == 0 {
+                Machine::MetalJingle
+            } else {
+                Machine::BodyShaker
+            }
+            .into(),
+        );
         k.set_level(U7::new(9 + i as u8).unwrap());
         k.set_choke(ChokeGroup::C);
     }
@@ -234,7 +237,7 @@ fn a_library_load_replaces_the_kit_that_was_there() {
     let (mut q, t) = drum_project();
     q.kit_mut(P1)
         .pad_mut(PadId::ALL[0])
-        .set_machine(Machine::PlainImpulse);
+        .set_machine(Machine::PlainImpulse.into());
     assert_eq!(ask(&q, t, P1, file).unwrap_err(), Prompt::KitUnsaved);
     load(&mut st, &mut q, t, P1, file);
     assert_eq!(*q.kit(P1), want);
@@ -337,7 +340,7 @@ fn a_kit_edit_after_the_confirmation_refuses_the_adopt() {
     let r = read(&mut st, &mut p, t, P1, file).unwrap();
     p.kit_mut(P1)
         .pad_mut(PadId::ALL[0])
-        .set_machine(Machine::PlainSine);
+        .set_machine(Machine::PlainSine.into());
     let kit = *p.kit(P1);
     assert_eq!(p.adopt(r, None), Err(AdoptError::Changed));
     assert_eq!(*p.kit(P1), kit);
@@ -431,7 +434,9 @@ fn a_parts_status_names_what_is_edited() {
     assert_eq!(part_status(&p, P1), PartStatus::Clean);
     let pad = PadId::ALL[2];
     let was = p.kit(P1).pad(pad).machine();
-    p.kit_mut(P1).pad_mut(pad).set_machine(Machine::PlainSine);
+    p.kit_mut(P1)
+        .pad_mut(pad)
+        .set_machine(Machine::PlainSine.into());
     assert_eq!(part_status(&p, P1), PartStatus::Edited(Edits::Kit));
     p.edit_part(P1).sound.params.out.volume = 0.1;
     assert_eq!(part_status(&p, P1), PartStatus::Edited(Edits::Both));

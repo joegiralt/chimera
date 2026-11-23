@@ -78,7 +78,7 @@ fn edited() -> Box<Project> {
     let k = p.kit_mut(PartId::ALL[1]);
     k.set_tonal(Tonal::Pad(pad(9)));
     let a = k.pad_mut(pad(1));
-    a.set_machine(Machine::MetalJingle);
+    a.set_machine(Machine::MetalJingle.into());
     a.knobs_mut().set(Knob::C, KnobValue::new(u7(5)));
     a.knobs_mut().set(Knob::H, KnobValue::new(u7(127)));
     a.set_level(u7(33));
@@ -89,7 +89,7 @@ fn edited() -> Box<Project> {
     b.set_pan(Pan::clamped(63));
     b.set_level(u7(0));
     let c = p.kit_mut(PartId::ALL[4]).pad_mut(pad(7));
-    c.set_machine(Machine::PlainNoise);
+    c.set_machine(Machine::PlainNoise.into());
     c.knobs_mut().set(Knob::A, KnobValue::ZERO);
     c.set_choke(ChokeGroup::Off);
     *c.sound_mut() = sound_b();
@@ -322,7 +322,7 @@ fn default_kit_is_the_rytm_layout() {
         BodyShaker,
     ];
     for (n, m) in PadId::ALL.into_iter().zip(machines) {
-        assert_eq!(k.pad(n).machine(), m, "pad {}", n.number());
+        assert_eq!(k.pad(n).machine(), m.into(), "pad {}", n.number());
         assert_eq!(k.pad(n).retrig(), Retrig::Cut, "pad {}", n.number());
         assert_eq!(k.pad(n).pan(), Pan::CENTRE);
     }
@@ -347,7 +347,7 @@ fn default_kit_is_the_rytm_layout() {
     assert!(decay(8) < decay(9));
     // Every other knob the machine's own default.
     for n in PadId::ALL {
-        let (m, got) = (k.pad(n).machine(), k.pad(n).knobs());
+        let (m, got) = (k.pad(n).machine().machine().unwrap(), k.pad(n).knobs());
         let mut want = KnobSet::defaults(m);
         if m == ToneTom {
             want.set(Knob::A, got.get(Knob::A));

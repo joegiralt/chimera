@@ -15,7 +15,7 @@ use crate::dsp::delay::{DELAY_SPECS, DelayParams, DelaySync, DelayType};
 use crate::dsp::drum::laws::spec;
 use crate::dsp::drum::params::PadParams;
 use crate::dsp::drum::sound::{PadFilter, PadSound, RouteId};
-use crate::dsp::drum::types::{Kit, Knob, Machine, PadId, Tonal};
+use crate::dsp::drum::types::{Kit, Knob, PadId, PadMachine, Tonal};
 use crate::dsp::filter::FilterKind;
 use crate::dsp::lfo::LfoParams;
 use crate::dsp::modal::{self, ModalParams, ResonatorMode};
@@ -126,15 +126,16 @@ pub struct SlotCtx {
     pub clash: u16,
     /// The selected pad's machine: which knob cells it shows. `None`
     /// where the `BlockRead` holds no pad (a Sound's params): every knob
-    /// cell is then empty.
-    pub pad: Option<Machine>,
+    /// cell is then empty, as on a NONE pad, whose other cells dim (ADR
+    /// 0318).
+    pub pad: Option<PadMachine>,
     /// The Part's selected pad: what PAD shows and the header names.
     /// `SlotCtx::read` can't see it and takes pad 1; `UiState::ctx` sets
     /// it.
     pub sel_pad: PadId,
     /// The machine of the kit's TONAL pad; `None` with TONAL OFF, and
     /// where `SlotCtx::read` sees no kit.
-    pub tonal: Option<Machine>,
+    pub tonal: Option<PadMachine>,
     /// The selected pad's filter KIND: which panel its FLT cells show.
     pub pad_kind: FilterKind,
     /// The selected pad's route the route cells edit: the UI's
@@ -195,11 +196,9 @@ impl SlotCtx {
                 .map(|op| OpKind::clamped(get(BlockRef::AlgoOp(op), AlgoOpParams::WAVE) as u8)),
             pages: crate::ui::theme_settings::ThemeSettings::DEFAULT.pages,
             clash: 0,
-            pad: params.block(BlockRef::Pad).and_then(|b| {
-                Machine::ALL
-                    .get(b.get(PadParams::MACHINE) as usize)
-                    .copied()
-            }),
+            pad: params
+                .block(BlockRef::Pad)
+                .and_then(|b| PadMachine::from_index(b.get(PadParams::MACHINE) as usize)),
             sel_pad: PadId::ALL[0],
             tonal: None,
             pad_kind: params
@@ -310,7 +309,7 @@ impl SlotCtx {
 pub struct Models {
     pub modal: ResonatorMode,
     pub tape: TapeMachine,
-    pub pad: Option<(PadId, Machine)>,
+    pub pad: Option<(PadId, PadMachine)>,
 }
 
 impl Default for Models {
@@ -1082,7 +1081,7 @@ fn machine_view(at: MachineSlot, ctx: &SlotCtx) -> View {
 /// A DRUM knob on the selected pad's machine, labelled and read its way;
 /// empty where the machine has no such knob.
 fn knob_view(k: Knob, ctx: &SlotCtx) -> View {
-    let Some(m) = ctx.pad else {
+    let Some(PadMachine::Machine(m)) = ctx.pad else {
         return View::Empty;
     };
     match spec(m).knob(k) {
@@ -1206,13 +1205,22 @@ pub fn tuning_note(
 }
 
 /// What TONAL's focus band says when its pad's machine has no PITCH:
-/// every note plays the same hit (ADR 0270).
+/// every note plays the same hit (ADR 0270); on a NONE pad, that none
+/// plays (bank 2's `notes`, ADR 0318; closed, nothing).
 pub fn tonal_note(addr: ParamAddr, ctx: &SlotCtx) -> Option<crate::project::Line> {
     use core::fmt::Write;
     if addr != ParamAddr::new(BlockRef::Kit, crate::dsp::drum::params::KitParams::TONAL) {
         return None;
     }
-    let m = ctx.tonal.filter(|m| !m.pitched())?;
+    let m = match ctx.tonal? {
+        PadMachine::Machine(m) => m,
+        PadMachine::None => {
+            let mut out = None;
+            crate::bank2::ui_door(|u| u.notes(crate::ui::notes::Ask::NonePlays(&mut out)));
+            return out;
+        }
+    };
+    let m = Some(m).filter(|m| !m.pitched())?;
     let name = spec(m).name;
     let mut l = crate::project::Line::new("NO PITCH ON ");
     let _ = l.write_str(name.rsplit(' ').next().unwrap_or(name));
@@ -1357,6 +1365,14 @@ pub fn dimmed(addr: ParamAddr, sound: &Sound) -> bool {
 /// rules inapplicable, or BPM while a MIDI clock leads (spec § Design
 /// choices: F sets the internal BPM, dimmed under an external clock).
 pub fn is_dimmed(v: &View, sound: &Sound, ctx: &SlotCtx) -> bool {
+    // A NONE pad's cells but MACHINE: nothing plays them (ADR 0318).
+    if ctx.pad == Some(PadMachine::None)
+        && let View::Param { addr, .. } = *v
+        && addr.block.is_pad()
+        && addr != ParamAddr::new(BlockRef::Pad, PadParams::MACHINE)
+    {
+        return true;
+    }
     match *v {
         View::Text { .. } => true,
         View::Param {

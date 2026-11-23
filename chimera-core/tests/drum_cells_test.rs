@@ -77,7 +77,7 @@ fn cell(ui: &UiState, k: Knob) -> View {
 fn set_machine(ui: &mut UiState, m: Machine) {
     let i = Machine::ALL.iter().position(|&x| x == m).unwrap() as i8;
     let now = ui.project().kit(P1).pad(ui.selected_pad(P1)).machine();
-    let at = Machine::ALL.iter().position(|&x| x == now).unwrap() as i8;
+    let at = Machine::ALL.iter().position(|&x| now == x.into()).unwrap() as i8;
     ui.edit_addr(P1, machine_addr(), i - at, false);
 }
 
@@ -87,7 +87,7 @@ fn the_snare_s_third_knob_reads_bump() {
     assert_eq!(ui.selected_pad(P1), pad(2));
     assert_eq!(
         ui.project().kit(P1).pad(pad(2)).machine(),
-        Machine::ToneSnare
+        Machine::ToneSnare.into()
     );
     let v = cell(&ui, Knob::C);
     assert_eq!(v.label(), "BUMP");
@@ -103,7 +103,7 @@ fn a_plain_noise_has_no_third_knob_to_turn() {
     let mut ui = ui_on(2);
     set_machine(&mut ui, Machine::PlainNoise);
     let p = *ui.project().kit(P1).pad(pad(2));
-    assert_eq!(p.machine(), Machine::PlainNoise);
+    assert_eq!(p.machine(), Machine::PlainNoise.into());
     assert_eq!(cell(&ui, Knob::A).label(), "DECAY");
     for k in [Knob::C, Knob::D, Knob::E, Knob::F] {
         assert_eq!(cell(&ui, k), View::Empty, "{k:?}");
@@ -140,7 +140,7 @@ fn a_machine_change_resets_that_pad_s_knobs() {
     ui.edit_addr(P1, knob_addr(Knob::A), 9, false);
     set_machine(&mut ui, Machine::MetalHat);
     let p = ui.project().kit(P1).pad(pad(5));
-    assert_eq!(p.machine(), Machine::MetalHat);
+    assert_eq!(p.machine(), Machine::MetalHat.into());
     assert_eq!(*p.knobs(), KnobSet::defaults(Machine::MetalHat));
     // Its other settings stay.
     assert_eq!(p.choke(), Kit::DEFAULT.pad(pad(5)).choke());
@@ -202,8 +202,12 @@ fn tonal_reaches_the_audio() {
     ui.project_mut().kit_mut(P2).set_tonal(Tonal::Pad(pad(4)));
     w.publish_all(ui.project().kits());
     let c4 = chimera_core::MidiNote::new(60).unwrap();
-    assert_eq!(KIT_VIEW.hit(P1, c4).pad(), pad(1), "OFF: note 60 is pad 1");
-    assert_eq!(KIT_VIEW.hit(P2, c4).pad(), pad(4));
+    assert_eq!(
+        KIT_VIEW.hit(P1, c4).unwrap().pad(),
+        pad(1),
+        "OFF: note 60 is pad 1"
+    );
+    assert_eq!(KIT_VIEW.hit(P2, c4).unwrap().pad(), pad(4));
 }
 
 /// CHOKE and RETRIG: every choice reads back as its own cell value, writes
@@ -249,7 +253,7 @@ fn machine_cells_fit_their_column() {
     for m in Machine::ALL {
         let s = spec(m);
         let last = s.name.rsplit(' ').next().unwrap();
-        let cell = pad_machine_cell(m);
+        let cell = pad_machine_cell(m.into());
         assert!(w(cell) <= CELL_VALUE_W, "{m:?}: {cell} is {} wide", w(cell));
         let want = if w(s.name) <= CELL_VALUE_W {
             s.name
@@ -260,7 +264,7 @@ fn machine_cells_fit_their_column() {
         };
         assert_eq!(cell, want, "{m:?}");
     }
-    assert_eq!(pad_machine_cell(Machine::ToneCowbell), "BELL");
+    assert_eq!(pad_machine_cell(Machine::ToneCowbell.into()), "BELL");
 }
 
 /// Machines with no PITCH play the same hit on every TONAL note: exactly
@@ -732,7 +736,7 @@ fn a_pad_sound_edit_reaches_the_audio() {
     );
     ui.edit_addr(P1, at(BlockRef::PadAmp, PadAmpParams::MODE), 1, false);
     w.publish_all(ui.project().kits());
-    let hit = KIT_VIEW.hit(P1, c4);
+    let hit = KIT_VIEW.hit(P1, c4).unwrap();
     assert_eq!(hit.pad(), pad(1));
     assert_eq!(*hit.params().sound(), sound(&ui, 1));
     assert_eq!(hit.params().sound().amp().mode(), AmpMode::Gated);

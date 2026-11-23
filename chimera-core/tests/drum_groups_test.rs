@@ -193,10 +193,10 @@ fn a_stack_pad_refuses_where_only_another_pads_voice_would_fit() {
     let mut w = writer();
     let mut k = Kit::DEFAULT;
     k.pad_mut(pad(1)).set_retrig(Retrig::Stack);
-    k.pad_mut(pad(11)).set_machine(Machine::ToneCowbell);
+    k.pad_mut(pad(11)).set_machine(Machine::ToneCowbell.into());
     k.pad_mut(pad(11)).knobs_mut().set(Knob::H, bump);
     let mut k2 = k;
-    k2.pad_mut(pad(1)).set_machine(Machine::ToneCowbell);
+    k2.pad_mut(pad(1)).set_machine(Machine::ToneCowbell.into());
     k2.pad_mut(pad(1)).knobs_mut().set(Knob::H, bump);
     // Pad 11's tail, then pad 1's KICK, then pad 1 a COWBELL.
     let play = |r: &mut common::InstRig, w: &mut KitWriter| {

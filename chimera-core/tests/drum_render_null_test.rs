@@ -54,7 +54,7 @@ fn print(m: Machine, kit: &Kit) -> u64 {
         PadId::ALL
             .into_iter()
             .map(|p| kit.pad(p))
-            .filter(|p| p.machine() == m)
+            .filter(|p| p.machine() == m.into())
             .map(|p| *p.knobs()),
     );
     let limit = 10 * SAMPLE_RATE as usize / BLOCK_SIZE;

@@ -39,7 +39,7 @@ use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::WaveId;
 use crate::dsp::delay::DelaySync;
 use crate::dsp::drum::sound::RouteId;
-use crate::dsp::drum::types::{Machine, PadId};
+use crate::dsp::drum::types::{PadId, PadMachine};
 use crate::dsp::filter::{FilterKind, KIND_NAMES};
 use crate::dsp::modal::ResonatorMode;
 use crate::dsp::modulator::{EnvForm, EnvSlot, EnvSpeed, Func, LfoForm, LfoSlot};
@@ -201,7 +201,7 @@ pub fn tape_variant(t: TapeMachine) -> &'static str {
     target_os = "none",
     unsafe(link_section = ".bank2_ed.describe.machine_variant")
 )]
-pub fn machine_variant(m: Machine) -> &'static str {
+pub fn machine_variant(m: PadMachine) -> &'static str {
     option_name(ParamAddr::new(BlockRef::Pad, PadParams::MACHINE), m.index())
 }
 
@@ -598,7 +598,7 @@ enum Group {
     Op(Op, OpKind),
     Modal(ResonatorMode),
     Tape(TapeMachine),
-    Machine(Machine),
+    Machine(PadMachine),
     Route(RouteId),
     Reverb(ReverbType),
     Delay(DelaySync),
@@ -767,10 +767,10 @@ fn group_at(mut i: usize) -> Option<Group> {
         return Some(Group::Tape(t));
     }
     i -= TapeMachine::ALL.len();
-    if let Some(&m) = Machine::ALL.get(i) {
+    if let Some(m) = PadMachine::from_index(i) {
         return Some(Group::Machine(m));
     }
-    i -= Machine::ALL.len();
+    i -= PadMachine::ALL.len();
     if let Some(&r) = RouteId::ALL.get(i) {
         return Some(Group::Route(r));
     }

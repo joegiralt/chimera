@@ -1571,6 +1571,10 @@ impl SympatheticSet {
     /// A note-on on a main string of `period` samples: the strings
     /// cleared, each ring sized for the longest folded period any chord
     /// gives it, so no glide grows one mid-note, then tuned to `chord`.
+    /// Out of line, built for size: inlined into `ModalEngine::strike` its
+    /// chord's glides unroll, 1.5 KB of bank 1.
+    #[inline(never)]
+    #[optimize(size)]
     fn note_on(&mut self, period: f32, chord: usize, params: &ModalParams) {
         let ratios: [[f32; NUM_SYMPATHETIC]; CHORD_COUNT] = core::array::from_fn(period_ratios);
         for (i, sym) in self.strings.iter_mut().enumerate() {

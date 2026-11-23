@@ -2738,6 +2738,14 @@ pub const CASES: &[ScreenCase] = &[
         feed(ui, Input::turn(EncoderId::B, 1));
         feed(ui, Input::turn(EncoderId::B, -1));
     }),
+    // MACHINE turned to NONE on pad 1, touched (ADR 0318): the cell
+    // NONE, the focus band its shaded box, LEVEL and PAN dimmed, pad 1's
+    // icon in the band the box.
+    ("drum_kit_none", |ui| {
+        load_init(ui, EngineType::Drum);
+        let to = chimera_core::dsp::drum::types::PadMachine::None.index();
+        feed(ui, Input::turn(EncoderId::B, to as i8));
+    }),
     // TONAL on pad 3, touched (ADR 0270): C1 up plays it, tuned at C4.
     ("drum_kit_tonal", |ui| {
         load_init(ui, EngineType::Drum);

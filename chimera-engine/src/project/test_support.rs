@@ -130,7 +130,7 @@ pub fn full() -> (Box<Project>, TemplateCrc) {
     let pad = p
         .kit_mut(PartId::ALL[4])
         .pad_mut(crate::dsp::drum::types::PadId::ALL[6]);
-    pad.set_machine(crate::dsp::drum::types::Machine::MetalJingle);
+    pad.set_machine(crate::dsp::drum::types::Machine::MetalJingle.into());
     pad.set_pan(crate::dsp::drum::types::Pan::clamped(-20));
     pad.set_choke(crate::dsp::drum::types::ChokeGroup::A);
     pad.set_retrig(crate::dsp::tape_engine::params::Retrig::Stack);

@@ -93,7 +93,7 @@ pub fn header_text(
         let _ = match (head, pad) {
             (Head::Sound(p), Some((n, m))) => {
                 let name = match full {
-                    true => crate::dsp::drum::laws::spec(m).name,
+                    true => crate::ui::kit_band::name(m),
                     false => crate::ui::kit_band::word(m),
                 };
                 let n = crate::ui::view::PAD_NUMBERS[n.index()];

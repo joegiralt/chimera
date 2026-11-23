@@ -6,7 +6,7 @@
 
 use chimera_core::block::DiskCode;
 use chimera_core::console::{Console, EdAddr, EdState, Request, SetRefusal, ed_pages, ed_stored};
-use chimera_core::dsp::drum::types::{Machine, PadId};
+use chimera_core::dsp::drum::types::{Machine, PadId, PadMachine};
 use chimera_core::params::EngineType;
 use chimera_core::project::{PartFrom, PartSource};
 use chimera_core::ui::UiState;
@@ -601,7 +601,8 @@ fn kit_draws_the_pad_it_is_shown_with() {
 fn a_pad_icon_is_its_machines() {
     let p3 = PadId::new(2).unwrap();
     let mut m = mirror(EngineType::Drum);
-    for (i, &machine) in Machine::ALL.iter().enumerate() {
+    // NONE's too (ADR 0318): its shaded box, no badge.
+    for (i, &machine) in PadMachine::ALL.iter().enumerate() {
         m.set(addr("PAD3.MACHINE"), i as f32).unwrap();
         let mut fb = Fb::new();
         m.pad_icon(p3, &mut fb);

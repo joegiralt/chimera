@@ -1457,7 +1457,7 @@ fn kit_rig() -> Rig {
     r.ui.project_mut()
         .kit_mut(P1)
         .pad_mut(PadId::ALL[0])
-        .set_machine(Machine::PlainSine);
+        .set_machine(Machine::PlainSine.into());
     r
 }
 
@@ -1550,7 +1550,7 @@ fn a_dropped_kit_question_drops_the_stale_parts_question() {
     }
     p.kit_mut(P1)
         .pad_mut(PadId::ALL[0])
-        .set_machine(Machine::PlainSine);
+        .set_machine(Machine::PlainSine.into());
     r.edit_part();
     r.start_load();
     // SAVE PART FIRST is the pill it opens on.

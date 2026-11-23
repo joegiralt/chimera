@@ -20,7 +20,9 @@ use super::sound::{
     Amount, AmpMode, EnvDecay, EnvPos, LfoMode, PadAmp, PadEnv, PadFilter, PadLfo, PadRoute,
     RouteDest, RouteSource,
 };
-use super::types::{ChokeGroup, Kit, Knob, KnobSet, KnobValue, Machine, Pad, PadId, Pan, Tonal};
+use super::types::{
+    ChokeGroup, Kit, Knob, KnobSet, KnobValue, Machine, Pad, PadId, PadMachine, Pan, Tonal,
+};
 
 /// `PAD_SPECS`' ids.
 pub enum PadParams {}
@@ -61,11 +63,11 @@ impl PadParams {
     }
 }
 
-/// MACHINE's names, in `Machine::ALL`'s order.
-static MACHINE_NAMES: [&str; Machine::ALL.len()] = {
-    let mut n = [""; Machine::ALL.len()];
+/// MACHINE's names, in `PadMachine::ALL`'s order: NONE last (ADR 0318).
+static MACHINE_NAMES: [&str; PadMachine::ALL.len()] = {
+    let mut n = [PadMachine::NONE_NAME; PadMachine::ALL.len()];
     let mut i = 0;
-    while i < n.len() {
+    while i < Machine::ALL.len() {
         n[i] = spec(Machine::ALL[i]).name;
         i += 1;
     }
@@ -97,7 +99,7 @@ pub static PAD_SPECS: [ParamSpec; 13] = [
         PadParams::MACHINE.0,
         "MACHINE",
         ValFmt::Names(&MACHINE_NAMES),
-        (Machine::ALL.len() - 1) as f32,
+        (PadMachine::ALL.len() - 1) as f32,
         0.0,
         Change::NoteOn,
     )
@@ -190,18 +192,25 @@ impl Block for Pad {
     fn write(&mut self, id: ParamId, v: f32) {
         let u7 = |v: f32| U7::new(v as u8).unwrap_or(U7::MAX);
         if let Some(k) = PadParams::knob_of(id) {
-            if spec(self.machine()).knob(k).is_some() {
+            if let PadMachine::Machine(m) = self.machine()
+                && spec(m).knob(k).is_some()
+            {
                 self.knobs_mut().set(k, KnobValue::new(u7(v)));
             }
             return;
         }
         match id {
             PadParams::MACHINE => {
-                if let Some(&m) = Machine::ALL.get(v as usize)
+                if let Some(m) = PadMachine::from_index(v as usize)
                     && m != self.machine()
                 {
                     self.set_machine(m);
-                    *self.knobs_mut() = KnobSet::defaults(m);
+                    // NONE reads no knob: all 0, as a machine's unused
+                    // ones (ADR 0318).
+                    *self.knobs_mut() = match m {
+                        PadMachine::Machine(m) => KnobSet::defaults(m),
+                        PadMachine::None => KnobSet::ZERO,
+                    };
                 }
             }
             PadParams::LEVEL => self.set_level(u7(v)),

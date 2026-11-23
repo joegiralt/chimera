@@ -177,9 +177,9 @@ fn pan_clamps() {
 fn kit_pads_edit_in_place() {
     let mut kit = Kit::DEFAULT;
     let p = PadId::ALL[3];
-    kit.pad_mut(p).set_machine(Machine::MetalHat);
+    kit.pad_mut(p).set_machine(Machine::MetalHat.into());
     kit.pad_mut(p).set_choke(ChokeGroup::C);
-    assert_eq!(kit.pad(p).machine(), Machine::MetalHat);
+    assert_eq!(kit.pad(p).machine(), Machine::MetalHat.into());
     assert_eq!(kit.pad(p).choke(), ChokeGroup::C);
     assert_eq!(kit.pad(PadId::ALL[2]), Kit::DEFAULT.pad(PadId::ALL[2]));
 }
@@ -194,7 +194,7 @@ fn hit_carries_its_pad() {
         ChokeGroup::Off,
         Retrig::Stack,
     );
-    let hit = DrumHit::new(PadId::ALL[1], pad, Transpose::new(12).unwrap());
+    let hit = DrumHit::new(PadId::ALL[1], pad, Transpose::new(12).unwrap()).unwrap();
     assert_eq!(hit.pad(), PadId::ALL[1]);
     assert_eq!(hit.params(), pad);
     assert_eq!(hit.pitch().get(), 12);

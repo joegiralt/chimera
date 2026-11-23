@@ -20,7 +20,7 @@ use chimera_core::dsp::drum::sound::{
     RouteDest, RouteId, RouteSource, kit_bill,
 };
 use chimera_core::dsp::drum::types::{
-    KernelBill, Kit, Knob, KnobValue, Machine, PadId, Ticking, Tonal,
+    KernelBill, Kit, Knob, KnobValue, Machine, PadId, PadMachine, Ticking, Tonal,
 };
 use chimera_core::dsp::drum::view::{KIT_VIEW, KitWriter};
 use chimera_core::dsp::filter::FilterKind;
@@ -281,7 +281,7 @@ fn every_pad_books_its_reading() {
 #[test]
 fn a_read_machine_bills_its_reading() {
     for (n, read) in READ.into_iter().filter(|&(n, _)| n != 12) {
-        let m = Kit::DEFAULT.pad(pad(n)).machine();
+        let m = Kit::DEFAULT.pad(pad(n)).machine().machine().unwrap();
         assert_eq!(m.cost().0, (read * 11).div_ceil(10) - 83, "pad {n}");
     }
     // COWBELL's BUMP 127 worst block, read the same day (ADR 0287).
@@ -299,10 +299,11 @@ fn a_part_bills_its_costliest_machine() {
         Ticking::ImpulseFlooredSwept.cost()
     );
     let mut bell = kicks;
-    bell.pad_mut(pad(11)).set_machine(Machine::ToneCowbell);
+    bell.pad_mut(pad(11))
+        .set_machine(Machine::ToneCowbell.into());
     assert_eq!(kit_bill(&bell).kernel(), Ticking::CowbellSwept.cost());
     let mut one = kicks;
-    one.pad_mut(pad(7)).set_machine(Machine::MetalJingle);
+    one.pad_mut(pad(7)).set_machine(Machine::MetalJingle.into());
     assert_eq!(kit_bill(&one).kernel(), Machine::MetalJingle.cost());
     // No kit read yet: the costliest of all, as `Voice::cost` bills.
     assert_eq!(KitBill::NONE.kernel(), KernelBill::MAX_COST);
@@ -390,7 +391,7 @@ const SR_BLOCKS: usize = common::SR as usize / chimera_hal::BLOCK_SIZE;
 fn kicks() -> Kit {
     let mut k = Kit::DEFAULT;
     for id in PadId::ALL {
-        k.pad_mut(id).set_machine(Machine::ToneKick);
+        k.pad_mut(id).set_machine(Machine::ToneKick.into());
     }
     k
 }
@@ -426,7 +427,9 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
     // Pad 2's KICK: the block's Part bills are worked out on the KICKs.
     r.note_on_vel(0, key(pad(2)), 127);
     let mut jingle = kicks;
-    jingle.pad_mut(pad(1)).set_machine(Machine::MetalJingle);
+    jingle
+        .pad_mut(pad(1))
+        .set_machine(Machine::MetalJingle.into());
     w.publish(PartId::ALL[0], &jingle);
     r.note_on_vel(0, key(pad(1)), 127);
     r.note_on_vel(0, key(pad(3)), 127);
@@ -938,4 +941,64 @@ fn a_floored_impulse_bills_its_floor_and_its_sweep() {
     );
     // The dearest bill there is: a DRUM voice's with no kit read.
     assert_eq!(KernelBill::MAX_COST.0, billed(2700));
+}
+
+/// ADR 0318: pad 5 on LADDER struck, then its pad turned NONE: the hit
+/// rings on and keeps LADDER's bill until it ends (`ringing_kits`, #977),
+/// though the kit's bill no longer folds the pad.
+#[test]
+fn a_ringing_hit_whose_pad_turns_none_keeps_its_bill() {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let ladder = pad5_on(FilterKind::Ladder);
+    let mut r = drum_rig(&mut w, &ladder);
+    r.note_on_vel(0, key(pad(5)), 127);
+    r.render(2);
+    let struck = booked(&r, key(pad(5)));
+    let mut none = ladder;
+    none.pad_mut(pad(5)).set_machine(PadMachine::None);
+    w.publish(PartId::ALL[0], &none);
+    // The publish's decode and glide blocks (#962), then the hit as struck.
+    r.render(2);
+    let mut blocks = 0;
+    while sounding(&r).contains(&pad(5)) {
+        assert_eq!(booked(&r, key(pad(5))), struck, "block {blocks}");
+        r.render(1);
+        blocks += 1;
+        assert!(blocks < 4000, "pad 5 ends");
+    }
+    assert!(blocks > 4, "rang {blocks} blocks");
+}
+
+/// The hits Part 1 holds after `n` STACK KICKs a block apart on rev V.
+fn kicks_held(kit: &Kit, n: usize) -> usize {
+    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut r = drum_rig(&mut w, kit);
+    for _ in 0..n {
+        r.note_on_vel(0, key(pad(1)), 127);
+        r.render(1);
+    }
+    r.inst
+        .allocator()
+        .slots()
+        .iter()
+        .filter(|s| s.part() == Some(PartId::ALL[0]) && !s.dying())
+        .count()
+}
+
+/// ADR 0318: the dear pad set NONE frees its shape, mods and gate from
+/// every hit's bill (each hit bills its own kernel, ADR 0287): the KICKs
+/// it held back fit one more.
+#[test]
+fn a_none_dear_pad_admits_another_hit() {
+    let mut dear = Kit::DEFAULT;
+    dear.pad_mut(pad(1)).set_retrig(Retrig::Stack);
+    let s = dear.pad_mut(pad(7)).sound_mut();
+    s.filter_mut().set_kind(FilterKind::Ladder);
+    route(s, 0, RouteSource::Lfo, RouteDest::Cutoff, 40);
+    s.amp_mut().set_gate(lpg::Knobs::of([0.5, 0.0, 0.0]));
+    let mut none = dear;
+    none.pad_mut(pad(7)).set_machine(PadMachine::None);
+    let n = 2 * chimera_core::hw::MAX_VOICES;
+    let (d, f) = (kicks_held(&dear, n), kicks_held(&none, n));
+    assert!(f > d, "NONE {f} hits, dear {d}");
 }

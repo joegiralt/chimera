@@ -183,7 +183,7 @@ fn mod_env_opens_the_filter() {
     );
     // The kernel rings past 1 s.
     let p = k.pad_mut(pad(1));
-    p.set_machine(Machine::PlainSine);
+    p.set_machine(Machine::PlainSine.into());
     p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
     let (_w, mut r) = rig(&k, &sound());
     hit(&mut r, 100);
@@ -228,7 +228,7 @@ fn pad_lfo_and_its_speed() {
         let mut k = kit(r);
         k.pad_mut(pad(1)).sound_mut().lfo_mut().set_speed(u7(40));
         let p = k.pad_mut(pad(1));
-        p.set_machine(Machine::PlainSine);
+        p.set_machine(Machine::PlainSine.into());
         p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
         let (_w, mut rg) = rig(&k, &sound());
         hit(&mut rg, 100);
@@ -265,7 +265,7 @@ fn pad_lfo_and_its_speed() {
 fn play_vol(r: PadRoutes, env: PadEnv, vel: u8, ms: usize) -> Vec<f32> {
     let mut k = kit(r);
     let p = k.pad_mut(pad(1));
-    p.set_machine(Machine::PlainSine);
+    p.set_machine(Machine::PlainSine.into());
     p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
     *p.sound_mut().env_mut() = env;
     let (_w, mut rg) = rig(&k, &sound());
@@ -436,7 +436,7 @@ fn routes_at_extremes_stay_bounded() {
             for vel in [1, 127] {
                 let mut k = kit(r);
                 let p = k.pad_mut(pad(1));
-                p.set_machine(m);
+                p.set_machine(m.into());
                 let l = p.sound_mut().lfo_mut();
                 l.set_speed(U7::MAX);
                 l.set_depth(U7::MAX);
@@ -476,7 +476,7 @@ fn routed_pad_sweep_is_smooth() {
     ]);
     let mut k = kit(r);
     let p = k.pad_mut(pad(1));
-    p.set_machine(Machine::PlainSine);
+    p.set_machine(Machine::PlainSine.into());
     p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
     let s = p.sound_mut();
     s.filter_mut().set_cutoff(Hz::new(100.0));
@@ -540,7 +540,7 @@ fn pad_routes_take_the_moving_path() {
     let r = one(route(RouteSource::ModEnv, RouteDest::Cutoff, 127));
     let mut k = kit(r);
     let p = k.pad_mut(pad(1));
-    p.set_machine(Machine::PlainSine);
+    p.set_machine(Machine::PlainSine.into());
     p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
     let s = p.sound_mut();
     s.filter_mut().set_cutoff(Hz::new(100.0));

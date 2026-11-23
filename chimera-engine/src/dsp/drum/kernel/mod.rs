@@ -171,7 +171,7 @@ impl DrumHit {
     #[optimize(size)]
     pub fn kernel_params(&self) -> KernelParams {
         let pad = self.params();
-        resolve(pad.machine(), pad.knobs()).transposed(self.pitch())
+        resolve(self.machine(), pad.knobs()).transposed(self.pitch())
     }
 
     /// What it bills struck at `sr` (ADR 0287): its machine at its first
@@ -180,7 +180,7 @@ impl DrumHit {
     #[inline(never)]
     #[optimize(size)]
     pub fn bill(&self, sr: SampleRate) -> KernelBill {
-        KernelBill::of(self.params().machine(), self.kernel_params().pace(sr))
+        KernelBill::of(self.machine(), self.kernel_params().pace(sr))
     }
 }
 
@@ -659,7 +659,7 @@ mod tests {
                         ChokeGroup::Off,
                         Retrig::Cut,
                     );
-                    let hit = DrumHit::new(PadId::ALL[0], pad, pitch);
+                    let hit = DrumHit::new(PadId::ALL[0], pad, pitch).expect("a machine");
                     let p = resolve(m, knobs).transposed(pitch);
                     assert_eq!(hit.kernel_params(), p);
                     let k = KernelState::strike(p, vel, HitSeed::new(1), sr);

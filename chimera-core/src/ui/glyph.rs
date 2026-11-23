@@ -76,7 +76,7 @@ pub enum Gauge {
     /// the set value in eighths, so it redraws only when a step moves.
     Feedback { q: i8 },
     /// DRUM's machine icon, large (`kit_band::big_icon`).
-    Drum(crate::dsp::drum::types::Machine),
+    Drum(crate::dsp::drum::types::PadMachine),
 }
 
 /// What a gauge built from more than the focused value reads.

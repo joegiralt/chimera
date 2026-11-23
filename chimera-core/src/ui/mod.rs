@@ -95,7 +95,7 @@ use crate::boot::RomDfu;
 use crate::dsp::algo::engine::{FormantView, FormantViews};
 use crate::dsp::algo::kinds::step_kind;
 use crate::dsp::algo::params::step_alg;
-use crate::dsp::drum::types::{Machine, PadId};
+use crate::dsp::drum::types::{PadId, PadMachine};
 use crate::dsp::lfo::Lfo;
 use crate::dsp::modulator::{EnvSlot, EnvType, LfoSlot, LfoType};
 use crate::dsp::reverb::KnobMemory;
@@ -3255,6 +3255,7 @@ impl UiState {
         let own = ctx
             .pad
             .filter(|_| a.block == BlockRef::Pad)
+            .and_then(PadMachine::machine)
             .and_then(|m| crate::dsp::drum::params::PadParams::default_on(m, a.param));
         if let Some(d) = own.or_else(|| a.spec().map(|s| s.default)) {
             self.edit_in(at, a, part_page::Edit::To(d));
@@ -4164,7 +4165,7 @@ impl UiState {
             .with_names(match (f.head, f.ctx.pad) {
                 (Head::Orbit(n), _) => u16::from(n.get()) + 1,
                 (Head::Sound(_), Some(m)) if view::edits_pad(f.def, f.focus, &f.ctx) => {
-                    1 + (f.ctx.sel_pad.index() * Machine::ALL.len() + m.index()) as u16
+                    1 + (f.ctx.sel_pad.index() * PadMachine::ALL.len() + m.index()) as u16
                 }
                 _ => 0,
             }),

@@ -1734,7 +1734,10 @@ pub const CELL_VALUE_W: i32 = theme::CELL_COL_W - 4;
 /// the name, else its last word, the instrument (`SNARE`, not `TONE
 /// SNARE`), else the machine's short name (`BELL`: `COWBELL` ran into
 /// LEVEL). The focus band reads it whole.
-pub fn pad_machine_cell(m: crate::dsp::drum::types::Machine) -> &'static str {
+pub fn pad_machine_cell(m: crate::dsp::drum::types::PadMachine) -> &'static str {
+    let crate::dsp::drum::types::PadMachine::Machine(m) = m else {
+        return crate::dsp::drum::types::PadMachine::NONE_NAME;
+    };
     let s = crate::dsp::drum::laws::spec(m);
     let fits = |t: &str| draw::text_width(&theme::FONT_VALUE, t, 0) <= CELL_VALUE_W;
     let last = s.name.rsplit(' ').next().unwrap_or(s.name);

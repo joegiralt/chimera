@@ -2170,7 +2170,7 @@ impl Instrument {
     }
 
     /// A waiting hit on DRUM, `start`'s: its pad's, from the kit as it is
-    /// now. Whether it started.
+    /// now; none if the pad is NONE now (ADR 0318). Whether it started.
     #[inline(never)]
     fn start_hit(
         &mut self,
@@ -2183,7 +2183,9 @@ impl Instrument {
         let (Some(id), Some(key)) = (s.part(), s.note()) else {
             return false;
         };
-        let hit = KIT_VIEW.hit(id, key);
+        let Some(hit) = KIT_VIEW.hit(id, key) else {
+            return false;
+        };
         self.strike(v, id, (&hit, vel, key, s.held()), params, (src, 0.0))
     }
 
@@ -2214,7 +2216,15 @@ impl Instrument {
                 continue;
             }
             let key = ev.note;
-            let (hit, mine) = self.choke(q, key);
+            // The KIT page's pad follows the player's hits, a NONE pad's
+            // too (ADR 0318).
+            if from == NoteOrigin::Live {
+                KIT_VIEW.struck(q, KIT_VIEW.pad(q, key));
+            }
+            // A NONE pad: nothing struck, choked, booked or refused.
+            let Some((hit, mine)) = self.choke(q, key) else {
+                continue;
+            };
             let first = !self.alloc.slots().iter().any(|s| s.part() == Some(q));
             // The bill `recost` worked out, so the kit it read.
             let own = self.costs[p].hit(HitKernel::Sounding(hit.bill(self.sample_rate)));
@@ -2270,10 +2280,6 @@ impl Instrument {
             self.voices[v].ease_own(Own::default(), None);
             self.sustained[v] = false;
             self.resnap_to[v] = None;
-            // The KIT page's pad follows the player's hits.
-            if from == NoteOrigin::Live {
-                KIT_VIEW.struck(q, hit.pad());
-            }
         }
     }
 
@@ -2539,10 +2545,11 @@ impl Instrument {
     /// waiting out a fade counts as its pad's in the kit now, and is
     /// dropped unheard. With it, what a hit that needs room may steal: a
     /// pad's live voices left, a STACK pad's own (ADR 0280), else any. Out of
-    /// line: bank 1's (ADR 0251).
+    /// line: bank 1's (ADR 0251). `None` on a NONE pad, which chokes
+    /// nothing (ADR 0318).
     #[inline(never)]
-    fn choke(&mut self, id: PartId, key: MidiNote) -> (DrumHit, Steal) {
-        let hit = KIT_VIEW.hit(id, key);
+    fn choke(&mut self, id: PartId, key: MidiNote) -> Option<(DrumHit, Steal)> {
+        let hit = KIT_VIEW.hit(id, key)?;
         let (pad, p) = (hit.pad(), hit.params());
         let mut own = Steal::Any;
         for wi in VoiceIdx::ALL {
@@ -2565,7 +2572,7 @@ impl Instrument {
                 own = own.mine(wi);
             }
         }
-        (hit, own)
+        Some((hit, own))
     }
 
     /// `hit_of`'s bill for its next block (ADR 0287): a waiting hit's at
@@ -2579,7 +2586,8 @@ impl Instrument {
                 .alloc
                 .slot(wi)
                 .note()
-                .map(|n| KIT_VIEW.hit(id, n).bill(self.sample_rate)),
+                .and_then(|n| KIT_VIEW.hit(id, n))
+                .map(|h| h.bill(self.sample_rate)),
             Some(Waiting {
                 plays: Plays::Note | Plays::Strike,
                 ..
@@ -2592,13 +2600,14 @@ impl Instrument {
 
     /// The hit voice `w`, booked by DRUM Part `id`, plays: the one
     /// waiting out its fade as its pad's in the kit now, else the one
-    /// sounding.
+    /// sounding. Out of line: `choke` and the bills share one copy.
+    #[inline(never)]
     fn hit_of(&self, wi: VoiceIdx, id: PartId) -> Option<DrumHit> {
         let w = wi.index();
         match self.waiting[w] {
             Some(Waiting {
                 plays: Plays::Hit, ..
-            }) => self.alloc.slot(wi).note().map(|n| KIT_VIEW.hit(id, n)),
+            }) => self.alloc.slot(wi).note().and_then(|n| KIT_VIEW.hit(id, n)),
             Some(_) => None,
             None => self.voices[w]
                 .drum_hit()

@@ -494,7 +494,7 @@ impl DrumEngine {
     /// machine at its kernel's pulse pace (`KernelState::pace`).
     pub fn bill(&self) -> Option<KernelBill> {
         self.hit
-            .map(|h| KernelBill::of(h.params().machine(), self.kernel.pace()))
+            .map(|h| KernelBill::of(h.machine(), self.kernel.pace()))
     }
 
     /// The hit's next block at its pad's LEVEL (k / 127, before the

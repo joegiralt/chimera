@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! A kit's voice groups (ADR 0280): each choke group in use counts once,
-//! each pad with choke OFF once. DRUM plays in the 8-voice pool by
+//! each pad with choke OFF once; a NONE pad too, so NONE, a new group
+//! and a machine again can't take a kit past the bound (ADR 0318). DRUM plays in the 8-voice pool by
 //! keeping a kit to 8 groups, so a choke edit never grows a kit past
 //! them; a kit from before the bound loads and plays as it is. The UI's,
 //! linked into bank 2 with its door (`ui::kit_groups`).

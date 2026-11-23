@@ -63,7 +63,7 @@ fn kit() -> Kit {
     let mut k = Kit::DEFAULT;
     for n in [9, 10] {
         let p = k.pad_mut(pad(n));
-        p.set_machine(Machine::ToneCymbal);
+        p.set_machine(Machine::ToneCymbal.into());
         p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
         let f = p.sound_mut().filter_mut();
         f.set_kind(FilterKind::Ladder);
@@ -245,7 +245,7 @@ fn machine_knobs_stay_latched() {
     let play = |edit: bool| {
         let mut k = Kit::DEFAULT;
         let p = k.pad_mut(pad(9));
-        p.set_machine(Machine::PlainSine);
+        p.set_machine(Machine::PlainSine.into());
         p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
         let (mut w, mut r) = rig(&k);
         r.note_on(0, key(9));
@@ -293,7 +293,7 @@ fn amp_decay_follows() {
     let play = |edit: bool| {
         let mut k = Kit::DEFAULT;
         let p = k.pad_mut(pad(9));
-        p.set_machine(Machine::PlainSine);
+        p.set_machine(Machine::PlainSine.into());
         p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
         let env = |d: u8| {
             PadEnv::new(

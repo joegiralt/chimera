@@ -119,15 +119,26 @@ impl KitView {
 
     /// Audio: what `note` strikes on `part`'s kit, as its TONAL says
     /// (`KitNote::new`); a code past the pads (garbage at boot) is OFF.
-    pub fn hit(&self, part: PartId, note: MidiNote) -> DrumHit {
+    /// `None` on a NONE pad: no hit (ADR 0318).
+    pub fn hit(&self, part: PartId, note: MidiNote) -> Option<DrumHit> {
         let v = &self.parts[part.index()];
-        let tonal = Tonal::from_code(v.tonal.load(Ordering::Relaxed)).unwrap_or(Tonal::Off);
-        let (pad, pitch) = KitNote::new(note, tonal).pad();
+        let (pad, pitch) = self.note(part, note).pad();
         let (_, b) = v.read(pad);
         let d = Kit::default_pad(pad);
         let sound = PadSound::from_bytes(core::array::from_fn(|i| b[PAD_BYTES + i]), d.sound());
         let p = Pad::from_bytes(core::array::from_fn(|i| b[i]), &d).with_sound(sound);
         DrumHit::new(pad, p, pitch)
+    }
+
+    /// Audio: the pad `note` strikes on `part`'s kit, a NONE pad's too.
+    pub fn pad(&self, part: PartId, note: MidiNote) -> PadId {
+        self.note(part, note).pad().0
+    }
+
+    /// What `note` means to `part`'s kit, as its TONAL says.
+    fn note(&self, part: PartId, note: MidiNote) -> KitNote {
+        let t = self.parts[part.index()].tonal.load(Ordering::Relaxed);
+        KitNote::new(note, Tonal::from_code(t).unwrap_or(Tonal::Off))
     }
 
     /// Audio: `part`'s publishes so far, as `sound_if_newer` counts them.

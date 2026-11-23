@@ -44,7 +44,9 @@ class FakeUnit:
     `preamble` goes out as soon as a client connects, as a stalled answer's
     tail would sit in the port. A request with no canned answer gets
     silence; one whose answer is `HANG_UP` drops the connection, as a unit
-    resetting would. `on_answer` runs after each answer."""
+    resetting would. `on_answer` runs after each answer, a hang-up's too
+    (a timer started there runs from the answer, not from the test's start:
+    #1109)."""
 
     def __init__(self, answers, preamble=b"", on_answer=None):
         self.answers = answers
@@ -81,6 +83,8 @@ class FakeUnit:
                         self.requests.append(line)
                         if line in self.answers:
                             if self.answers[line] is HANG_UP:
+                                if self.on_answer:
+                                    self.on_answer()
                                 return
                             conn.sendall(self.answers[line])
                             if self.on_answer:
@@ -519,8 +523,9 @@ class Tool(unittest.TestCase):
 
     def test_to_dfu_counts_a_lost_ok_when_the_rom_comes(self):
         # The port vanishes before OK arrives; DF11 then appears.
-        with FakeSysfs({(0x0483, 0x5740)}) as fs, FakeUnit({b"dfu\n": HANG_UP}) as u:
-            fs.replace({(0x0483, 0xDF11)}, after=0.5)
+        with FakeSysfs({(0x0483, 0x5740)}) as fs, FakeUnit(
+            {b"dfu\n": HANG_UP}, on_answer=lambda: fs.replace({(0x0483, 0xDF11)}, after=0.5)
+        ) as u:
             r = run_tool(["to-dfu"], u.target, sysfs=fs.root)
         self.assertEqual(r.returncode, 0, r.stderr)
 
@@ -644,8 +649,9 @@ class NoSysfs(unittest.TestCase):
         self.assertIn(b"console not back", r.stderr)
 
     def test_to_dfu_sends_dfu_and_waits_for_the_rom(self):
-        with FakePorts(["0483:5740"]) as fp, FakeUnit({b"dfu\n": b"OK\n"}) as u:
-            fp.replace([], ["0483:df11"], after=0.3)
+        with FakePorts(["0483:5740"]) as fp, FakeUnit(
+            {b"dfu\n": b"OK\n"}, on_answer=lambda: fp.replace([], ["0483:df11"], after=0.3)
+        ) as u:
             r = run_tool(["to-dfu"], u.target, env=fp.env)
         self.assertEqual((r.returncode, u.requests), (0, [b"dfu\n"]))
 

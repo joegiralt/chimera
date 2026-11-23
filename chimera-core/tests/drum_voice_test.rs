@@ -136,7 +136,7 @@ fn latched_at_the_hit() {
 fn sine_kit(env: PadEnv, mode: AmpMode) -> Kit {
     let mut k = kit();
     let p = k.pad_mut(pad(1));
-    p.set_machine(Machine::PlainSine);
+    p.set_machine(Machine::PlainSine.into());
     p.knobs_mut().set(Knob::B, KnobValue::new(U7::MAX));
     let amp = p.sound_mut().amp_mut();
     *amp.env_mut() = env;

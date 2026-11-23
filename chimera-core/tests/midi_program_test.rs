@@ -357,7 +357,7 @@ fn a_kit_edit_never_drops_a_program_change() {
     ui.project_mut()
         .kit_mut(P[0])
         .pad_mut(PadId::ALL[0])
-        .set_machine(Machine::PlainSine);
+        .set_machine(Machine::PlainSine.into());
     let kit = *ui.project().kit(P[0]);
     pass(&mut ui, &[prog(2, None, 1)]);
     assert_eq!(from(&ui, P[0]), PartFrom::Slot(SlotId::ALL[1]));

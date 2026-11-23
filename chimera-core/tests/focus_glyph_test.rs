@@ -782,7 +782,7 @@ fn every_machine_name_fits_beside_its_icon() {
     use chimera_core::ui::components::{Layout, fit_gauge, layout};
     for m in Machine::ALL {
         let name = chimera_core::dsp::drum::laws::spec(m).name;
-        let g = Gauge::Drum(m);
+        let g = Gauge::Drum(m.into());
         assert!(
             matches!(layout(name, &g), Layout::WithGauge | Layout::SmallBeside),
             "{name}"

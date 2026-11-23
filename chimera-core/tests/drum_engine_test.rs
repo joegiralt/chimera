@@ -33,7 +33,7 @@ fn kick() -> DrumHit {
         ChokeGroup::Off,
         Retrig::Cut,
     );
-    DrumHit::new(PadId::ALL[0], pad, Transpose::ZERO)
+    DrumHit::new(PadId::ALL[0], pad, Transpose::ZERO).unwrap()
 }
 
 /// Renders `blocks` blocks of `slot`; the peak, and the block it went idle
@@ -113,7 +113,7 @@ fn tonal_pitch_moves_the_kick_both_ways() {
         let mut slot = EngineSlot::new(SlotKind::Drum);
         let sr = SampleRate::new(SR).expect("a rate");
         let k = kick();
-        let hit = DrumHit::new(k.pad(), k.params(), Transpose::new(st).expect("in range"));
+        let hit = DrumHit::new(k.pad(), k.params(), Transpose::new(st).expect("in range")).unwrap();
         slot.drum()
             .expect("a drum slot")
             .strike(&hit, Velocity::DEFAULT, HitSeed::new(1), sr);

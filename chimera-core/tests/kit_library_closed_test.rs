@@ -60,7 +60,7 @@ fn closed_is_handled_not_silent() {
     p.replace_part(c).unwrap();
     p.kit_mut(P1)
         .pad_mut(PadId::ALL[0])
-        .set_machine(Machine::PlainSine);
+        .set_machine(Machine::PlainSine.into());
     let edited = *p.kit(P1);
     let mut st = MemStore::new(1);
     st.mount().unwrap();

@@ -38,6 +38,7 @@ use crate::ui::block_registry as reg;
 use crate::ui::fmt::{FmtBuf, fixed};
 use crate::ui::glyph::TAPE_GLYPH_PARAMS;
 use crate::ui::hint::{Gesture, Hint};
+use crate::ui::kit_band::{MARK_H, MARK_W, MARK_X, Mark, Tone};
 use crate::ui::mod_grid::{Col, MatrixState};
 use crate::ui::renderer::Frame;
 use crate::ui::tape_strip::Paint;
@@ -119,6 +120,18 @@ pub enum Ask<'a> {
         sources: &'a [f32; MAX_MOD_SOURCES],
         out: &'a mut Option<f32>,
     },
+    /// `none_plays`: TONAL's band on a NONE pad (ADR 0318).
+    NonePlays(&'a mut Option<Line>),
+    /// `blank`: NONE's mark, `px` a pixel, from `(x, y)`: the full tone
+    /// `ink`, the shading `soft` (ADR 0318).
+    Blank {
+        on: &'a mut dyn Paint,
+        x: i32,
+        y: i32,
+        px: i32,
+        ink: Rgb565,
+        soft: Rgb565,
+    },
     /// `chorus::draw`: FLANGER's moiré or PHASER's ray gun in the braid's box,
     /// `drew` set; the braid's modes leave it false (ADR 0324).
     Chorus {
@@ -183,7 +196,51 @@ pub(crate) fn ask_in(a: Ask<'_>) {
                 *out = v;
             }
         }
+        Ask::NonePlays(out) => *out = Some(Line::new(NONE_PLAYS)),
+        Ask::Blank {
+            on,
+            x,
+            y,
+            px,
+            ink,
+            soft,
+        } => blank(on, (x, y, px), ink, soft),
         Ask::Chorus { on, braid, drew } => *drew = chorus::draw(on, braid),
+    }
+}
+
+/// TONAL's band on a NONE pad: C1 up plays nothing (ADR 0318).
+static NONE_PLAYS: &str = "NONE PLAYS NOTHING";
+
+/// NONE's mark (ADR 0318): a 12 x 10 box, its inside shaded, crossed by
+/// two-pixel strokes; no family badge.
+pub static BLANK: Mark = Mark::of([
+    "..............",
+    ".############.",
+    ".#++++++++++#.",
+    ".#+##++++##+#.",
+    ".#++##++##++#.",
+    ".#+++####+++#.",
+    ".#+++####+++#.",
+    ".#++##++##++#.",
+    ".#+##++++##+#.",
+    ".#++++++++++#.",
+    ".############.",
+    "..............",
+]);
+
+/// `BLANK` at `(x, y)`, `px` a pixel, where the icons' marks sit (right
+/// of the badge's column).
+fn blank(on: &mut dyn Paint, (x, y, px): (i32, i32, i32), ink: Rgb565, soft: Rgb565) {
+    for py in 0..MARK_H {
+        for mx in 0..MARK_W {
+            let c = match BLANK.at(mx, py) {
+                Tone::Full => ink,
+                Tone::Dim => soft,
+                Tone::None => continue,
+            };
+            on.rect(x + (MARK_X + mx) * px, y + py * px, px, px, c);
+        }
     }
 }
 

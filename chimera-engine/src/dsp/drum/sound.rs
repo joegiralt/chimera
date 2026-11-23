@@ -1062,7 +1062,11 @@ impl KitBill {
 /// costliest pad's mods and the costliest bill its machines can run up.
 pub fn kit_bill(kit: &Kit) -> KitBill {
     PadId::ALL.iter().fold(KitBill::NONE, |b, &p| {
-        let mc = KernelBill::worst(kit.pad(p).machine());
+        // A NONE pad never runs: it bills nothing (ADR 0318).
+        let Some(machine) = kit.pad(p).machine().machine() else {
+            return b;
+        };
+        let mc = KernelBill::worst(machine);
         KitBill {
             kernel: match b.kernel {
                 Some(was) if was.cost() >= mc.cost() => Some(was),
