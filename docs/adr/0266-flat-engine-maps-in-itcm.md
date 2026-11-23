@@ -1,6 +1,6 @@
 # 0266. Keep controller maps flat, up to 90 rows a Part in ITCM, and ship one map an engine
 
-- **Status:** Proposed (supersedes in part 0226: its sections, the layer, `MapSection` as the written record, the 16-row layer and the 32-slot resolution; supersedes 0264: SUGGEST; amends 0217, whose 32 binding slots now hold the Sound's 16 and 16 seats, and 0255, whose row edits, saves and console `put` act on a flat file)
+- **Status:** Superseded by 0323
 - **Deciders:** owner (2026-11-12: "makes sense" to the model, "sounds good" to the design), firmware
 
 ## Context

@@ -20,7 +20,7 @@ use chimera_core::midi_in::{Cc, CcEvent};
 use chimera_core::midi_map::ctl::{self, ControllerMap};
 use chimera_core::midi_map::{Input, LearnCc, MAP_LEN, Mappable, MidiMap};
 use chimera_core::name::SoundName;
-use chimera_core::params::{EngineType, FilterParams};
+use chimera_core::params::FilterParams;
 use chimera_core::project::{LoadLink, PartId};
 use chimera_core::storage::{Card, Ready, SystemSettings, SystemSync};
 use chimera_core::ui::block_registry::FILTER;
@@ -151,11 +151,11 @@ impl Rig {
             own.learn(cc(c), Mappable::new(a).unwrap()).unwrap();
         }
         let mut m = ControllerMap::EMPTY;
-        m.absorb(&own, EngineType::Algo).unwrap();
+        m.absorb(&own).unwrap();
         let mut card = Card::new();
         let out = card
             .run(&mut self.s, |s, r: &Ready| {
-                Ok::<_, StoreError>(ctl::save(s, r, &name(n), &m))
+                Ok::<_, StoreError>(ctl::save(s, r, &name(n), &mut ctl::FileBuf::new(), &m))
             })
             .unwrap();
         out.result.unwrap().unwrap();
@@ -166,7 +166,13 @@ impl Rig {
         let mut card = Card::new();
         let out = card
             .run(&mut self.s, |s, r: &Ready| {
-                Ok::<_, StoreError>(ctl::load(s, r, &name(n), &mut back))
+                Ok::<_, StoreError>(ctl::load(
+                    s,
+                    r,
+                    &name(n),
+                    &mut ctl::FileBuf::new(),
+                    &mut back,
+                ))
             })
             .unwrap();
         out.result.unwrap().ok().map(|_| back)
@@ -209,7 +215,7 @@ fn the_map_schema_is_the_binding_model() {
     assert_eq!(ccs, want);
     assert!(lines.contains(&"span 0 255"));
     assert!(lines.contains(&format!("rows {MAP_LEN}").as_str()));
-    assert!(lines.contains(&format!("maprows {MAP_LEN}").as_str()));
+    assert!(lines.contains(&format!("maprows {}", chimera_core::midi_map::ctl::MAP_ROWS).as_str()));
     assert_eq!(*lines.last().unwrap(), "OK");
     assert!(ask(&mut f, "ed describe MAP 1\n").starts_with("ERR"));
 }
@@ -462,28 +468,19 @@ fn map_rows_edit_through_the_card() {
         m.contains(&"row M2 CC74 JUMP FILTER.RESO 0 255 off shadowed".to_string()),
         "{m:?}"
     );
-    // An edit of M1 waits for the card: another row's edit is CARD BUSY.
+    // A row's edit is the shared map's at once (ADR 0323): another row's
+    // edit never waits for the card.
     queued(&mut r.f, "ed map set M1 min 9");
     apply(&mut r.f);
-    assert_eq!(
-        ask(&mut r.f, "ed map set M2 min 1\n"),
-        "ERR ed map CARD BUSY: a map job waits\n"
-    );
-    assert_eq!(
-        ask(&mut r.f, "ed map rm M2 CC74 FILTER.RESO\n"),
-        "ERR ed map CARD BUSY: a map job waits\n"
-    );
-    // The same row's edit takes the job on.
+    queued(&mut r.f, "ed map set M2 min 1");
+    apply(&mut r.f);
     queued(&mut r.f, "ed map set M1 max 99");
     apply(&mut r.f);
     r.work();
     let file = r.map_file("EC4").unwrap();
     let row = file
-        .section(None)
-        .entries()
-        .iter()
+        .rows()
         .find(|b| b.target == Mappable::new(CUTOFF).unwrap())
-        .copied()
         .unwrap();
     assert_eq!((row.span.min, row.span.max), (9, 99));
     // A map row removed from the file, witnessed.
@@ -493,9 +490,7 @@ fn map_rows_edit_through_the_card() {
     r.pass();
     let file = r.map_file("EC4").unwrap();
     assert!(
-        file.section(None)
-            .entries()
-            .iter()
+        file.rows()
             .all(|b| b.target != Mappable::new(RESO).unwrap())
     );
     // KEEP MAP, idempotent.
@@ -681,4 +676,78 @@ fn a_whole_map_section_fits_the_bound() {
     let size: usize = s.iter().map(|l| l.len() + 1).sum();
     assert!(size < ANSWER_BYTES_MAX, "{size}");
     assert!(106 * longest + 16 * 26 < ANSWER_BYTES_MAX, "{longest}");
+}
+
+/// A save under another name that fails (MAP FULL) leaves the Part on its
+/// own map, playing its rows: the slot it read the other map into gives
+/// its map back (review of #1122).
+#[test]
+fn a_failed_save_as_keeps_the_part_s_map() {
+    use chimera_core::block::ParamId;
+    use chimera_core::midi_map::{Binding, Feedback, Span};
+    let mut r = Rig::new();
+    r.put_map("MINE", &[(21, CUTOFF)]);
+    // A full map on cells and CCs the Part's own rows don't touch.
+    let mut full = ControllerMap::EMPTY;
+    let cells = BlockRef::ALL
+        .into_iter()
+        .filter(|b| *b != BlockRef::Filter && *b != BlockRef::Out)
+        .flat_map(|b| (0..64).map(move |p| ParamAddr::new(b, ParamId(p))))
+        .filter_map(Mappable::new);
+    let ccs = (0..=127u8)
+        .filter(|c| !matches!(c, 7 | 10 | 11 | 16..=19 | 21 | 71..=74 | 91 | 93 | 94))
+        .filter_map(Input::cc)
+        .chain((0..60u16).filter_map(|n| {
+            chimera_midi::value::U14::new(n).map(|n| {
+                Input::Nrpn(
+                    n,
+                    chimera_core::midi_map::NrpnKind::Absolute(chimera_midi::take::Takeover::Jump),
+                )
+            })
+        }));
+    for (t, input) in cells.zip(ccs).take(ctl::MAP_ROWS) {
+        full.push(Binding {
+            input,
+            target: t,
+            span: Span::FULL,
+            feedback: Feedback::Off,
+        })
+        .unwrap();
+    }
+    assert_eq!(full.len(), ctl::MAP_ROWS);
+    let mut card = Card::new();
+    card.run(&mut r.s, |s, rd: &Ready| {
+        Ok::<_, StoreError>(ctl::save(
+            s,
+            rd,
+            &name("FULL"),
+            &mut ctl::FileBuf::new(),
+            &full,
+        ))
+    })
+    .unwrap()
+    .result
+    .unwrap()
+    .unwrap();
+    r.f.ui.project_mut().set_controller(P1, Some(name("MINE")));
+    r.pass();
+    r.pass();
+    assert_eq!(rows(&whole(&mut r.f), "row M").len(), 1);
+    // The Part's own rows don't fit FULL: refused.
+    queued(&mut r.f, "ed map save FULL");
+    r.pass();
+    for _ in 0..3 {
+        r.pass();
+    }
+    assert_eq!(
+        r.f.ui.project().controller(P1).map(|n| n.padded()),
+        Some(name("MINE").padded())
+    );
+    let m = rows(&whole(&mut r.f), "row M");
+    assert_eq!(m.len(), 1, "the Part plays MINE again: {m:?}");
+    assert!(
+        m[0].starts_with("row M1 CC21 JUMP FILTER.CUTOFF 0 255"),
+        "{m:?}"
+    );
+    assert_eq!(r.map_file("FULL").unwrap(), full, "FULL untouched");
 }

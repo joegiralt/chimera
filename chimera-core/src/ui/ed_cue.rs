@@ -274,15 +274,12 @@ pub(crate) fn card(ui: &mut UiState, c: Option<crate::console::ProjectCmd>) -> P
     Pass::Done
 }
 
-/// Part `p`'s controller map's rows as it plays them (ADR 0226): empty
-/// before the MIDI UI first ran, as MIDI MAP reads it.
+/// Part `p`'s controller map (ADR 0323): empty before the MIDI UI first
+/// ran, as MIDI MAP reads it.
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.layer"))]
-pub(crate) fn layer(ui: &UiState, p: PartId) -> crate::midi_map::MidiMap {
-    match ui.cc.built() {
-        Some(m) => *m.ctl.layer(p.index()),
-        None => crate::midi_map::MidiMap::EMPTY,
-    }
+pub(crate) fn layer(ui: &UiState, p: PartId) -> &crate::midi_map::ctl::ControllerMap {
+    ui.part_map(p)
 }
 
 /// `m` as Part `p`'s own rows: MIDI MAP's write, a Sound edit (`set_map`).
@@ -293,9 +290,8 @@ pub(crate) fn set_own(ui: &mut UiState, p: PartId, m: crate::midi_map::MidiMap) 
 }
 
 /// Row `i` of Part `p`'s controller map, `was`, made `to`: MIDI MAP's
-/// turn on a layer row (`Layers::edit`), the map on the card changed by
-/// the next card work. `false`: another job waits, nothing changed; the
-/// box says CARD BUSY, as it does to a hand.
+/// turn on a map row, in the map the Parts share at once, on the card by
+/// the next card work (ADR 0323). `false`: the row moved, or MAP FULL.
 #[cfg(feature = "midi-map")]
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.cue.layer_edit"))]
 pub(crate) fn layer_edit(
@@ -305,12 +301,9 @@ pub(crate) fn layer_edit(
     was: crate::midi_map::Binding,
     to: crate::midi_map::Binding,
 ) -> bool {
-    let took = ui.cc.ui().ctl.edit(p, i.index(), was, to);
-    match took {
-        Ok(()) => ui.cc.reset_part(p),
-        Err(busy) => ui.error(busy.into()),
-    }
-    took.is_ok()
+    let i = i.index();
+    let here = ui.part_map(p).get(i);
+    here.is_some_and(|b| super::midi::layer::same_row(&b, &was)) && ui.map_row_set(p, i, to)
 }
 
 /// MIDI MAP's card job `j` (`ctl_ask`): a save, a rename, a row's drop.
@@ -436,9 +429,10 @@ pub(crate) fn ctl_work(
         }
         return ui.ctl_work_in(s, r);
     };
-    let c = &mut ui.cc.ui().ctl;
+    let (m, pool) = ui.cc.split();
+    let c = &mut m.ctl;
     c.list = [None; MAX_MAPS];
-    let got = ctl::list(s, r, &mut c.list);
+    let got = ctl::list(s, r, pool.buf(), &mut c.list);
     c.more = matches!(got, Ok((_, true)));
     c.listed = !matches!(got, Err(StoreError::Busy));
     if c.listed {

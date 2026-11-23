@@ -19,10 +19,11 @@ spec.loader.exec_module(factory_zip)
 
 def builds(root, sources=("0BADF00D", "12345678")):
     """A public set of 18 Sounds (the 16 ports among them) and 2 projects,
-    a TAPE set of 2 Sounds playing `sources`, and one map."""
+    a TAPE set of 2 Sounds playing `sources`, and the five engine maps."""
     pub, tapes, maps = root / "public", root / "tapes", root / "maps"
     (maps / "CHIMERA/MAPS").mkdir(parents=True)
-    (maps / "CHIMERA/MAPS/SUGG05F6.A").write_bytes(b"m")
+    for m in factory_zip.ENGINE_MAPS:
+        (maps / f"CHIMERA/MAPS/{m}.A").write_bytes(b"m")
     for d in ("SOUNDS", "PROJECTS"):
         (pub / "CHIMERA" / d).mkdir(parents=True)
     for n in range(10, 28):
@@ -53,16 +54,36 @@ class FactoryZip(unittest.TestCase):
         self.assertEqual(sum(n.startswith("CHIMERA/PROJECTS/") for n in names), 2)
         self.assertIn("CHIMERA/TAPES/0BADF00D.SRC", names)
         self.assertIn("CHIMERA/TAPES/12345678.SRC", names)
-        self.assertIn("CHIMERA/MAPS/SUGG05F6.A", names)
+        for m in factory_zip.ENGINE_MAPS:
+            self.assertIn(f"CHIMERA/MAPS/{m}.A", names)
 
     def test_no_map_refuses(self):
         with tempfile.TemporaryDirectory() as d:
             root = pathlib.Path(d)
             pub, tapes, maps = builds(root)
-            (maps / "CHIMERA/MAPS/SUGG05F6.A").unlink()
+            for m in factory_zip.ENGINE_MAPS:
+                (maps / f"CHIMERA/MAPS/{m}.A").unlink()
             with self.assertRaises(SystemExit) as e:
                 factory_zip.pack(pub, tapes, maps, root / "f.zip")
         self.assertIn("no controller maps", str(e.exception))
+
+    def test_a_missing_engine_map_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            pub, tapes, maps = builds(root)
+            (maps / "CHIMERA/MAPS/DRUME1A7.A").unlink()
+            with self.assertRaises(SystemExit) as e:
+                factory_zip.pack(pub, tapes, maps, root / "f.zip")
+        self.assertIn("no DRUME1A7.A engine map", str(e.exception))
+
+    def test_suggest_refuses(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            pub, tapes, maps = builds(root)
+            (maps / "CHIMERA/MAPS/SUGG05F6.A").write_bytes(b"m")
+            with self.assertRaises(SystemExit) as e:
+                factory_zip.pack(pub, tapes, maps, root / "f.zip")
+        self.assertIn("SUGGEST", str(e.exception))
 
     def test_a_missing_source_refuses(self):
         with tempfile.TemporaryDirectory() as d:

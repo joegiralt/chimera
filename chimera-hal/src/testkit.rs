@@ -22,6 +22,8 @@ pub struct MemStore {
     sealed: BTreeSet<FileName>,
     id: VolumeId,
     present: bool,
+    /// Mounts asked for, a card in the slot or not.
+    mounts: u32,
 }
 
 fn volume(serial: u32) -> VolumeId {
@@ -40,7 +42,13 @@ impl MemStore {
             sealed: BTreeSet::new(),
             id: volume(serial),
             present: true,
+            mounts: 0,
         }
+    }
+
+    /// How many mounts were asked for, a card in the slot or not.
+    pub fn mounts(&self) -> u32 {
+        self.mounts
     }
 
     /// A different card, empty, in the slot.
@@ -120,6 +128,7 @@ impl ByteSink for Buf<'_> {
 impl Store for MemStore {
     fn clear_read_fault(&mut self) {}
     fn mount(&mut self) -> Result<VolumeId, StoreError> {
+        self.mounts += 1;
         if self.present {
             Ok(self.id)
         } else {

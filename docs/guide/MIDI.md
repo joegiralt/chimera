@@ -167,11 +167,11 @@ A 14-bit pair and PRESSURE take JUMP, PICKUP or SCALE. A relative encoder turns 
 
 ## Controller maps
 
-A controller map is a named set of bindings on the card (FADERFOX, CIRKLON, LCXL3…). It holds a **shared** section and one section an engine (ALGO, MODAL, TAPE, VA). A binding's section is its cell's: a cell of an engine's own page (MORPH, STRUCTURE, SHAPE…) belongs to that engine's section; a cell every engine has (CUTOFF, LEVEL, an LFO, an FX pot) is shared. A Part plays its engine's rows and the shared rows, so switching the Part's engine swaps the engine rows by itself. A map made for one engine just leaves the others empty.
+A controller map is a named list of bindings on the card (FADERFOX, CIRKLON, LCXL3…), up to 90 rows. Any map plays on any engine: a row for a cell the Part's engine doesn't have (MORPH on a VA Part) is dimmed and does nothing, and comes alive when the Part switches to that engine. Parts that pick the same map play the same rows, and a change to it reaches all of them at once.
 
-The Sound's own rows win: when the Sound and the controller map both bind a control, the Sound's binding moves and the map's row is dimmed. Inside the map, an engine's row wins over a shared row on the same control. A Part plays at most 16 controller rows.
+The Sound's own rows win: when the Sound and the controller map both bind a control, the Sound's binding moves and the map's row is dimmed.
 
-The project remembers each Part's controller map by name. It is read from the card again each time the project loads, so a map saved later reaches every project that uses it.
+The project remembers each Part's controller map by name. It is read from the card when the project loads or the Part picks it, and it stays with the Part through every Sound load.
 
 ### Picking a map
 
@@ -180,15 +180,23 @@ The project remembers each Part's controller map by name. It is read from the ca
 
 Each row of the map reads as a Sound's row does; its spelled-out line ends `IN FADERFOX` (the map's name).
 
+A Part has 16 binding slots for its map's rows. A map's ECHO rows take them first when the Part picks it, then its rows in order; a control moved whose row has no slot takes the one heard least recently, so the knobs being played always play. A row taking a slot starts fresh: a PICKUP row waits to pick up again.
+
 ### Saving a map
 
 1. Learn the controls you want on the Part, with **MIX + SEQ**, as above. They become the Sound's own rows.
 2. On MIDI MAP, with the bar on `CONTROLLER`, press **EDIT**. NAMING opens on the Part's map's name (`CONTROLLER` if it has none).
 3. Keep the name to update that map, or type a new one, and press **EDIT**.
 
-The Sound's rows move into the map, into their sections, each replacing the map row it was hiding. The Part then plays the saved map, and its Sound's map is empty, so the Sound shows `*` until you save or revert it. Saving under a new name copies the Part's map first, then adds the rows. A save that would give any engine more than 16 rows is refused with `MAP FULL`. Two names can share a file pair (see [On the card](#on-the-card)): a save whose files hold another map is refused with `NAME TAKEN`, and that map stays as it was.
+The Sound's rows move into the map, each replacing the map row on its control or cell, and go after the map's other rows. The Part then plays the saved map, and its Sound's map is empty, so the Sound shows `*` until you save or revert it. Saving under a new name copies the Part's map first, then adds the rows. A save past 90 rows is refused with `MAP FULL`. Two names can share a file pair (see [On the card](#on-the-card)): a save whose files hold another map is refused with `NAME TAKEN`, and that map stays as it was.
 
-To make a map for another engine, switch the Part's engine, learn that engine's cells and save under the same name: only that engine's section and the shared one change.
+To add another engine's cells to a map, switch the Part's engine, learn them and save under the same name.
+
+### Adding rows without the controller
+
+The last row of MIDI MAP is `+ NEW BINDING`. Press **EDIT** on it, walk to the cell, turn its knob to point at it, and press **EDIT** again. With a map picked, the new row joins the map; with `NONE`, the Sound. Its control is the first free CC: set the CC with **B**, then MIN, MAX, INPUT and ECHO as on any row.
+
+**EDIT** on any row points at a new cell for it in the same way: only its cell changes, and its control, MIN, MAX, INPUT and ECHO stay.
 
 ### Keeping the Part's rows: KEEP MAP
 
@@ -203,10 +211,9 @@ Press **MIX + PLUS** again to turn it off. If the Part's rows differ from its So
 
 ### Changing and deleting rows
 
-- **To change a map row**, put the bar on it and turn **B** to **F**, as on a Sound's row. The row changes at once and is written to the map on the card a moment later. Or learn the same control on the Part (it hides the map's row), then save.
-- **To delete a map row**, put the bar on it and press **MIX + MINUS**. Chimera asks, then removes the row from the map on the card.
-
-If the map has left the card since it was read, either says `FILE NOT FOUND` and writes nothing.
+- **To change a map row**, put the bar on it and turn **B** to **F**, as on a Sound's row. The row changes at once, for every Part on the map, and is written to the map on the card a moment later. Or learn the same control on the Part (it hides the map's row), then save.
+- **To delete a map row**, put the bar on it and press **MIX + MINUS**. Chimera asks, then removes the row, and the card's copy follows.
+- **For a fine range**, hold **MIX** while turning **C** or **D**: MIN or MAX moves one step at a time however fast the knob turns. With **MIX** held on a row, its hint line says so: `MIX+C/D FINE  MIX+MINUS DELETE`. MIN above MAX turns the control's response upside down.
 
 ### Renaming and deleting a map
 
@@ -229,37 +236,244 @@ python3 chimera-usb.py put faderfox.map /CHIMERA/MAPS/
 
 `ls maps` lists the files. `get` copies a map off the card into a file on the computer; it never writes over a file that is already there. `put` copies a map file onto the card under its name's files, replacing a map of the same name; a Part playing that map plays the new one at once. The name comes from inside the file, so the file on the computer can be called anything.
 
-### SUGGEST, the factory map
+### The factory maps
 
-The factory set's `CHIMERA/MAPS` holds **SUGGEST**, a ready-made map for any controller of knobs or faders: set them to send these CCs on the Part's channel, pick `SUGGEST` on MIDI MAP, and each knob plays the same kind of control whatever the Part's engine. CC 20 is the engine's main timbre knob, CC 21 its second, CC 29 its character; the shared rows play on every engine. A Part plays 16 rows: the 6 shared and its engine's 10.
+The factory set's `CHIMERA/MAPS` holds one map an engine, named after it: **ALGO**, **MODAL**, **VA**, **TAPE** and **DRUM**. Each is a starting point for a box of knobs or faders: set them to send these CCs on the Part's channel and pick the map on MIDI MAP. The cells every engine has (both ENV TYPEs' cells, the LFOs, the filter, the FX slot) sit on the same CCs in every map, then the engine's own cells follow. The CCs avoid the [built-in CCs](#the-built-in-ccs), the wheel, breath, foot and pedals, and CC 16 to 19, which a factory Sound's own rows use; CUTOFF, RESONANCE and the sends are left to the built-in CCs. Every row is absolute, `JUMP`; change one to PICKUP with **E**. DRUM's pads have no mappable cells: its map's own rows are the master FX.
 
-| CC | Shared |
+To change a factory map, save it under a new name first (**EDIT** on `CONTROLLER`), then edit that copy: copying the factory set onto the card again puts the factory maps back over any edit.
+
+Every engine's map:
+
+| CC | Cell |
 |---|---|
-| 14 | LFO 1 RATE |
-| 15 | LFO 1 DEPTH |
-| 85 | ENV 2 LEVEL |
-| 86 | VOICE TIME |
-| 87 | FX AMOUNT |
-| 88 | FX MIX |
+| 3 | ENV 1 ATK |
+| 9 | ENV 1 DEC |
+| 14 | ENV 1 SUS |
+| 15 | ENV 1 REL |
+| 20 | ENV 1 RISE |
+| 21 | ENV 1 FALL |
+| 22 | ENV 1 SHAPE |
+| 23 | ENV 1 TIME |
+| 24 | ENV 1 LEVEL |
+| 25 | ENV 2 ATK |
+| 26 | ENV 2 DEC |
+| 27 | ENV 2 SUS |
+| 28 | ENV 2 REL |
+| 29 | ENV 2 RISE |
+| 30 | ENV 2 FALL |
+| 31 | ENV 2 SHAPE |
+| 85 | ENV 2 TIME |
+| 86 | ENV 2 LEVEL |
+| 87 | LFO 1 RATE |
+| 88 | LFO 1 DEPTH |
+| 89 | LFO 1 OFST |
+| 90 | LFO 1 RISE |
+| 102 | LFO 1 FALL |
+| 103 | LFO 2 RATE |
+| 104 | LFO 2 DEPTH |
+| 105 | LFO 2 OFST |
+| 106 | LFO 2 RISE |
+| 107 | LFO 2 FALL |
+| 108 | LFO 3 RATE |
+| 109 | LFO 3 DEPTH |
+| 110 | LFO 3 OFST |
+| 111 | LFO 3 RISE |
+| 112 | LFO 3 FALL |
+| 113 | FILTER INPUT LEVEL |
+| 114 | FILTER STAB |
+| 115 | FILTER FEEDBACK |
+| 116 | FILTER SEM MODE |
+| 117 | FX AMOUNT |
+| 118 | FX SHAPE |
+| 119 | FX LEVEL |
+| 5 | FX MIX |
+| 8 | VOICE FINE |
+| 12 | VOICE TIME |
+| 13 | OUTPUT LEVEL |
+| 33 | OUTPUT PAN |
+| 34 | OUTPUT VCA |
+| 35 | OUTPUT VEL |
+| 36 | OUTPUT LPG |
+| 37 | OUTPUT DECAY |
+| 39 | OUTPUT STRIKE |
+| 40 | OUTPUT WIDTH |
 
-| CC | ALGO | MODAL | VA | TAPE |
-|---|---|---|---|---|
-| 20 | MORPH | STRUCT | WAVE1 | POSITION (WALK POSITION, STRCH POSITION, SCRUB FINGER, WAVE FRAME) |
-| 21 | VOWEL | BRIGHT | WAVE2 | MOTION (STRCH SPEED, SCRUB SPEED, WAVE SCAN) |
-| 22 | OPERATOR 2 LEVEL | POS | SHAPE1 | SIZE (WALK LENGTH, STRCH D-TIME, SCRUB LENGTH, WAVE RANGE) |
-| 23 | OPERATOR 3 LEVEL | EXCITE | SHAPE2 | DRAG (WALK FADE, SCRUB DRAG) |
-| 24 | OPERATOR 4 LEVEL | BODY | AMNT | DRIFT (WALK DRIFT) |
-| 25 | OPERATOR 2 CRSE | COLOR | MODE | LENGTH (STRCH LENGTH) |
-| 26 | OPERATOR 3 CRSE | BURST | SUB | GRAIN (STRCH GRAIN) |
-| 27 | OPERATOR 4 CRSE | FORCE | NOISE | SPRAY (STRCH SPRAY) |
-| 28 | OPERATOR 2 DETUN | COUPLE | FINE2 | TAPE |
-| 29 | OPERATOR 4 FDBK | HALO | STAB | AGE |
+ALGO (`ALGODE32.A`, 86 rows), after those:
 
-Every row is absolute, `JUMP`, as learn sets a knob; change one to PICKUP with **E** on MIDI MAP. The CCs are ones MIDI leaves undefined, so they meet no GM control: CC 1 (the wheel), 7 (LEVEL), 10 (PAN), 74 (CUTOFF) and the other [built-in CCs](#the-built-in-ccs) stay free. A TAPE row names the cell, then in brackets what each machine calls it; on a machine that doesn't read the cell, the knob does nothing. ENV 2 LEVEL sets how far ENV 2 moves what it drives (the filter, in most Sounds); VOICE TIME is the glide; FX AMOUNT and FX MIX are the Sound's FX slot.
+| CC | Cell |
+|---|---|
+| 41 | ALG A |
+| 42 | ALG B |
+| 43 | MORPH |
+| 44 | TRNSP |
+| 45 | VOWEL |
+| 46 | OPERATOR 1 WAVE |
+| 47 | OPERATOR 2 WAVE |
+| 48 | OPERATOR 3 WAVE |
+| 49 | OPERATOR 4 WAVE |
+| 50 | OPERATOR 5 WAVE |
+| 51 | OPERATOR 6 WAVE |
+| 52 | OPERATOR 1 CRSE |
+| 53 | OPERATOR 2 CRSE |
+| 54 | OPERATOR 3 CRSE |
+| 55 | OPERATOR 4 CRSE |
+| 56 | OPERATOR 5 CRSE |
+| 57 | OPERATOR 6 CRSE |
+| 58 | OPERATOR 1 FINE |
+| 59 | OPERATOR 2 FINE |
+| 60 | OPERATOR 3 FINE |
+| 61 | OPERATOR 4 FINE |
+| 62 | OPERATOR 5 FINE |
+| 63 | OPERATOR 6 FINE |
+| 70 | OPERATOR 1 DETUN |
+| 75 | OPERATOR 2 DETUN |
+| 76 | OPERATOR 3 DETUN |
+| 77 | OPERATOR 4 DETUN |
+| 78 | OPERATOR 5 DETUN |
+| 79 | OPERATOR 6 DETUN |
+| 80 | OPERATOR 1 LEVEL |
+| 81 | OPERATOR 2 LEVEL |
+| 82 | OPERATOR 3 LEVEL |
+| 83 | OPERATOR 4 LEVEL |
+| 92 | OPERATOR 5 LEVEL |
+| 95 | OPERATOR 6 LEVEL |
 
-To change SUGGEST, first save it under a new name (with the bar on `CONTROLLER`, press **EDIT** and type another name), then edit that copy. Copying the factory set onto the card again replaces `SUGGEST`'s file, and any edit made to it, with the factory map; that is also how to get it back. The file is `SUGG05F6.A`.
+MODAL (`MODA3D52.A`, 77 rows), after those:
 
-SUGGEST fills all 16 rows of every engine. Learning still works, since a learned row goes into the Sound's own rows and wins over the map's row on the same control. But saving a learned row into SUGGEST or a copy of it is refused with `MAP FULL`, unless the row takes over a control or cell the map already uses. Delete a row from your copy first (**MIX + MINUS** on it), or start a new map from `NONE`.
+| CC | Cell |
+|---|---|
+| 41 | MODEL |
+| 42 | EXCITE |
+| 43 | BRIGHT |
+| 44 | POS |
+| 45 | BODY |
+| 46 | ENS.D |
+| 47 | ENS.R |
+| 48 | ENS.M |
+| 49 | DAMP |
+| 50 | STRUCT |
+| 51 | COUPLE |
+| 52 | HALO |
+| 53 | MODES |
+| 54 | FORCE |
+| 55 | SPEED |
+| 56 | COLOR |
+| 57 | BURST |
+| 58 | ENV 3 ATK |
+| 59 | ENV 3 DEC |
+| 60 | ENV 3 SUS |
+| 61 | ENV 3 REL |
+| 62 | ENV 3 RISE |
+| 63 | ENV 3 FALL |
+| 70 | ENV 3 SHAPE |
+| 75 | ENV 3 TIME |
+| 76 | ENV 3 LEVEL |
+
+VA (`VA2B02.A`, 74 rows), after those:
+
+| CC | Cell |
+|---|---|
+| 41 | WAVE1 |
+| 42 | WAVE2 |
+| 43 | MODE |
+| 44 | AMNT |
+| 45 | SUB |
+| 46 | STAB |
+| 47 | CRSE1 |
+| 48 | FINE1 |
+| 49 | SHAPE1 |
+| 50 | CRSE2 |
+| 51 | FINE2 |
+| 52 | SHAPE2 |
+| 53 | KIND |
+| 54 | NOISE |
+| 55 | ENV 3 ATK |
+| 56 | ENV 3 DEC |
+| 57 | ENV 3 SUS |
+| 58 | ENV 3 REL |
+| 59 | ENV 3 RISE |
+| 60 | ENV 3 FALL |
+| 61 | ENV 3 SHAPE |
+| 62 | ENV 3 TIME |
+| 63 | ENV 3 LEVEL |
+
+TAPE (`TAPE2C4E.A`, 84 rows), after those:
+
+| CC | Cell |
+|---|---|
+| 41 | MODEL |
+| 42 | START |
+| 43 | END |
+| 44 | POSITION (WALK POSITION, STRCH POSITION, SCRUB FINGER, WAVE FRAME) |
+| 45 | MOTION (STRCH SPEED, SCRUB SPEED, WAVE SCAN) |
+| 46 | TAPE |
+| 47 | AGE |
+| 48 | SIZE (WALK LENGTH, STRCH D-TIME, SCRUB LENGTH, WAVE RANGE) |
+| 49 | XFADE (WALK XFADE, SCRUB XFADE) |
+| 50 | DRAG (WALK FADE, SCRUB DRAG) |
+| 51 | TYPE (STRCH TYPE) |
+| 52 | ROOT |
+| 53 | PERIOD |
+| 54 | SLICE |
+| 55 | WOW |
+| 56 | DIRECTION (WALK DIRECTION) |
+| 57 | RETRIG (WALK RETRIG) |
+| 58 | TRON (WALK TRON) |
+| 59 | DRIFT (WALK DRIFT) |
+| 60 | KEY (SCRUB KEY) |
+| 61 | LENGTH (STRCH LENGTH) |
+| 62 | GRAIN (STRCH GRAIN) |
+| 63 | SPRAY (STRCH SPRAY) |
+| 70 | FINISH (STRCH END) |
+| 75 | ENV 3 ATK |
+| 76 | ENV 3 DEC |
+| 77 | ENV 3 SUS |
+| 78 | ENV 3 REL |
+| 79 | ENV 3 RISE |
+| 80 | ENV 3 FALL |
+| 81 | ENV 3 SHAPE |
+| 82 | ENV 3 TIME |
+| 83 | ENV 3 LEVEL |
+
+DRUM (`DRUME1A7.A`, 86 rows), after those:
+
+| CC | Cell |
+|---|---|
+| 41 | CHORUS RATE |
+| 42 | CHORUS DEPTH |
+| 43 | CHORUS MIX |
+| 44 | DELAY TIME |
+| 45 | DELAY FDBK |
+| 46 | DELAY MECHANICS |
+| 47 | DELAY SAT |
+| 48 | DELAY TONE |
+| 49 | DELAY MIX |
+| 50 | DELAY REV |
+| 51 | DELAY SIZE |
+| 52 | DELAY DENSITY |
+| 53 | DELAY PITCH |
+| 54 | DELAY TEXTURE |
+| 55 | DELAY NOTE |
+| 56 | REVERB TIME |
+| 57 | REVERB DAMP |
+| 58 | REVERB SIZE |
+| 59 | REVERB MIX |
+| 60 | REVERB TONE |
+| 61 | REVERB DIFFUSE |
+| 62 | REVERB PRE-DLY |
+| 63 | REVERB SHAPE |
+| 70 | REVERB SMEAR |
+| 75 | REVERB RATE |
+| 76 | REVERB DENSITY |
+| 77 | REVERB DUCK |
+| 78 | REVERB RELEASE |
+| 79 | COMP THRESH |
+| 80 | COMP ATK |
+| 81 | COMP REL |
+| 82 | COMP MAKEUP |
+| 83 | COMP MIX |
+| 92 | COMP VOL |
+| 95 | COMP PAN |
 
 ### Pickup
 

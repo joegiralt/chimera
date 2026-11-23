@@ -273,11 +273,11 @@ nrpn-guide:
     {{utils}} nrpn-guide > docs/guide/NRPN.md
     {{utils}} nrpn-json > docs/guide/NRPN.json
 
-# SUGGEST, the factory controller map, from the param tables: its card
-# file into DIR/CHIMERA/MAPS (the factory pack's), or `--tables` for
-# docs/guide/MIDI.md's controller map section.
-suggest-map dir="target/factory-maps":
-    {{utils}} suggest-map {{dir}}
+# The factory controller maps, one an engine (ADR 0323), from the param
+# tables: their card files into DIR/CHIMERA/MAPS (the factory pack's), or
+# `--tables` for docs/guide/MIDI.md's factory map section.
+engine-maps dir="target/factory-maps":
+    {{utils}} engine-maps {{dir}}
 
 # The ELF's two banks: <out>.bin (bank 1, never .bank2) and <out>.bk2. Every
 # firmware build has bank 2 (ADR 0194): an empty .bank2 fails.
@@ -486,7 +486,7 @@ check-slots elf bk2:
 # the only firmware shipped), CHIMERA.BK2 (sealed for that .bin: dropped in
 # the card root, the next boot installs it) and factory-v1.zip (the
 # card's whole CHIMERA folder: every factory Sound, TAPE's sources, the
-# demo projects and the SUGGEST controller map) and NRPN.json (the NRPN
+# demo projects and the factory controller maps) and NRPN.json (the NRPN
 # chart for scripts, #983); writes
 # SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
 # the assets are exactly those five and none is a private file's bytes. A
@@ -516,7 +516,7 @@ release version *flags:
     head -c 8 "$out/CHIMERA.BK2" | grep -qa CHIMERA2 || { echo "CHIMERA.BK2 is not a .bk2" >&2; exit 1; }
     # The factory set: the card's CHIMERA folder as a tester copies it, one
     # root: the public build's Sounds and demo projects, TAPE's Sounds and
-    # the sources they play in TAPES, SUGGEST in MAPS (fresh from the param
+    # the sources they play in TAPES, the engine maps in MAPS (fresh from the param
     # tables), nothing private, refused unless every
     # count is the builds' (tools/factory_zip.py). FACTORY_PUBLIC and
     # FACTORY_TAPES override the dirs and skip the fresh builds, --dry-run only.
@@ -524,7 +524,7 @@ release version *flags:
     if [ -z "${FACTORY_PUBLIC:-}" ]; then just factory-sounds; fi
     if [ -z "${FACTORY_TAPES:-}" ]; then just factory-tapes; fi
     pub=${FACTORY_PUBLIC:-target/factory-sounds/public}; tapes=${FACTORY_TAPES:-target/tapes-v1}
-    rm -rf target/factory-maps; just suggest-map target/factory-maps
+    rm -rf target/factory-maps; just engine-maps target/factory-maps
     python3 -I tools/factory_zip.py "$pub" "$tapes" target/factory-maps "$out/factory-v1.zip"
     # The NRPN chart for scripts (#983), fresh from the chart the firmware
     # answers with; the guide's copy must be this one.

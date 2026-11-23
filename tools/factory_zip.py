@@ -4,10 +4,11 @@
 """`factory-v1.zip`: the card's CHIMERA folder as a tester copies it over
 the bootloader's SD card access. Every factory Sound (the public set's
 and TAPE's) in SOUNDS, the TAPE sources in TAPES, the demo projects in
-PROJECTS, the factory controller maps (`just suggest-map`) in MAPS, one
+PROJECTS, the factory controller maps (`just engine-maps`) in MAPS, one
 CHIMERA root and nothing beside it. Refuses a pack whose counts aren't
 the two builds' manifests', that lacks a source a TAPE Sound plays, or
-that holds no map. Standard library only.
+that lacks an engine's map or holds SUGGEST (ADR 0323). Standard library
+only.
 
     python3 -I tools/factory_zip.py <factory-sounds/public> <tapes-v1> <factory-maps> <out.zip>
 """
@@ -20,6 +21,11 @@ import zipfile
 
 # The 16 TX81Z-inspired ports ship public (ADR 0138).
 PORTS = re.compile(r"CHIMERA/SOUNDS/S91000(1[0-9]|2[0-5])\.A$")
+
+# The factory maps' files, one an engine (ADR 0323), by their stems
+# (`midi_map::stem`); SUGGEST's (ADR 0264) is no longer shipped.
+ENGINE_MAPS = ("ALGODE32", "MODA3D52", "VA2B02", "TAPE2C4E", "DRUME1A7")
+SUGGEST = "SUGG05F6"
 
 
 def entries(public, tapes, maps):
@@ -48,6 +54,11 @@ def problems(names, pm, tm):
     maps = [n for n in names if re.fullmatch(r"CHIMERA/MAPS/[0-9A-Z]{5,8}\.A", n)]
     if not maps:
         bad.append("no controller maps")
+    for m in ENGINE_MAPS:
+        if f"CHIMERA/MAPS/{m}.A" not in maps:
+            bad.append(f"no {m}.A engine map")
+    if f"CHIMERA/MAPS/{SUGGEST}.A" in maps:
+        bad.append("SUGGEST is no longer shipped")
     want = len(pm["sounds"]) + len(tm["sounds"])
     if len(sounds) != want:
         bad.append(f"{len(sounds)} Sounds, not {want}")

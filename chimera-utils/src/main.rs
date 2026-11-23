@@ -16,6 +16,7 @@ mod devices;
 mod dropouts;
 mod drums;
 mod ed_bridge;
+mod engine_maps;
 mod filter_fb;
 mod generic;
 mod grain;
@@ -34,7 +35,6 @@ mod reference;
 mod sig;
 mod smart_eq_ab;
 mod stim;
-mod suggest_map;
 mod unitab;
 mod vanoise;
 mod voice;
@@ -77,9 +77,9 @@ usage: chimera-utils [flags] COMMAND …
   nrpn-guide               docs/guide/NRPN.md: the writable NRPNs by engine and block (#926)
   smart-eq-ab              SMART EQ's A/B (ADR 0296): a MODAL pad over a bass, the 250 Hz - 2 kHz overlap off and on
   nrpn-json                docs/guide/NRPN.json: the same cells for a script (#983)
-  suggest-map DIR | suggest-map --tables
-                           the SUGGEST controller map into DIR/CHIMERA/MAPS; or its
-                           tables for docs/guide/MIDI.md
+  engine-maps DIR | engine-maps --tables
+                           the factory controller maps (ALGO, MODAL, VA, TAPE, DRUM) into
+                           DIR/CHIMERA/MAPS; or their tables for docs/guide/MIDI.md
                            and ranges
   drum-render OUTDIR       DRUM's host prototypes (0.4): every machine's hits and pattern, a
                            kit groove, COMBINE's modes, low-bit clips; raw WAVs, manifest.json
@@ -296,11 +296,11 @@ fn run() -> Result<bool, String> {
             print!("{}", nrpn_guide::json());
             Ok(true)
         }
-        "suggest-map" if rest.len() == 1 && rest[0] == "--tables" => {
-            print!("{}", suggest_map::tables());
+        "engine-maps" if rest.len() == 1 && rest[0] == "--tables" => {
+            print!("{}", engine_maps::tables());
             Ok(true)
         }
-        "suggest-map" if rest.len() == 1 => suggest_map::write(Path::new(&rest[0])).map(|_| true),
+        "engine-maps" if rest.len() == 1 => engine_maps::write(Path::new(&rest[0])).map(|_| true),
         "filter-fb" if rest.len() == 1 => filter_fb::run(Path::new(&rest[0])).map(|_| true),
         "unitab" => unitab::run(rest).map(|_| true),
         "grain-listen" => grain_listen::run(rest).map(|_| true),

@@ -30,9 +30,11 @@ use super::layer::{W as Lw, shadowed, word as lword};
 use super::learn::put_num;
 use crate::addr::BlockRef;
 use crate::dsp::voice_fx::params::FxType;
+use crate::midi_map::ctl::{ControllerMap, MAP_ROWS};
 use crate::midi_map::{
     Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, MAP_LEN, MidiMap, NrpnKind,
 };
+use crate::project::PartId;
 
 /// The page's words, `|` between: a named static, so its bytes are bank
 /// 2's (`bank2.x`), not anonymous string rodata left in bank 1.
@@ -297,7 +299,7 @@ fn code(i: Input) -> u32 {
 
 /// `a` and `b` the same binding but for their targets.
 #[inline(always)]
-pub(super) fn same(a: &Binding, b: &Binding) -> bool {
+pub(in crate::ui) fn same(a: &Binding, b: &Binding) -> bool {
     code(a.input) == code(b.input)
         && a.span.min == b.span.min
         && a.span.max == b.span.max
@@ -337,25 +339,27 @@ fn edited(e: &Binding, d: [i8; 6]) -> Binding {
     }
 }
 
-/// A MIDI MAP row (ADR 0226): a layer's or a Sound's, at its index, or
-/// `+ NEW BINDING` (ADR 0288).
+/// A MIDI MAP row (ADR 0226, 0323): its controller map's or its Sound's,
+/// at its index, or `+ NEW BINDING` (ADR 0288).
 #[derive(Clone, Copy)]
 enum Row {
     Pick,
-    Layer(usize, Binding),
+    Map(usize, Binding),
     Own(usize, Binding),
     New,
 }
 
-/// Row `i` of a Part whose Sound's map is `own` and layer `layer`.
-fn row_of(own: &MidiMap, layer: &MidiMap, i: usize) -> Option<Row> {
+/// Row `i` of a Part whose Sound's map is `own` and controller map `map`.
+fn row_of(own: &MidiMap, map: &ControllerMap, i: usize) -> Option<Row> {
     let Some(k) = i.checked_sub(1) else {
         return Some(Row::Pick);
     };
-    match layer.entries().get(k) {
-        Some(&b) => Some(Row::Layer(k, b)),
+    match (k < map.len()).then(|| map.get(k)) {
+        Some(Some(b)) => Some(Row::Map(k, b)),
+        // A row this firmware can't read was never let in.
+        Some(None) => None,
         None => {
-            let j = k - layer.len();
+            let j = k - map.len();
             match own.entries().get(j) {
                 Some(&b) => Some(Row::Own(j, b)),
                 None => (j == own.len()).then_some(Row::New),
@@ -365,27 +369,29 @@ fn row_of(own: &MidiMap, layer: &MidiMap, i: usize) -> Option<Row> {
 }
 
 impl UiState {
-    /// The active Part's layer, empty before the door first ran.
-    fn page_layer(&self) -> MidiMap {
-        let i = self.active_part.index();
-        self.cc.built().map_or(MidiMap::EMPTY, |m| *m.ctl.layer(i))
+    /// The page's rows: row 0, the map's, the Sound's, `+ NEW BINDING`.
+    /// The door's `map_rows`.
+    pub(in crate::ui) fn map_rows_in(&self) -> usize {
+        let p = self.active_part;
+        2 + self.part_map(p).len() + self.project.part(p).sound.map.len()
     }
 
-    /// The page's rows: row 0, the layer's, the Sound's, `+ NEW
-    /// BINDING`. The door's
-    /// `map_rows`.
-    pub(in crate::ui) fn map_rows_in(&self) -> usize {
-        2 + self.page_layer().len() + self.project.part(self.active_part).sound.map.len()
+    /// Whether `+ NEW BINDING` on Part `p` is refused: the map it adds to
+    /// (the picked map, else the Sound's) is full.
+    fn new_full(&self, p: PartId) -> bool {
+        match self.project.controller(p) {
+            Some(_) => self.part_map(p).len() >= MAP_ROWS,
+            None => self.project.part(p).sound.map.len() >= MAP_LEN,
+        }
     }
 
     /// Row `i`'s words and look into `out`. The door's `map_row`.
     pub(in crate::ui) fn map_row_in(&self, i: usize, out: &mut MapText) {
         let s = &self.project.part(self.active_part).sound;
         let (fx, engine) = (s.params.fx.ty(), s.params.engine());
-        let layer = self.page_layer();
-        match row_of(&s.map, &layer, i) {
+        match row_of(&s.map, self.part_map(self.active_part), i) {
             None => {}
-            Some(Row::New) => self.new_row(s.map.len() >= MAP_LEN, out),
+            Some(Row::New) => self.new_row(self.new_full(self.active_part), out),
             Some(Row::Pick) => {
                 out.row = MapRow::Pick;
                 let _ = out.label.write_str(lword(Lw::Controller));
@@ -413,7 +419,7 @@ impl UiState {
                 let _ = out.echo.write_str(word(w as u8));
                 out.key ^= u32::from(keep) << 1;
             }
-            Some(Row::Layer(_, e)) => {
+            Some(Row::Map(_, e)) => {
                 let live = e.target.live(engine) && !shadowed(&s.map, &e);
                 text(&e, fx, live, out);
                 out.row = MapRow::Layer;
@@ -438,6 +444,11 @@ impl UiState {
                 }
             }
         }
+        // MIX held on a binding's row: its hint says what MIX does there.
+        if matches!(out.row, MapRow::Layer | MapRow::Own) && self.mix_held {
+            out.mix = true;
+            out.key ^= 1 << 3;
+        }
     }
 
     /// A pass's keys on MIDI MAP: the encoders' detents A to F, and MIX
@@ -449,18 +460,25 @@ impl UiState {
         let (map, Some(at)) = (self.project.part(p).sound.map, self.loc.settings()) else {
             return;
         };
-        let layer = *self.cc.ui().ctl.layer(p.index());
         let fx = self.project.part(p).sound.params.fx.ty();
-        let (layer_at, own_at, e) = match row_of(&map, &layer, at.row() as usize) {
+        // MIX held: C and D a place a frame, no acceleration (ADR 0323).
+        let d = if keys.fine() {
+            [d[0], d[1], d[2].signum(), d[3].signum(), d[4], d[5]]
+        } else {
+            d
+        };
+        let (layer_at, own_at, e) = match row_of(&map, self.part_map(p), at.row() as usize) {
             None => return,
             Some(Row::New) => {
-                if point && map.len() < MAP_LEN {
+                if point && !self.new_full(p) {
                     self.point_start(Aim::New);
                 }
                 return;
             }
-            // A Sound row's EDIT: its new target (ADR 0288).
-            Some(Row::Own(_, e)) if point => return self.point_start(Aim::Retarget(e.target)),
+            // A row's EDIT: its new target (ADR 0288, 0323).
+            Some(Row::Own(_, e) | Row::Map(_, e)) if point => {
+                return self.point_start(Aim::Retarget(e.target));
+            }
             Some(Row::Pick) => {
                 if d[1] != 0 {
                     self.ctl_pick(p, d[1]);
@@ -481,7 +499,7 @@ impl UiState {
                 }
                 return;
             }
-            Some(Row::Layer(k, e)) => (Some(k), 0, e),
+            Some(Row::Map(k, e)) => (Some(k), 0, e),
             Some(Row::Own(i, e)) => (None, i, e),
         };
         if delete {
@@ -499,12 +517,11 @@ impl UiState {
             return;
         }
         match layer_at {
-            // A layer row: in the map on the card, by the next card work.
-            // Refused while another job waits: said, as a save's is (#903).
-            Some(k) => match self.cc.ui().ctl.edit(p, k, e, n) {
-                Ok(()) => self.cc.reset_part(p),
-                Err(busy) => self.error(busy.into()),
-            },
+            // A map row: in the map the Parts share at once, on the card
+            // by the next card work.
+            Some(k) => {
+                self.map_row_set(p, k, n);
+            }
             None => {
                 let mut m = map;
                 m.set(own_at, n);

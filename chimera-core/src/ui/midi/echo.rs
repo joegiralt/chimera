@@ -125,6 +125,18 @@ impl EchoPlan {
         self.last[p.index()] = [None; BINDS];
     }
 
+    /// Entry `j` of Part `p` holds another row now (a seat taken, ADR
+    /// 0323): nothing sent, heard or owed.
+    pub fn forget(&mut self, p: PartId, j: usize) {
+        let i = p.index();
+        if j >= BINDS {
+            return;
+        }
+        (self.last[i][j], self.heard_at[i][j]) = (None, None);
+        self.echoed[i][j] = Echoed::NONE;
+        self.owed[i] &= !(1 << j);
+    }
+
     /// Entry `j` of Part `p` heard its control at `now`: its echo waits
     /// `QUIET_MS`, and what it put the param to (`sent`, the control's
     /// resolution) counts as sent. A relative turn puts no place: its

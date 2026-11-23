@@ -74,6 +74,8 @@ pub struct MapText {
     pub control: FmtBuf,
     /// An NRPN or pressure: B can't step it. Row 0: a map is picked.
     pub fixed: bool,
+    /// MIX is held: a binding's row hints what MIX does there.
+    pub mix: bool,
     /// All of the above as one number, for the list's region key.
     pub key: u32,
 }
@@ -92,6 +94,7 @@ impl Default for MapText {
             echo: FmtBuf::default(),
             control: FmtBuf::default(),
             fixed: false,
+            mix: false,
             key: 0,
         }
     }
@@ -121,6 +124,10 @@ impl MapText {
     /// The keys' hint, under the values: a Sound row's EDIT points at its
     /// new target (ADR 0288), a layer row's does nothing.
     pub fn hint(&self) -> Hint {
+        // MIX held on a binding's row: what MIX does there (ADR 0323).
+        if self.mix && matches!(self.row, MapRow::Layer | MapRow::Own) {
+            return MIX_KEYS;
+        }
         match (self.row, self.fixed) {
             (MapRow::Pick, true) => PICK_MAP,
             (MapRow::Pick, false) => PICK,
@@ -132,6 +139,10 @@ impl MapText {
         }
     }
 }
+
+/// A binding's row with MIX held: C and D a place a frame, MINUS deletes
+/// (ADR 0323).
+pub const MIX_KEYS: Hint = &[Gesture("MIX+C/D", "FINE"), Gesture("MIX+MINUS", "DELETE")];
 
 /// `e`'s words, its target `live` on the Part's engine.
 fn text(e: &Binding, fx: FxType, live: bool) -> MapText {
@@ -153,11 +164,11 @@ pub const FIXED: Hint = &[
     Gesture("E", "INPUT"),
     Gesture("EDIT", "TARGET"),
 ];
-/// A controller layer's row: B and E edit it in its map; EDIT does
-/// nothing there (ADR 0288).
-pub const LAYER: Hint = &[Gesture("B", "CONTROL"), Gesture("E", "INPUT")];
-/// A layer's row on an NRPN or pressure.
-pub const LAYER_FIXED: Hint = &[Gesture("B", "RELEARN TO CHANGE"), Gesture("E", "INPUT")];
+/// A controller map's row: B and E edit it in its map, EDIT points at its
+/// new target (ADR 0323).
+pub const LAYER: Hint = KEYS;
+/// A map's row on an NRPN or pressure.
+pub const LAYER_FIXED: Hint = FIXED;
 /// Row 0: B picks the map, EDIT saves the Part's rows into one (ADR 0226).
 pub const PICK: Hint = &[Gesture("B", "PICK"), Gesture("EDIT", "SAVE ROWS TO MAP")];
 /// Row 0 with a map picked: MIX+MINUS deletes it; MIX+EDIT's rename is on
@@ -222,6 +233,12 @@ impl MapKeys {
     #[inline(always)]
     pub const fn keep(self) -> bool {
         self.has(MapKey::Mix) && self.has(MapKey::Plus)
+    }
+
+    /// MIX held: C and D move a place a frame (ADR 0323).
+    #[inline(always)]
+    pub const fn fine(self) -> bool {
+        self.has(MapKey::Mix)
     }
 
     /// EDIT without MIX: pointing (ADR 0288).

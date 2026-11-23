@@ -11,7 +11,7 @@ use chimera_core::console::{Console, LsArg, Out, Refusal, Request, Stalled, get,
 use chimera_core::midi_map::ctl::{self, ControllerMap};
 use chimera_core::midi_map::{Input, Mappable, MidiMap, maps_put};
 use chimera_core::name::SoundName;
-use chimera_core::params::{EngineType, FilterParams};
+use chimera_core::params::FilterParams;
 use chimera_core::storage::{Card, Crc32, LoadError, Ready};
 use chimera_hal::Ms;
 use chimera_hal::store::{ByteSink, Dir, FileName, Files, ReadSink, Store, StoreError, VolumeId};
@@ -224,7 +224,7 @@ fn cutoff_on(cc: u8) -> ControllerMap {
     own.learn(Input::cc(cc).unwrap(), Mappable::new(a).unwrap())
         .unwrap();
     let mut m = ControllerMap::EMPTY;
-    m.absorb(&own, EngineType::Algo).unwrap();
+    m.absorb(&own).unwrap();
     m
 }
 
@@ -248,7 +248,10 @@ fn side(s: &mut Mem, stem: &str, ext: &[u8]) -> Option<Vec<u8>> {
 /// Map `n` as `m`'s file, saved on another card: its stem and bytes.
 fn map_file(n: &str, m: &ControllerMap) -> (String, Vec<u8>) {
     let mut other = Mem(MemStore::new(3), false, Vec::new());
-    on_card(&mut other, |s, r| ctl::save(s, r, &name(n), m)).unwrap();
+    on_card(&mut other, |s, r| {
+        ctl::save(s, r, &name(n), &mut ctl::FileBuf::new(), m)
+    })
+    .unwrap();
     let (st, len) = ctl::stem(&name(n));
     let st = String::from_utf8(st[..len].to_vec()).unwrap();
     let bytes = side(&mut other, &st, b"A").unwrap();
@@ -276,9 +279,20 @@ fn a_map_put_loads_and_the_ui_reads_it_again() {
     assert_eq!(ask_put(&mut s, &path, &bytes), "READY\nOK\n");
     assert_ne!(maps_put(), was, "the layers read again");
     let mut back = ControllerMap::EMPTY;
-    on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &mut back)
+    })
+    .unwrap();
     assert_eq!(back, cutoff_on(21));
-    assert!(on_card(&mut s, |s, r| ctl::list(s, r, &mut [None; 16])).is_ok_and(|(n, _)| n == 1));
+    assert!(
+        on_card(&mut s, |s, r| ctl::list(
+            s,
+            r,
+            &mut ctl::FileBuf::new(),
+            &mut [None; 16]
+        ))
+        .is_ok_and(|(n, _)| n == 1)
+    );
 }
 
 /// A put writes the side a load does not take, whatever side the host
@@ -288,7 +302,10 @@ fn a_map_put_loads_and_the_ui_reads_it_again() {
 fn a_put_writes_the_side_a_load_does_not_take() {
     for named in ["A", "B"] {
         let mut s = Mem(MemStore::new(7), false, Vec::new());
-        on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &cutoff_on(30))).unwrap();
+        on_card(&mut s, |s, r| {
+            ctl::save(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &cutoff_on(30))
+        })
+        .unwrap();
         let (st, bytes) = map_file("EC4", &cutoff_on(21));
         assert!(side(&mut s, &st, b"A").is_some() && side(&mut s, &st, b"B").is_none());
         let path = format!("/CHIMERA/MAPS/{st}.{named}");
@@ -300,7 +317,10 @@ fn a_put_writes_the_side_a_load_does_not_take() {
         );
         assert_eq!(side(&mut s, &st, b"B").as_deref(), Some(&bytes[..]));
         let mut back = ControllerMap::EMPTY;
-        on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+        on_card(&mut s, |s, r| {
+            ctl::load(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &mut back)
+        })
+        .unwrap();
         assert_eq!(back, cutoff_on(21));
     }
 }
@@ -309,7 +329,10 @@ fn a_put_writes_the_side_a_load_does_not_take() {
 fn live_pair() -> (Mem, String, Vec<u8>) {
     let mut s = Mem(MemStore::new(7), false, Vec::new());
     for cc in [30, 31] {
-        on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &cutoff_on(cc))).unwrap();
+        on_card(&mut s, |s, r| {
+            ctl::save(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &cutoff_on(cc))
+        })
+        .unwrap();
     }
     let (st, _) = map_file("EC4", &cutoff_on(31));
     let b = side(&mut s, &st, b"B").unwrap();
@@ -349,7 +372,10 @@ fn a_failed_put_leaves_the_live_map() {
                 "{why} {named}"
             );
             let mut back = ControllerMap::EMPTY;
-            on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+            on_card(&mut s, |s, r| {
+                ctl::load(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &mut back)
+            })
+            .unwrap();
             assert_eq!(back, cutoff_on(31), "{why} {named}");
         }
     }
@@ -372,7 +398,10 @@ fn a_map_under_another_name_s_stem_is_refused() {
 fn get_reads_the_side_a_load_takes_and_rm_deletes_the_pair() {
     let mut s = Mem(MemStore::new(7), false, Vec::new());
     for cc in [30, 31] {
-        on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &cutoff_on(cc))).unwrap();
+        on_card(&mut s, |s, r| {
+            ctl::save(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &cutoff_on(cc))
+        })
+        .unwrap();
     }
     let (st, _) = map_file("EC4", &cutoff_on(31));
     let newest = side(&mut s, &st, b"B").unwrap();
@@ -393,7 +422,13 @@ fn get_reads_the_side_a_load_takes_and_rm_deletes_the_pair() {
     assert_eq!(ask(&mut s, &format!("rm /CHIMERA/MAPS/{st}")), "OK\n");
     let mut gone = ControllerMap::EMPTY;
     assert_eq!(
-        on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut gone)),
+        on_card(&mut s, |s, r| ctl::load(
+            s,
+            r,
+            &name("EC4"),
+            &mut ctl::FileBuf::new(),
+            &mut gone
+        )),
         Err(LoadError::Missing)
     );
     assert_eq!(
@@ -447,6 +482,9 @@ fn deletes_take_the_unkept_side_first() {
     assert_eq!(order(&s), ["A", "B"]);
     let (mut s, _, _) = live_pair();
     s.2.clear();
-    on_card(&mut s, |s, r| ctl::delete(s, r, &name("EC4"))).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::delete(s, r, &name("EC4"), &mut ctl::FileBuf::new())
+    })
+    .unwrap();
     assert_eq!(order(&s), ["A", "B"]);
 }

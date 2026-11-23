@@ -20,6 +20,8 @@ use super::learn::{LearnNote, Line, Sensed};
 use super::learn::{PointAct, Pointed, Took};
 use super::midi::MidiUi;
 #[cfg(feature = "midi-map")]
+use super::midi::layer::MapPool;
+#[cfg(feature = "midi-map")]
 use super::midi::program::Recalls;
 #[cfg(feature = "midi-map")]
 use super::settings::midi_map::MapText;
@@ -77,6 +79,10 @@ pub struct MidiSlot {
     /// D2 on the unit, which AXI's margin can't spare. Set by `take`.
     #[cfg(feature = "midi-map")]
     pub(super) recall: *mut Recalls,
+    /// The controller maps the Parts play (ADR 0323), about 6 KB: AXI,
+    /// D2 being full. Set by `take`, built by bank 2.
+    #[cfg(feature = "midi-map")]
+    pub(super) maps: *mut MapPool,
     pub(super) ui: MaybeUninit<MidiUi>,
 }
 
@@ -103,6 +109,8 @@ impl MidiSlot {
             heard: 0,
             #[cfg(feature = "midi-map")]
             recall: core::ptr::null_mut(),
+            #[cfg(feature = "midi-map")]
+            maps: core::ptr::null_mut(),
             ui: MaybeUninit::uninit(),
         }
     }
@@ -122,6 +130,10 @@ impl MidiSlot {
         #[cfg(feature = "midi-map")]
         #[unsafe(link_section = ".ram_d2")]
         static mut RECALL: MaybeUninit<Recalls> = MaybeUninit::uninit();
+        // AXI `.bss` (ADR 0323), zeroed: all zero is a pool at rest, read
+        // before bank 2 first builds it.
+        #[cfg(feature = "midi-map")]
+        static mut MAPS: MaybeUninit<MapPool> = MaybeUninit::zeroed();
         static TAKEN: AtomicBool = AtomicBool::new(false);
         assert!(!TAKEN.swap(true, Ordering::AcqRel));
         // SAFETY: the flag lets exactly one caller past, so this is the
@@ -144,6 +156,7 @@ impl MidiSlot {
                 addr_of_mut!((*m).heard).write(0);
                 // `RECALL` is reached only through this pointer.
                 addr_of_mut!((*m).recall).write(addr_of_mut!(RECALL).cast());
+                addr_of_mut!((*m).maps).write(addr_of_mut!(MAPS).cast());
             }
             &mut *m
         }
@@ -159,6 +172,9 @@ impl MidiSlot {
         {
             let recall: alloc::boxed::Box<MaybeUninit<Recalls>> = alloc::boxed::Box::new_uninit();
             slot.recall = alloc::boxed::Box::leak(recall).as_mut_ptr();
+            // Zeroed, as the firmware's `.bss`: read before it is built.
+            let maps: alloc::boxed::Box<MaybeUninit<MapPool>> = alloc::boxed::Box::new_zeroed();
+            slot.maps = alloc::boxed::Box::leak(maps).as_mut_ptr();
         }
         slot
     }

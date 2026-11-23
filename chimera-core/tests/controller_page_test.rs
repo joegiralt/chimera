@@ -49,8 +49,11 @@ fn put_map(s: &mut MemStore, n: &str, rows: &[(u8, ParamAddr)]) {
             .unwrap();
     }
     let mut m = ControllerMap::EMPTY;
-    m.absorb(&own, EngineType::Algo).unwrap();
-    on_card(s, |s, r| ctl::save(s, r, &name(n), &m)).unwrap();
+    m.absorb(&own).unwrap();
+    on_card(s, |s, r| {
+        ctl::save(s, r, &name(n), &mut ctl::FileBuf::new(), &m)
+    })
+    .unwrap();
 }
 
 /// Part 1 on INIT ALGO, its map the default's.
@@ -168,12 +171,8 @@ fn row_0_picks_and_the_layer_s_rows_follow() {
     assert_eq!(b.text(0).word.as_str(), "EC4");
     assert_eq!(b.text(1).label.as_str(), "CC 21  CUTOFF");
     assert_eq!(b.text(1).tail.as_str(), "IN EC4");
-    // A layer row's EDIT does nothing: its hint names B and E only.
-    assert_eq!(
-        b.text(1).hint(),
-        chimera_core::ui::settings::midi_map::LAYER,
-        "no EDIT TARGET on a layer row (ADR 0288)"
-    );
+    // A map row's EDIT points at its new target (ADR 0323).
+    assert_eq!(b.text(1).hint(), chimera_core::ui::settings::midi_map::KEYS);
     assert_eq!(b.look(1), RowLook::Normal);
     // The Sound's CC 74 holds the control: the map's row is dimmed.
     assert_eq!(b.look(2), RowLook::Dimmed);
@@ -202,10 +201,16 @@ fn edit_on_row_0_saves_the_part_s_rows() {
     assert!(rig.ui.project().part(P1).sound.map.is_empty());
     let mut back = ControllerMap::EMPTY;
     on_card(&mut rig.s, |s, r| {
-        ctl::load(s, r, &name("CONTROLLER"), &mut back)
+        ctl::load(
+            s,
+            r,
+            &name("CONTROLLER"),
+            &mut ctl::FileBuf::new(),
+            &mut back,
+        )
     })
     .unwrap();
-    let mut saved = back.layer(EngineType::Algo).0.entries().to_vec();
+    let mut saved = back.rows().collect::<Vec<_>>();
     let mut was = own.entries().to_vec();
     let key = |b: &chimera_core::midi_map::Binding| format!("{b:?}");
     saved.sort_by_key(key);
@@ -234,10 +239,12 @@ fn mix_minus_drops_a_layer_row_from_the_map() {
     rig.tap(ButtonId::Edit);
     rig.work();
     let mut back = ControllerMap::EMPTY;
-    on_card(&mut rig.s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
-    let rows = back.layer(EngineType::Algo).0;
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows.entries()[0].target.addr(), RESO);
+    on_card(&mut rig.s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &mut back)
+    })
+    .unwrap();
+    assert_eq!(back.len(), 1);
+    assert_eq!(back.get(0).unwrap().target.addr(), RESO);
 }
 
 /// No card: the Part plays no map, and the card work stops asking till
@@ -309,7 +316,9 @@ fn a_row_of_a_map_gone_from_the_card_is_not_dropped() {
     rig.tap(ButtonId::Edit);
     rig.work();
     let mut back = ControllerMap::EMPTY;
-    let read = on_card(&mut rig.s, |s, r| ctl::load(s, r, &name("EC4"), &mut back));
+    let read = on_card(&mut rig.s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut ctl::FileBuf::new(), &mut back)
+    });
     assert_eq!(read, Err(chimera_core::storage::LoadError::Missing));
     match rig.ui.step_toast(0) {
         chimera_core::ui::busy::ToastStep::Show(l) => assert_eq!(l.as_str(), "FILE NOT FOUND"),
@@ -333,8 +342,8 @@ fn row_0_says_when_the_card_holds_more_maps() {
     );
 }
 
-/// The Part's engine changes: its layer is read again for the new
-/// engine, that engine's rows in place of the old one's.
+/// The Part's engine changes: the map's rows stay, the new engine's
+/// live and the old one's dimmed.
 #[test]
 fn an_engine_change_swaps_the_layer() {
     use chimera_core::dsp::algo::params::AlgoParams;
@@ -355,9 +364,16 @@ fn an_engine_change_swaps_the_layer() {
             .collect::<Vec<_>>()
     };
     rig.to(&["PART", "MIDI MAP"]);
-    assert_eq!(rows(&mut rig), ["CC 50  MORPH", "CC 21  CUTOFF"]);
+    // One flat list (ADR 0323): the other engine's row dimmed, dead.
+    assert_eq!(
+        rows(&mut rig),
+        ["CC 50  MORPH", "CC 51  - STRUCT", "CC 21  CUTOFF"]
+    );
     screen::init_part_engine(rig.ui, P1, EngineType::Modal);
-    assert_eq!(rows(&mut rig), ["CC 51  STRUCT", "CC 21  CUTOFF"]);
+    assert_eq!(
+        rows(&mut rig),
+        ["CC 50  - MORPH", "CC 51  STRUCT", "CC 21  CUTOFF"]
+    );
 }
 
 /// A map put or removed over USB (`map_put`) reaches the Parts playing
@@ -487,8 +503,11 @@ fn b_down_from_a_missing_map_reaches_none() {
 /// The map read back from the card, as a Part on ALGO plays it.
 fn card_rows(s: &mut MemStore, n: &str) -> Option<Vec<chimera_core::midi_map::Binding>> {
     let mut back = ControllerMap::EMPTY;
-    on_card(s, |s, r| ctl::load(s, r, &name(n), &mut back)).ok()?;
-    Some(back.layer(EngineType::Algo).0.entries().to_vec())
+    on_card(s, |s, r| {
+        ctl::load(s, r, &name(n), &mut ctl::FileBuf::new(), &mut back)
+    })
+    .ok()?;
+    Some(back.rows().collect::<Vec<_>>())
 }
 
 /// B to F edit a layer row as they edit a Sound's: the row changes in
@@ -605,11 +624,11 @@ fn mix_edit_on_row_0_renames_the_map() {
     );
 }
 
-/// A map job confirmed while another waits for the card is refused on
-/// screen (`CARD BUSY`), never dropped silently: the waiting edit still
-/// reaches the card, and the map stays.
+/// A row's edit is the shared map's at once (ADR 0323): a delete of the
+/// map confirmed before the card work runs takes the map, edit and all,
+/// and nothing writes it back.
 #[test]
-fn a_job_while_another_waits_is_refused_not_lost() {
+fn a_delete_after_an_edit_leaves_no_map() {
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF)]);
     let mut ui = ui();
@@ -618,27 +637,25 @@ fn a_job_while_another_waits_is_refused_not_lost() {
     rig.to(&["PART", "MIDI MAP"]);
     rig.work();
     rig.bar_to(1);
-    // Keys alone, no card work between them: the edit waits.
     screen::feed(rig.ui, Key::turn(EncoderId::C, 5));
     screen::feed(rig.ui, Key::turn(EncoderId::A, -1));
     screen::feed(rig.ui, Key::chord(ButtonId::Mix, ButtonId::Minus));
     screen::feed(rig.ui, Key::turn(EncoderId::A, -9));
     screen::tap(rig.ui, ButtonId::Edit);
-    match rig.ui.step_toast(0) {
-        chimera_core::ui::busy::ToastStep::Show(l) => assert_eq!(l.as_str(), "CARD BUSY"),
-        s => panic!("no toast: {s:?}"),
+    for _ in 0..3 {
+        rig.work();
     }
-    rig.work();
-    let rows = card_rows(&mut rig.s, "EC4").expect("the map stays");
-    assert_eq!(rows[0].span.min, 5, "the waiting edit reached the card");
-    assert_eq!(rig.ui.project().controller(P1), Some(name("EC4")));
+    assert!(
+        card_rows(&mut rig.s, "EC4").is_none(),
+        "deleted, not written back"
+    );
+    assert_eq!(rig.ui.project().controller(P1), None);
 }
 
-/// A turn on another layer row while one row's edit waits for the card is
-/// refused on screen (`CARD BUSY`), as a save, rename or delete is, never
-/// dropped silently (#903); the waiting edit still reaches the card.
+/// Edits of two rows before any card work both reach the card: a row's
+/// edit never waits for another's (ADR 0323; #903's CARD BUSY is gone).
 #[test]
-fn an_edit_while_another_row_waits_says_card_busy() {
+fn edits_of_two_rows_both_reach_the_card() {
     let mut s = MemStore::new(1);
     put_map(&mut s, "EC4", &[(21, CUTOFF), (22, RESO)]);
     let mut ui = ui();
@@ -647,23 +664,13 @@ fn an_edit_while_another_row_waits_says_card_busy() {
     rig.to(&["PART", "MIDI MAP"]);
     rig.work();
     rig.bar_to(1);
-    // Keys alone, no card work between them: row 1's edit waits.
     screen::feed(rig.ui, Key::turn(EncoderId::C, 5));
-    let _ = rig.ui.step_toast(0);
     screen::feed(rig.ui, Key::press(ButtonId::Plus));
     screen::feed(rig.ui, Key::turn(EncoderId::C, 7));
-    match rig.ui.step_toast(0) {
-        chimera_core::ui::busy::ToastStep::Show(l) => assert_eq!(l.as_str(), "CARD BUSY"),
-        s => panic!("no toast: {s:?}"),
-    }
     rig.work();
     let rows = card_rows(&mut rig.s, "EC4").expect("the map stays");
     let min = |a| rows.iter().find(|b| b.target.addr() == a).unwrap().span.min;
-    assert_eq!(
-        (min(CUTOFF), min(RESO)),
-        (5, 0),
-        "the waiting edit reached the card"
-    );
+    assert_eq!((min(CUTOFF), min(RESO)), (5, 7));
 }
 
 /// DELETE deletes the map it named, even if the Part picks another before

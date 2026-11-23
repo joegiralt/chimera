@@ -82,7 +82,7 @@ const KINDS: [Kind; 10] = [
 const _: () = assert!(KINDS.len() <= 32);
 
 /// `input` as `[tag | kind, number hi, number lo]`.
-fn input_bytes(input: Input) -> [u8; 3] {
+pub(crate) fn input_bytes(input: Input) -> [u8; 3] {
     let (tag, kind, hi, lo) = match input {
         Input::Cc(c, k) => {
             let k = match k {
@@ -117,7 +117,7 @@ fn input_bytes(input: Input) -> [u8; 3] {
 
 /// The `Input` these bytes name, if this firmware has it; `key` is a
 /// version 2 entry's SysEx key, and a SysEx entry without one is none.
-fn input_of(tag_kind: u8, hi: u8, lo: u8, key: Option<u32>) -> Option<Input> {
+pub(crate) fn input_of(tag_kind: u8, hi: u8, lo: u8, key: Option<u32>) -> Option<Input> {
     let kind = *KINDS.get(usize::from(tag_kind & 0x1F))?;
     Some(match (tag_kind >> 5, kind) {
         (TAG_CC, k) if hi == 0 => {

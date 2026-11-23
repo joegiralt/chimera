@@ -26,7 +26,10 @@ use super::settings::midi_map::{FRAME_ROWS, MapRow, MapText};
 use super::settings::view::RowLook;
 use super::settings::{Screen, screen_path};
 use crate::midi_map::builtin::BUILT_IN;
-use crate::midi_map::{Binding, CcKind, Input, LearnCc, MAP_LEN, Mappable, MidiMap};
+use crate::midi_map::ctl::{ControllerMap, MAP_ROWS};
+use crate::midi_map::{
+    Binding, CcKind, Feedback, Input, LearnCc, MAP_LEN, Mappable, MidiMap, Span,
+};
 use crate::project::{Line, PartId};
 
 /// Pointing's words, `|` between: a named static, so its bytes are bank
@@ -127,15 +130,16 @@ fn free_number(n: u8) -> Option<LearnCc> {
     LearnCc::new(n)
 }
 
-/// The first such CC no row of `own` or `layer` is on: a new row's
-/// control, read `Absolute(Jump)`. Loops, not iterator adaptors: a core
-/// instance the inliner leaves out of line is bank 1's (ADR 0175).
-fn free_cc(own: &MidiMap, layer: &MidiMap) -> Option<Input> {
+/// The first such CC no row of `own` or of the Part's map `map` is on: a
+/// new row's control, read `Absolute(Jump)`. Loops, not iterator
+/// adaptors: a core instance the inliner leaves out of line is bank 1's
+/// (ADR 0175).
+fn free_cc(own: &MidiMap, map: &ControllerMap) -> Option<Input> {
     let mut n = 0u8;
     while n <= 127 {
         if let Some(c) = free_number(n) {
             let i = Input::Cc(c, CcKind::Absolute(Takeover::Jump));
-            if !on(own, &i) && !on(layer, &i) {
+            if !on(own, &i) && !on_map(map, &i) {
                 return Some(i);
             }
         }
@@ -154,6 +158,18 @@ fn on(m: &MidiMap, i: &Input) -> bool {
     false
 }
 
+/// Whether a row of map `m` is on `i`'s control.
+fn on_map(m: &ControllerMap, i: &Input) -> bool {
+    let mut k = 0;
+    while k < m.len() {
+        if m.input(k).is_some_and(|x| x.same_control(i)) {
+            return true;
+        }
+        k += 1;
+    }
+    false
+}
+
 /// The row of `m` on target `t`.
 fn row_on(m: &MidiMap, t: Mappable) -> Option<usize> {
     for (i, e) in m.entries().iter().enumerate() {
@@ -164,28 +180,31 @@ fn row_on(m: &MidiMap, t: Mappable) -> Option<usize> {
     None
 }
 
-/// A MIDI MAP row, as the bar's place: the pick, the layer's rows, the
-/// Sound's, `+ NEW BINDING`. At most `FRAME_ROWS + 2 * MAP_LEN`, so a byte.
+/// A MIDI MAP row, as the bar's place: the pick, the map's rows, the
+/// Sound's, `+ NEW BINDING`. At most `FRAME_ROWS + MAP_ROWS + MAP_LEN`,
+/// so a byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct MapRowAt(u8);
 
-const _: () = assert!(FRAME_ROWS + 2 * MAP_LEN <= u8::MAX as usize);
+const _: () = assert!(FRAME_ROWS + MAP_ROWS + MAP_LEN <= u8::MAX as usize);
 
 impl MapRowAt {
-    /// Sound row `own` under a layer `layer`; past the Sound's rows,
-    /// `+ NEW BINDING`. Each count is a map's, at most `MAP_LEN`.
-    fn of(layer: &MidiMap, own: usize) -> MapRowAt {
-        MapRowAt((1 + layer.len() + own.min(MAP_LEN)) as u8)
+    /// Sound row `own` under a map of `map` rows; past the Sound's rows,
+    /// `+ NEW BINDING`.
+    fn own(map: usize, own: usize) -> MapRowAt {
+        MapRowAt((1 + map.min(MAP_ROWS) + own.min(MAP_LEN)) as u8)
+    }
+
+    /// The map's row `k`.
+    fn map(k: usize) -> MapRowAt {
+        MapRowAt((1 + k.min(MAP_ROWS)) as u8)
     }
 }
 
 impl UiState {
-    /// Part `p`'s controller layer, empty before the door first ran.
-    fn point_layer(&self, p: PartId) -> MidiMap {
-        match self.cc.built() {
-            Some(m) => *m.ctl.layer(p.index()),
-            None => MidiMap::EMPTY,
-        }
+    /// Whether a new row on Part `p` joins its map: one is picked.
+    fn joins_map(&self, p: PartId) -> bool {
+        self.project.controller(p).is_some()
     }
 
     /// The cell `pt` points at, if it is still the one focused on the page
@@ -212,7 +231,9 @@ impl UiState {
         let Some(t) = self.learn_target() else {
             return Pointed::NotMappable;
         };
-        let held = row_on(&self.project.part(pt.part).sound.map, t).is_some();
+        let p = pt.part;
+        let held = row_on(&self.project.part(p).sound.map, t).is_some()
+            || (self.joins_map(p) && self.part_map(p).position(t).is_some());
         match (pt.aim, held) {
             (Aim::New | Aim::Retarget(_), false) => Pointed::Binds(pt.aim.kind()),
             // Its own target: EDIT binds it again, nothing changes.
@@ -331,45 +352,77 @@ impl UiState {
         Took::Frame
     }
 
-    /// `pt`'s bind on `t`: the Sound row it wrote, or why none was.
-    fn point_bind(&mut self, pt: Point, t: Mappable) -> Result<usize, W> {
+    /// `pt`'s bind on `t`: the row it wrote, or why none was. A new row
+    /// joins the Part's map when one is picked (ADR 0323), else its
+    /// Sound; a retarget finds its row in the Sound, then in the map.
+    fn point_bind(&mut self, pt: Point, t: Mappable) -> Result<MapRowAt, W> {
         let p = pt.part;
         let mut m = self.project.part(p).sound.map;
-        let i = match pt.aim {
+        let rows = self.part_map(p).len();
+        match pt.aim {
+            Aim::New if self.joins_map(p) => {
+                let input = free_cc(&m, self.part_map(p)).ok_or(W::NoCc)?;
+                let b = Binding {
+                    input,
+                    target: t,
+                    span: Span::FULL,
+                    feedback: Feedback::Off,
+                };
+                if !self.map_edit(p, |c| c.push(b).map(|_| true)) {
+                    return Err(W::Full);
+                }
+                let k = self.part_map(p).position(t).ok_or(W::Gone)?;
+                return Ok(MapRowAt::map(k));
+            }
             Aim::New => {
-                let input = free_cc(&m, &self.point_layer(p)).ok_or(W::NoCc)?;
+                let input = free_cc(&m, self.part_map(p)).ok_or(W::NoCc)?;
                 if m.learn(input, t).is_err() {
                     return Err(W::Full);
                 }
-                m.len() - 1
             }
-            // Its own target again: nothing to change.
-            Aim::Retarget(was) if was == t => return row_on(&m, was).ok_or(W::Gone),
-            Aim::Retarget(was) => {
-                let i = row_on(&m, was).ok_or(W::Gone)?;
-                let e = m.entries()[i];
-                m.set(i, Binding { target: t, ..e });
-                i
-            }
-        };
+            Aim::Retarget(was) => match row_on(&m, was) {
+                // Its own target again: nothing to change.
+                Some(i) if was == t => return Ok(MapRowAt::own(rows, i)),
+                Some(i) => {
+                    let e = m.entries()[i];
+                    m.set(i, Binding { target: t, ..e });
+                }
+                None => {
+                    let k = self.part_map(p).position(was).ok_or(W::Gone)?;
+                    if was != t {
+                        let e = self.part_map(p).get(k).ok_or(W::Gone)?;
+                        let to = Binding { target: t, ..e };
+                        self.map_row_set(p, k, to);
+                    }
+                    return Ok(MapRowAt::map(k));
+                }
+            },
+        }
+        let i = m.entries().iter().position(|e| e.target == t).unwrap_or(0);
         self.set_map(p, m);
-        Ok(i)
+        Ok(MapRowAt::own(rows, i))
     }
 
-    /// Pointing over: MIDI MAP of `pt`'s Part again, the bar on Sound row
-    /// `own` if given, else on the row pointing began from.
-    fn point_back(&mut self, pt: Point, own: Option<usize>) {
+    /// Pointing over: MIDI MAP of `pt`'s Part again, the bar on row `at`
+    /// if given, else on the row pointing began from.
+    fn point_back(&mut self, pt: Point, at: Option<MapRowAt>) {
         let p = pt.part;
         self.learn = Learn::Off;
         self.active_part = p;
-        let map = self.project.part(p).sound.map;
-        let own = match (own, pt.aim) {
-            (Some(i), Aim::New | Aim::Retarget(_)) => Some(i),
-            (None, Aim::New) => None,
-            (None, Aim::Retarget(was)) => row_on(&map, was),
+        let own = self.project.part(p).sound.map;
+        let rows = self.part_map(p).len();
+        let at = match (at, pt.aim) {
+            (Some(at), _) => at,
+            // Past the Sound's rows: `+ NEW BINDING`.
+            (None, Aim::New) => MapRowAt::own(rows, own.len()),
+            (None, Aim::Retarget(was)) => match row_on(&own, was) {
+                Some(i) => MapRowAt::own(rows, i),
+                None => match self.part_map(p).position(was) {
+                    Some(k) => MapRowAt::map(k),
+                    None => MapRowAt::own(rows, own.len()),
+                },
+            },
         };
-        // Past the Sound's rows: `+ NEW BINDING`.
-        let at = MapRowAt::of(&self.point_layer(p), own.unwrap_or(map.len()));
         self.go(Location::settings_at(screen_path(Screen::MidiMap), at.0));
     }
 

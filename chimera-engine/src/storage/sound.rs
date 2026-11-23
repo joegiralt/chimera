@@ -252,7 +252,8 @@ const fn once_bit(tag: RecordTag) -> u16 {
         | RecordTag::Scala
         | RecordTag::Kit
         | RecordTag::KitSound
-        | RecordTag::MapSection => 0,
+        | RecordTag::MapSection
+        | RecordTag::MapRows => 0,
     }
 }
 
@@ -466,6 +467,7 @@ impl SoundCheck {
                 | RecordTag::Kit
                 | RecordTag::KitSound
                 | RecordTag::MapSection
+                | RecordTag::MapRows
         ) || tag.is_orbit()
         {
             return Err(FileError::Corrupt);
@@ -620,7 +622,8 @@ impl SoundCheck {
             | RecordTag::Scala
             | RecordTag::Kit
             | RecordTag::KitSound
-            | RecordTag::MapSection => Err(FileError::Corrupt),
+            | RecordTag::MapSection
+            | RecordTag::MapRows => Err(FileError::Corrupt),
             RecordTag::Build | RecordTag::Note => Ok(()),
         }
     }

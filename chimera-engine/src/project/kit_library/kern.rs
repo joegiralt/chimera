@@ -118,6 +118,7 @@ pub(super) fn scan(
         | RecordTag::PerfRoutes
         | RecordTag::Controller
         | RecordTag::MapSection
+        | RecordTag::MapRows
         | RecordTag::Scala => Ok(()),
     }
 }

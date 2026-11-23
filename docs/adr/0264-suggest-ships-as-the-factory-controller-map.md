@@ -1,6 +1,6 @@
 # 0264. Ship SUGGEST, a controller map generated from the param tables
 
-- **Status:** Proposed
+- **Status:** Superseded by 0323
 - **Deciders:** owner (2026-11-11: "can we gen a 'suggest map' for all engines"), firmware
 
 ## Context

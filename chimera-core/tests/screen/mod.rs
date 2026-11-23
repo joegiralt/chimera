@@ -2697,6 +2697,14 @@ pub const CASES: &[ScreenCase] = &[
         midi_map_layer(ui);
         feed(ui, Input::turn(EncoderId::A, -1));
     }),
+    // A flat controller map (ADR 0323) on an INIT VA Part: ENV and LFO
+    // rows live, ALGO's rows dimmed, the bar on the first dimmed one.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_flat", |ui| midi_map_flat(ui, 9)),
+    // The same map at 40 rows, the bar on `+ NEW BINDING` past them and
+    // the Sound's rows: it adds to the map.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_flat_new", |ui| midi_map_flat(ui, 40)),
     // MIDI MAP's last row (ADR 0288): `+ NEW BINDING` under INIT's map,
     // the bar on it, EDIT to point at a cell.
     #[cfg(feature = "midi-map")]
@@ -2967,6 +2975,75 @@ fn midi_map_new_row(ui: &mut UiState) {
     feed(ui, Input::turn(EncoderId::A, -1));
 }
 
+/// An INIT VA Part 1 on map MY TB303 (ADR 0323), read from a card: ENV 1
+/// and 2's cells, LFO 1's, then ALGO's (dimmed on VA), then whatever cells
+/// fill it to `rows`. The bar on the first ALGO row; past 16 rows, on
+/// `+ NEW BINDING`.
+#[cfg(feature = "midi-map")]
+fn midi_map_flat(ui: &mut UiState, rows: usize) {
+    use chimera_core::addr::{BlockRef, ParamAddr};
+    use chimera_core::block::ParamId;
+    use chimera_core::dsp::algo::params::AlgoParams;
+    use chimera_core::dsp::lfo::LfoParams;
+    use chimera_core::dsp::modulator::{EnvSlot, LfoSlot};
+    use chimera_core::midi_map::ctl::{self, ControllerMap};
+    use chimera_core::midi_map::{Binding, Feedback, Input as In, Mappable, Span};
+    use chimera_core::name::SoundName;
+    use chimera_core::params::EnvParams;
+    init_part_engine(ui, PartId::ALL[0], EngineType::Va);
+    let head = [
+        (BlockRef::Env(EnvSlot::Env1), EnvParams::ATTACK),
+        (BlockRef::Env(EnvSlot::Env1), EnvParams::DECAY),
+        (BlockRef::Env(EnvSlot::Env1), EnvParams::SUSTAIN),
+        (BlockRef::Env(EnvSlot::Env1), EnvParams::RELEASE),
+        (BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::RATE),
+        (BlockRef::Lfo(LfoSlot::Lfo1), LfoParams::DEPTH),
+        (BlockRef::Algo, AlgoParams::MORPH),
+        (BlockRef::Algo, AlgoParams::VOWEL),
+    ];
+    let rest = BlockRef::ALL
+        .into_iter()
+        .filter(|b| b.in_sound())
+        .flat_map(|b| (0..64).map(move |p| (b, ParamId(p))));
+    let ccs = (3..=119u8).filter(|&c| !matches!(c, 7 | 10 | 11 | 71..=74 | 91 | 93 | 94));
+    let mut m = ControllerMap::EMPTY;
+    for ((b, p), cc) in head
+        .into_iter()
+        .chain(rest)
+        .filter(|&(b, p)| Mappable::new(ParamAddr::new(b, p)).is_some())
+        .zip(ccs.filter_map(In::cc))
+    {
+        if m.len() >= rows {
+            break;
+        }
+        let target = Mappable::new(ParamAddr::new(b, p)).unwrap();
+        let _ = m.push(Binding {
+            input: cc,
+            target,
+            span: Span::FULL,
+            feedback: Feedback::Off,
+        });
+    }
+    let n = SoundName::new("MY TB303").unwrap();
+    let mut s = MemStore::new(1);
+    let mut card = Card::new();
+    let mut buf = Box::new(ctl::FileBuf::new());
+    let saved = card.run(&mut s, |s, r| ctl::save(s, r, &n, &mut buf, &m));
+    saved.unwrap().result.unwrap();
+    let mut rig = Rig::new(ui, s);
+    rig.ui.project_mut().set_controller(PartId::ALL[0], Some(n));
+    rig.to(&["PART", "MIDI MAP"]);
+    rig.work();
+    rig.work();
+    rig.bar_to(0);
+    if rows > 16 {
+        let last = rig.ui.map_band().rows - 1;
+        rig.bar_to(last);
+    } else {
+        rig.bar_to(7);
+    }
+}
+
 /// `midi_map_mixed`'s Part with map EC4 picked: CC 30 MORPH and CC 74
 /// RESO (shadowed by the Sound's CC 74), read from a card; the bar on the
 /// map's first row.
@@ -2992,10 +3069,11 @@ fn midi_map_layer(ui: &mut UiState) {
             .unwrap();
     }
     let mut m = ControllerMap::EMPTY;
-    m.absorb(&own, EngineType::Algo).unwrap();
+    m.absorb(&own).unwrap();
     let mut s = MemStore::new(1);
     let mut card = Card::new();
-    let saved = card.run(&mut s, |s, r| ctl::save(s, r, &n, &m));
+    let mut buf = Box::new(ctl::FileBuf::new());
+    let saved = card.run(&mut s, |s, r| ctl::save(s, r, &n, &mut buf, &m));
     saved.unwrap().result.unwrap();
     let mut rig = Rig::new(ui, s);
     rig.ui.project_mut().set_controller(PartId::ALL[0], Some(n));

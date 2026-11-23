@@ -1,6 +1,6 @@
 # 0226. Keep controller maps as card files that each Part names, under its Sound's rows
 
-- **Status:** Proposed
+- **Status:** Proposed (superseded in part by 0323: sections, layer merge, `MapSection` writes)
 - **Deciders:** owner (#807 and its comments of 2026-10-26: controller-agnostic, parameter-targeted, shared plus per-engine sections, picked at the top of MIDI MAP per Part, a project remembers each Part's pick), firmware
 
 ## Context

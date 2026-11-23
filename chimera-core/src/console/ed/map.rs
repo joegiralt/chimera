@@ -21,6 +21,7 @@ use super::schema::Round;
 use crate::addr::{BlockRef, ParamAddr};
 use crate::console::Words;
 use crate::dsp::voice_fx::params::FxType;
+use crate::midi_map::ctl::MAP_ROWS;
 use crate::midi_map::{
     Binding, ButtonMode, Cc14Msb, CcKind, Feedback, Input, LearnCc, MAP_LEN, Mappable, MidiMap,
     NrpnKind, Span, SxKey,
@@ -378,7 +379,8 @@ fn num(w: &[u8]) -> Option<u32> {
     chimera_theory::tuning::uint(w)
 }
 
-/// A row's place in its list: below `MAP_LEN`, the most either list holds.
+/// A row's place in its list: below `MAP_LEN` for a Sound's, `MAP_ROWS`
+/// for a controller map's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowIx(u8);
 
@@ -389,7 +391,7 @@ impl RowIx {
     }
 }
 
-const _: () = assert!(MAP_LEN <= u8::MAX as usize);
+const _: () = assert!(MAP_ROWS <= u8::MAX as usize);
 
 /// A row of the followed Part's: its Sound's own (`S<i>`) or its
 /// controller map's (`M<i>`), `i` from 1.
@@ -404,12 +406,15 @@ impl EdRow {
     fn parse(w: &[u8]) -> Option<EdRow> {
         let (&head, n) = w.split_first()?;
         let i = usize::try_from(num(n)?).ok()?.checked_sub(1)?;
-        let ix = RowIx(u8::try_from(i).ok().filter(|&i| usize::from(i) < MAP_LEN)?);
-        match head {
-            b'S' => Some(EdRow::Sound(ix)),
-            b'M' => Some(EdRow::Map(ix)),
-            _ => None,
-        }
+        // A Sound holds 16 rows, a controller map 90 (ADR 0323).
+        let (row, most): (fn(RowIx) -> EdRow, usize) = match head {
+            b'S' => (EdRow::Sound, MAP_LEN),
+            b'M' => (EdRow::Map, MAP_ROWS),
+            _ => return None,
+        };
+        Some(row(RowIx(
+            u8::try_from(i).ok().filter(|&i| usize::from(i) < most)?,
+        )))
     }
 
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.map.row_write"))]
@@ -739,8 +744,8 @@ pub(super) fn rows_hash(ui: &UiState) -> u32 {
     for b in mine.entries() {
         h.row(b);
     }
-    for b in ed_cue::layer(ui, p).entries() {
-        h.row(b);
+    for b in ed_cue::layer(ui, p).rows() {
+        h.row(&b);
     }
     match ed_cue::maps(ui) {
         Some(l) => {
@@ -894,7 +899,7 @@ impl NotNow {
 fn row_at(ui: &UiState, p: PartId, r: EdRow) -> Option<Binding> {
     match r {
         EdRow::Sound(RowIx(i)) => own(ui, p).entries().get(usize::from(i)).copied(),
-        EdRow::Map(RowIx(i)) => ed_cue::layer(ui, p).entries().get(usize::from(i)).copied(),
+        EdRow::Map(RowIx(i)) => ed_cue::layer(ui, p).get(usize::from(i)),
     }
 }
 
@@ -1003,25 +1008,12 @@ fn bindable(a: EdAddr, p: PartId) -> Option<Mappable> {
     }
 }
 
-/// A map job waits for the card, and it isn't an edit of `row`'s, which
-/// the next edit of the same row takes on (ADR 0255).
+/// A map job (a save, a rename, a delete) waits for the card. A row's
+/// edit or drop is never held up: it is the shared map's at once (ADR
+/// 0323).
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.map.busy"))]
-fn busy(ui: &UiState, p: PartId, row: Option<&Binding>) -> bool {
-    match (ed_cue::ctl_job(ui), row) {
-        (None, _) => false,
-        (Some(CtlJob::Edit(q, _, last)), Some(b)) => q != p || witness(&last) != witness(b),
-        (
-            Some(
-                CtlJob::Edit(..)
-                | CtlJob::Save(..)
-                | CtlJob::Drop(..)
-                | CtlJob::Rename(..)
-                | CtlJob::RenameOf(..)
-                | CtlJob::Delete(..),
-            ),
-            _,
-        ) => true,
-    }
+fn busy(ui: &UiState) -> bool {
+    ed_cue::ctl_job(ui).is_some()
 }
 
 /// What `c` would do on the followed Part now, or why the box wouldn't.
@@ -1049,11 +1041,6 @@ pub(super) fn check(c: MapCmd, ui: &UiState) -> Result<MapAct, NotNow> {
         }
         MapCmd::Set { row, field } => {
             let b = row_at(ui, p, row).ok_or(NotNow::NoRow(row))?;
-            if let EdRow::Map(_) = row
-                && busy(ui, p, Some(&b))
-            {
-                return Err(NotNow::Busy);
-            }
             edited(b, field, row)?;
             Ok(MapAct::Set {
                 part: p,
@@ -1066,11 +1053,6 @@ pub(super) fn check(c: MapCmd, ui: &UiState) -> Result<MapAct, NotNow> {
             let b = row_at(ui, p, row).ok_or(NotNow::NoRow(row))?;
             if InputTok::of(b.input) != input || addr_of(b.target, p) != Some(target) {
                 return Err(NotNow::NotThatRow(row));
-            }
-            if let EdRow::Map(_) = row
-                && busy(ui, p, None)
-            {
-                return Err(NotNow::Busy);
             }
             Ok(MapAct::Rm {
                 part: p,
@@ -1094,7 +1076,7 @@ pub(super) fn check(c: MapCmd, ui: &UiState) -> Result<MapAct, NotNow> {
             if name.is_none() && ui.project().controller(p).is_none() {
                 return Err(NotNow::NoPick);
             }
-            if busy(ui, p, None) {
+            if busy(ui) {
                 return Err(NotNow::Busy);
             }
             Ok(MapAct::Save {
@@ -1106,7 +1088,7 @@ pub(super) fn check(c: MapCmd, ui: &UiState) -> Result<MapAct, NotNow> {
             let Some(was) = ui.project().controller(p) else {
                 return Err(NotNow::NoPick);
             };
-            if busy(ui, p, None) {
+            if busy(ui) {
                 return Err(NotNow::Busy);
             }
             Ok(MapAct::Rename {
@@ -1352,7 +1334,8 @@ pub(super) fn rows(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
         };
         row(EdRow::Sound(RowIx(i as u8)), b, p, st, w)?;
     }
-    for (i, b) in layer.entries().iter().enumerate() {
+    for (i, b) in layer.rows().enumerate() {
+        let b = &b;
         let st = match (b.target.live(engine), shadowed(&mine, b)) {
             (false, _) => Status::Dead,
             (true, true) => Status::Shadowed,
@@ -1501,10 +1484,9 @@ pub(super) fn describe(w: &mut dyn Write) -> fmt::Result {
     w.write_str(ROWS.get())?;
     uint(w, MAP_LEN as u32)?;
     w.write_char('\n')?;
-    // The controller map's rows: a layer is a `MidiMap` (ADR 0226); 90
-    // once ADR 0266's flat maps land.
+    // The controller map's rows: a flat list (ADR 0323).
     w.write_str(MAPROWS.get())?;
-    uint(w, MAP_LEN as u32)?;
+    uint(w, MAP_ROWS as u32)?;
     w.write_char('\n')
 }
 

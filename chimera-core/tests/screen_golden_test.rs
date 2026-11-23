@@ -648,10 +648,17 @@ const GOLDENS: &[(&str, u64)] = &[
     ("midi_map_pick", 0xe0f3c6a27ed04446),
     // Controller map EC4 picked, the bar on its first row (ADR 0255).
     #[cfg(feature = "midi-map")]
-    ("midi_map_layer", 0xbac404b3446fd193),
+    ("midi_map_layer", 0x682c55b5eea4ad4a),
     // The bar on its row 0: rename and delete in the tail line.
     #[cfg(feature = "midi-map")]
     ("midi_map_layer_row0", 0x7f30bc83c4c02eb6),
+    // New for ADR 0323: a flat map on VA, ALGO's rows dimmed; the same at
+    // 40 rows, the bar on `+ NEW BINDING`. midi_map_layer re-recorded: a
+    // map row's keys add EDIT TARGET.
+    #[cfg(feature = "midi-map")]
+    ("midi_map_flat", 0xbb0fd66e3c7bbbe7),
+    #[cfg(feature = "midi-map")]
+    ("midi_map_flat_new", 0xa21da13b7380b377),
     // New for ADR 0288: MIDI MAP's `+ NEW BINDING`, and pointing from it.
     #[cfg(feature = "midi-map")]
     ("midi_map_new_row", 0x0912b518f2717b3f),

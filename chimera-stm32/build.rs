@@ -290,8 +290,7 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // (`Counted`), the sinks it runs on (`PipeSinks`), USB's slot and held keys (`UsbSlot`, `Held`), the SysEx
     // bodies' ring (`SxRing`, #846), MPE's zone reads (`chimera_engine::mpe`, ADR 0252), the audio's program-change hold
     // (`NoteHold`, ADR 0224) and its `Ready` rings' push, and the `chimera_midi` stream, controller, sensing and
-    // SysEx layers it runs, and SysEx bindings' matching (`sxmap`, #846). And the map's codec (`midi_map::codec`), the
-    // controller maps beside it (`midi_map::ctl`, ADR 0226), and
+    // SysEx layers it runs, and SysEx bindings' matching (`sxmap`, #846). And the map's codec (`midi_map::codec`), and
     // the binding arithmetic the MIDI UI runs (`chimera_midi`'s take, law
     // and rel), learn's classifier (`chimera_midi::learn`) and the 14-bit
     // MSB check it shares with the codec (`chimera_midi::out`). And KEEP
@@ -299,7 +298,6 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // And a program change's load (`Project::program_load`), only the MIDI UI's.
     let nrpn = "    *(.text.*14chimera_engine4nrpn* .rodata.*14chimera_engine4nrpn*);
     *(.text.*8midi_map5codec* .rodata.*8midi_map5codec*);
-    *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);
     *(.text.*14chimera_engine7midi_in*7DinPipe* .rodata.*14chimera_engine7midi_in*7DinPipe*);
     *(.text.*14chimera_engine7midi_in*7Counted* .rodata.*14chimera_engine7midi_in*7Counted*);
     *(.text.*14chimera_engine7midi_in*9PipeSinks* .rodata.*14chimera_engine7midi_in*9PipeSinks*);
@@ -472,8 +470,12 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // records, its CRC and its mark. An S4 group.
     let kit_library =
         "    *(.text.*7project11kit_library4kern* .rodata.*7project11kit_library4kern*);\n";
+    // The flat controller maps (ADR 0323): `midi_map::ctl`, the map, its
+    // file and the card's listing, reached from bank 2's `ui::midi`; an S4
+    // group (S0-S3 is full).
+    let maps = "    *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);\n";
     let s4 = format!(
-        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{panel}{kit_library}"
+        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{panel}{kit_library}{maps}"
     );
     fs::write(
         out_dir.join("bank2.x"),

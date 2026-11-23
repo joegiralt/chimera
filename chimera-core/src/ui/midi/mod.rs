@@ -185,6 +185,31 @@ impl PartMidi {
         }
     }
 
+    /// Binding slot `j` rests: no ramp moving, no bin or detents
+    /// waiting, not the hand's this pass. A seat that rests may be taken.
+    // Inlined into its one caller: a call the outliner shares lands in
+    // bank 1 (ADR 0175).
+    #[inline(always)]
+    fn bind_rests(&self, j: usize) -> bool {
+        !self.ramps[j].moving()
+            && self.pend[j] == NO_BIN
+            && self.turns.get(j).is_none_or(|&t| t == 0)
+            && self.handed >> j & 1 == 0
+    }
+
+    /// Binding slot `j` at rest, its takeover fresh: a seat taken by
+    /// another row (an evicted PICKUP row waits to pick up again).
+    // Inlined into its one caller: a call the outliner shares lands in
+    // bank 1 (ADR 0175).
+    #[inline(always)]
+    fn reset_slot(&mut self, j: usize) {
+        if j >= BINDS {
+            return;
+        }
+        (self.ramps[j], self.bins[j], self.pend[j]) = (Ramp::rest(0.0), NO_BIN, NO_BIN);
+        (self.rt[j], self.turns[j]) = (BindRuntime::NEW, 0);
+    }
+
     /// Canonical slot `k` is free to move: at rest, no bin waiting, and
     /// not the hand's this pass (its target's message would be refused).
     fn rests(&self, k: usize) -> bool {
@@ -321,6 +346,9 @@ impl MidiSlot {
             core::ptr::addr_of_mut!((*m).seq_high).write(0);
             #[cfg(feature = "midi-map")]
             core::ptr::addr_of_mut!((*m).recall_ready).write(false);
+            // The maps go with the state: a new project reads them again.
+            #[cfg(feature = "midi-map")]
+            layer::pool_at(self.maps);
         }
         self.built = true;
     }
@@ -330,6 +358,25 @@ impl MidiSlot {
     pub(in crate::ui) fn built(&self) -> Option<&MidiUi> {
         // SAFETY: `built` says the slot was written (`ui`).
         self.built.then(|| unsafe { self.ui.assume_init_ref() })
+    }
+
+    /// The state and the controller maps (ADR 0323), built on first use.
+    #[cfg(feature = "midi-map")]
+    #[inline(always)]
+    pub(in crate::ui) fn split(&mut self) -> (&mut MidiUi, &mut layer::MapPool) {
+        let maps = self.maps;
+        let ui = self.ui();
+        // SAFETY: `take` points `maps` at the slot's own pool, built by
+        // `build` (run by `ui` above), reached only through this slot.
+        (ui, unsafe { &mut *maps })
+    }
+
+    /// The controller maps, if built: a read never builds them.
+    #[cfg(feature = "midi-map")]
+    #[inline(always)]
+    pub(in crate::ui) fn pool(&self) -> Option<&layer::MapPool> {
+        // SAFETY: as `split`; `built` says `build` wrote the pool.
+        self.built.then(|| unsafe { &*self.maps })
     }
 
     #[inline(always)]
@@ -627,6 +674,9 @@ impl UiState {
                 Ctl::Step { sel, dir } if sel == RPN0 => self.cc_bend(p, None, Some(dir)),
                 _ => {}
             }
+            // The map's rows on this control take seats (ADR 0323).
+            #[cfg(feature = "midi-map")]
+            self.seat_where(p, |i| i.heard(c));
             let (i, map) = (p.index(), self.project.part(p).sound.map);
             let layer = *self.cc.ui().ctl.layer(i);
             let handed = self.cc.part(i).handed;
@@ -638,6 +688,9 @@ impl UiState {
                     continue;
                 };
                 bound = true;
+                if let Some(k) = j.checked_sub(MAP_LEN) {
+                    self.cc.ui().ctl.touch(i, k);
+                }
                 // The hand beats a message in its pass (spec § 6.2).
                 if handed >> j & 1 == 0 {
                     self.cc_bound(p, j, e, c, now);
@@ -654,6 +707,63 @@ impl UiState {
                 (false, Ctl::Cc { cc, value }) => self.cc_builtin(p, ch, cc.get(), value, now),
                 _ => {}
             }
+        }
+    }
+
+    /// Part `p`'s map rows whose control `hears` takes, live and on no
+    /// Sound row's control, seated where none is (ADR 0323): a free seat,
+    /// else the resting one heard least recently, its slot fresh. No seat
+    /// resting: the row isn't seated, and its message moves nothing.
+    #[cfg(feature = "midi-map")]
+    fn seat_where(&mut self, p: PartId, hears: impl Fn(&Input) -> bool) {
+        let s = &self.project.part(p).sound;
+        let (own, engine) = (s.map, s.params.engine());
+        let i = p.index();
+        let (ui, pool) = self.cc.split();
+        let m = pool.map(p);
+        // A map of `SEATS` rows or fewer is seated whole by `reseat`.
+        if m.len() <= layer::SEATS {
+            return;
+        }
+        // Seats already hearing this message are not taken for another of
+        // its rows (two rows on one control would evict each other).
+        let mut hearing = 0u16;
+        let seated = ui.ctl.layer(i).entries();
+        let mut k = 0;
+        while k < seated.len() {
+            if hears(&seated[k].input) {
+                hearing |= 1 << k;
+            }
+            k += 1;
+        }
+        for k in 0..m.len() {
+            if !m.input(k).is_some_and(|x| hears(&x)) {
+                continue;
+            }
+            let Some(b) = m.get(k) else {
+                continue;
+            };
+            let seated = ui
+                .ctl
+                .layer(i)
+                .entries()
+                .iter()
+                .any(|x| x.target == b.target);
+            if seated || !b.target.live(engine) || layer::shadowed(&own, &b) {
+                continue;
+            }
+            let mut rests = 0u16;
+            for k in 0..layer::SEATS {
+                if ui.parts[i].bind_rests(MAP_LEN + k) {
+                    rests |= 1 << k;
+                }
+            }
+            let Some(at) = ui.ctl.seat(i, b, rests & !hearing) else {
+                return;
+            };
+            hearing |= 1 << at;
+            ui.parts[i].reset_slot(MAP_LEN + at);
+            ui.echo.forget(p, MAP_LEN + at);
         }
     }
 
@@ -701,7 +811,15 @@ impl UiState {
     /// synth, not a channel.
     fn cc_sysex(&mut self, body: &[u8], now: Ms) {
         for p in PartId::ALL {
-            // The Sound's own rows, then its controller map's layer.
+            // The map's SysEx rows this body moves take seats (ADR 0323).
+            #[cfg(feature = "midi-map")]
+            self.seat_where(p, |i| match i {
+                crate::midi_map::Input::SysEx(k) => {
+                    k.shape().and_then(|s| s.value(body, k.key())).is_some()
+                }
+                _ => false,
+            });
+            // The Sound's own rows, then its controller map's seats.
             let (i, map) = (p.index(), self.project.part(p).sound.map);
             let layer = *self.cc.ui().ctl.layer(i);
             let handed = self.cc.part(i).handed;

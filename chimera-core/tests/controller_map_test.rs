@@ -1,9 +1,10 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Controller maps (#807, ADR 0226): a map's sections, the layer a Part on
-//! an engine plays, a Part's rows saved into it, and its file on the card
-//! (`/CHIMERA/MAPS`, named in the header, its stem from the name).
+//! Controller maps (#807, ADR 0226, 0323): one flat list of up to 90 rows,
+//! a Part's rows saved into it, and its file on the card (`/CHIMERA/MAPS`,
+//! named in the header, its stem from the name); an old sectioned map
+//! loads flattened.
 
 mod common;
 mod screen;
@@ -76,99 +77,116 @@ fn p1() -> Mappable {
     t(BlockRef::VoiceFx, VoiceFxParams::P1)
 }
 
-/// `own` saved into an empty map by a Part on `e`.
-fn saved(own: &[Binding], e: EngineType) -> ControllerMap {
+/// `own` saved into an empty map.
+fn saved(own: &[Binding], _e: EngineType) -> ControllerMap {
     let mut m = ControllerMap::EMPTY;
-    m.absorb(&map(own), e).unwrap();
+    m.absorb(&map(own)).unwrap();
     m
 }
 
-/// A Part's rows go to their target's section: an engine's own block to
-/// that engine's, anything every engine reads to the shared one.
-#[test]
-fn rows_join_their_target_s_section() {
-    let m = saved(&[cc(21, cutoff()), cc(22, morph())], EngineType::Algo);
-    assert_eq!(m.section(None).entries(), &[cc(21, cutoff())]);
-    assert_eq!(
-        m.section(Some(EngineType::Algo)).entries(),
-        &[cc(22, morph())]
-    );
-    assert!(m.section(Some(EngineType::Modal)).is_empty());
-}
-
-/// A Part on an engine plays that engine's rows, then the shared rows on
-/// other controls: on a clash the engine's row wins.
-#[test]
-fn the_layer_is_the_engine_s_rows_then_the_shared_ones() {
-    let mut m = saved(&[cc(21, cutoff()), cc(16, p1())], EngineType::Algo);
-    m.absorb(&map(&[cc(16, structure())]), EngineType::Modal)
-        .unwrap();
-    let (algo, lost) = m.layer(EngineType::Algo);
-    assert_eq!(lost, 0);
-    assert_eq!(algo.entries(), &[cc(21, cutoff()), cc(16, p1())]);
-    let (modal, _) = m.layer(EngineType::Modal);
-    assert_eq!(modal.entries(), &[cc(16, structure()), cc(21, cutoff())]);
-}
-
-/// Saving a Part's rows over a map replaces the rows they shadowed in the
-/// Part's layer (same control or same target); other engines' rows stay.
-#[test]
-fn a_part_s_rows_replace_what_they_shadowed() {
-    let mut m = saved(&[cc(21, cutoff()), cc(22, reso())], EngineType::Algo);
-    m.absorb(&map(&[cc(16, structure())]), EngineType::Modal)
-        .unwrap();
-    // CC 21 now moves the resonance, CC 30 the cutoff.
-    m.absorb(&map(&[cc(21, reso()), cc(30, cutoff())]), EngineType::Algo)
-        .unwrap();
-    assert_eq!(
-        m.section(None).entries(),
-        &[cc(21, reso()), cc(30, cutoff())]
-    );
-    assert_eq!(
-        m.section(Some(EngineType::Modal)).entries(),
-        &[cc(16, structure())]
-    );
-}
-
-/// A shared row on a control the engine's section holds shadows it in the
-/// layer, so a save drops the engine's row: the layer plays what the Part
-/// played.
-#[test]
-fn a_shared_row_saved_over_an_engine_row_wins_it() {
-    let mut m = saved(&[cc(16, structure())], EngineType::Modal);
-    m.absorb(&map(&[cc(16, p1())]), EngineType::Modal).unwrap();
-    assert!(m.section(Some(EngineType::Modal)).is_empty());
-    assert_eq!(m.layer(EngineType::Modal).0.entries(), &[cc(16, p1())]);
-}
-
-/// Seventeen targets every engine reads.
-fn shared_targets() -> Vec<Mappable> {
-    [BlockRef::Filter, BlockRef::Out, BlockRef::Part]
+/// Every mappable cell, in table order.
+fn cells() -> Vec<Mappable> {
+    BlockRef::ALL
         .into_iter()
         .flat_map(|b| (0..64).filter_map(move |p| Mappable::new(ParamAddr::new(b, ParamId(p)))))
-        .filter(|m| m.engine().is_none())
-        .take(MAP_LEN + 1)
         .collect()
 }
 
-/// A save that would put more than `MAP_LEN` rows in a layer is refused,
-/// the map as it was.
+/// `n` rows on distinct cells and CCs (a CC past 119 wraps onto NRPNs).
+fn rows(n: usize) -> ControllerMap {
+    let mut m = ControllerMap::EMPTY;
+    let mut ccs = (0..=127u8).filter_map(Input::cc);
+    for t in cells().into_iter().take(n) {
+        let input = ccs
+            .next()
+            .unwrap_or(Input::Pressure(chimera_midi::take::Takeover::Jump));
+        m.push(Binding { input, ..cc(21, t) }).unwrap();
+    }
+    m
+}
+
+/// A map keeps its rows in order, one a target: a row on a target held
+/// takes that row's place.
 #[test]
-fn a_full_layer_refuses_the_save() {
-    let ts = shared_targets();
-    assert_eq!(ts.len(), MAP_LEN + 1);
-    let free = (20..120).filter(|&n| Input::cc(n).is_some());
-    let rows: Vec<_> = ts.iter().zip(free).map(|(&t, n)| cc(n, t)).collect();
-    let mut m = saved(&rows[..MAP_LEN - 1], EngineType::Algo);
-    // ALGO's layer: 15 shared + MORPH = 16.
-    m.absorb(&map(&[cc(90, morph())]), EngineType::Algo)
-        .unwrap();
-    let before = m;
+fn rows_keep_their_order_one_a_target() {
+    let mut m = ControllerMap::EMPTY;
+    m.push(cc(20, cutoff())).unwrap();
+    m.push(cc(21, morph())).unwrap();
+    m.push(cc(22, cutoff())).unwrap();
     assert_eq!(
-        m.absorb(&map(&[rows[MAP_LEN - 1]]), EngineType::Va),
-        Err(MapFull)
+        m.rows().collect::<Vec<_>>(),
+        [cc(22, cutoff()), cc(21, morph())]
     );
-    assert_eq!(m, before);
+}
+
+/// Any engine's cells sit in one list: no sections, no layer.
+#[test]
+fn every_engine_s_rows_sit_in_one_list() {
+    let m = saved(
+        &[
+            cc(21, cutoff()),
+            cc(16, morph()),
+            cc(17, structure()),
+            cc(18, p1()),
+        ],
+        EngineType::Algo,
+    );
+    assert_eq!(m.len(), 4);
+    assert_eq!(m.get(2), Some(cc(17, structure())));
+}
+
+/// A Part's rows saved into a map clear the rows on their controls or
+/// targets, then follow the rest.
+#[test]
+fn a_part_s_rows_replace_what_they_shadowed() {
+    let mut m = saved(
+        &[cc(20, cutoff()), cc(21, reso()), cc(22, p1())],
+        EngineType::Va,
+    );
+    m.absorb(&map(&[cc(20, morph()), cc(23, reso())])).unwrap();
+    assert_eq!(
+        m.rows().collect::<Vec<_>>(),
+        [cc(22, p1()), cc(20, morph()), cc(23, reso())]
+    );
+}
+
+/// Ninety rows fit; the 91st is refused, and a save past 90 leaves the
+/// map as it was.
+#[test]
+fn a_map_holds_ninety_rows() {
+    let mut m = rows(ctl::MAP_ROWS);
+    assert_eq!(m.len(), 90);
+    let before = m;
+    let extra = cells()[ctl::MAP_ROWS];
+    assert_eq!(m.push(cc(21, extra)), Err(MapFull));
+    let own = map(&[Binding {
+        input: Input::Pressure(chimera_midi::take::Takeover::Jump),
+        ..cc(21, extra)
+    }]);
+    // Pressure: a control no row is on, a target none holds.
+    assert_eq!(m.absorb(&own), Err(MapFull));
+    assert_eq!(m, before, "untouched");
+}
+
+/// Sixteen SysEx keys a map: a 17th is MAP FULL, a key used twice one.
+#[cfg(feature = "midi-map")]
+#[test]
+fn a_map_holds_sixteen_sysex_keys() {
+    let mut m = ControllerMap::EMPTY;
+    let ts = cells();
+    for (i, &t) in ts.iter().take(ctl::SX_KEYS).enumerate() {
+        m.push(sx(i as u32 * 7919 + 1, t)).unwrap();
+    }
+    assert_eq!(m.push(sx(999_999, ts[40])), Err(MapFull));
+    // A key already held takes no slot.
+    m.push(sx(1, ts[41])).unwrap();
+    assert_eq!(m.get(m.len() - 1), Some(sx(1, ts[41])));
+    // A row dropped frees its key (row 1's, held by no other row).
+    m.remove(1);
+    m.push(sx(999_999, ts[42])).unwrap();
+    for i in 0..m.len() {
+        assert!(m.get(i).is_some());
+    }
 }
 
 /// The stem: up to four letters and digits, then the name's CRC in hex.
@@ -199,12 +217,17 @@ fn a_map_round_trips_through_the_card() {
     let _g = open();
     let mut s = MemStore::new(1);
     let m = saved(&[cc(21, cutoff()), cc(16, morph())], EngineType::Algo);
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &m)).unwrap();
+    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &mut buf(), &m)).unwrap();
     let mut back = ControllerMap::EMPTY;
-    let lost = on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+    let lost = on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut buf(), &mut back)
+    })
+    .unwrap();
     assert_eq!((lost, back), (0, m));
     // Another name: not there.
-    let other = on_card(&mut s, |s, r| ctl::load(s, r, &name("LCXL3"), &mut back));
+    let other = on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("LCXL3"), &mut buf(), &mut back)
+    });
     assert_eq!(other, Err(LoadError::Missing));
 }
 
@@ -215,17 +238,17 @@ fn the_listing_names_the_maps() {
     let mut s = MemStore::new(1);
     let mut out = [None; ctl::MAX_MAPS];
     assert_eq!(
-        on_card(&mut s, |s, r| ctl::list(s, r, &mut out)),
+        on_card(&mut s, |s, r| ctl::list(s, r, &mut buf(), &mut out)),
         Ok((0, false))
     );
     let m = saved(&[cc(21, cutoff())], EngineType::Va);
     for n in ["OXI E16", "CIRKLON", "EC4"] {
-        on_card(&mut s, |s, r| ctl::save(s, r, &name(n), &m)).unwrap();
+        on_card(&mut s, |s, r| ctl::save(s, r, &name(n), &mut buf(), &m)).unwrap();
     }
     // Saved again: one pair, one row.
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &m)).unwrap();
+    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &mut buf(), &m)).unwrap();
     assert_eq!(
-        on_card(&mut s, |s, r| ctl::list(s, r, &mut out)),
+        on_card(&mut s, |s, r| ctl::list(s, r, &mut buf(), &mut out)),
         Ok((3, false))
     );
     assert_eq!(
@@ -262,6 +285,10 @@ fn a_project_names_each_part_s_map() {
     assert_eq!(p.controller(PartId::ALL[1]), Some(name("FADERFOX")));
 }
 
+fn buf() -> ctl::FileBuf {
+    ctl::FileBuf::new()
+}
+
 /// Saves alternate the A and B sides; a side cut short loads the other.
 #[test]
 fn a_torn_side_loads_the_last_good_map() {
@@ -269,19 +296,37 @@ fn a_torn_side_loads_the_last_good_map() {
     let mut s = MemStore::new(1);
     let one = saved(&[cc(21, cutoff())], EngineType::Algo);
     let two = saved(&[cc(22, cutoff())], EngineType::Algo);
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &one)).unwrap();
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &two)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::save(s, r, &name("EC4"), &mut buf(), &one)
+    })
+    .unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::save(s, r, &name("EC4"), &mut buf(), &two)
+    })
+    .unwrap();
     let mut back = ControllerMap::EMPTY;
-    on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut buf(), &mut back)
+    })
+    .unwrap();
     assert_eq!(back, two, "the newer side");
     // The newer is B: cut it short.
     let (st, n) = ctl::stem(&name("EC4"));
     s.plant(FileName::new(Dir::Maps, &st[..n], b"B").unwrap(), b"CHIM");
-    on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut buf(), &mut back)
+    })
+    .unwrap();
     assert_eq!(back, one, "the last good side");
     // The next save goes over the torn side.
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &two)).unwrap();
-    on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::save(s, r, &name("EC4"), &mut buf(), &two)
+    })
+    .unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut buf(), &mut back)
+    })
+    .unwrap();
     assert_eq!(back, two);
 }
 
@@ -294,14 +339,14 @@ fn a_name_sharing_a_stem_never_overwrites_it() {
     let (a, b) = (name("EC4 AAU"), name("EC4 ACY"));
     assert_eq!(ctl::stem(&a), ctl::stem(&b), "one stem");
     let m = saved(&[cc(21, cutoff())], EngineType::Algo);
-    on_card(&mut s, |s, r| ctl::save(s, r, &a, &m)).unwrap();
+    on_card(&mut s, |s, r| ctl::save(s, r, &a, &mut buf(), &m)).unwrap();
     let other = saved(&[cc(22, reso())], EngineType::Algo);
     assert_eq!(
-        on_card(&mut s, |s, r| ctl::save(s, r, &b, &other)),
+        on_card(&mut s, |s, r| ctl::save(s, r, &b, &mut buf(), &other)),
         Err(SaveError::File(FileError::BadName))
     );
     let mut back = ControllerMap::EMPTY;
-    on_card(&mut s, |s, r| ctl::load(s, r, &a, &mut back)).unwrap();
+    on_card(&mut s, |s, r| ctl::load(s, r, &a, &mut buf(), &mut back)).unwrap();
     assert_eq!(back, m);
 }
 
@@ -314,14 +359,14 @@ fn a_full_listing_says_there_are_more() {
     let m = saved(&[cc(21, cutoff())], EngineType::Algo);
     for i in 0..ctl::MAX_MAPS {
         on_card(&mut s, |s, r| {
-            ctl::save(s, r, &name(&format!("M{i:02}")), &m)
+            ctl::save(s, r, &name(&format!("M{i:02}")), &mut buf(), &m)
         })
         .unwrap();
     }
-    let all = on_card(&mut s, |s, r| ctl::list(s, r, &mut out));
+    let all = on_card(&mut s, |s, r| ctl::list(s, r, &mut buf(), &mut out));
     assert_eq!(all, Ok((ctl::MAX_MAPS, false)));
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("M99"), &m)).unwrap();
-    let more = on_card(&mut s, |s, r| ctl::list(s, r, &mut out));
+    on_card(&mut s, |s, r| ctl::save(s, r, &name("M99"), &mut buf(), &m)).unwrap();
+    let more = on_card(&mut s, |s, r| ctl::list(s, r, &mut buf(), &mut out));
     assert_eq!(more, Ok((ctl::MAX_MAPS, true)));
 }
 
@@ -333,8 +378,14 @@ fn a_side_failing_its_checksum_is_passed_over() {
     let mut s = MemStore::new(1);
     let one = saved(&[cc(21, cutoff())], EngineType::Algo);
     let two = saved(&[cc(22, cutoff())], EngineType::Algo);
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &one)).unwrap();
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("EC4"), &two)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::save(s, r, &name("EC4"), &mut buf(), &one)
+    })
+    .unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::save(s, r, &name("EC4"), &mut buf(), &two)
+    })
+    .unwrap();
     let (st, n) = ctl::stem(&name("EC4"));
     let vol = s.mount().unwrap();
     let flip = |s: &mut MemStore, side: &[u8]| {
@@ -347,10 +398,15 @@ fn a_side_failing_its_checksum_is_passed_over() {
     };
     flip(&mut s, b"B");
     let mut back = ControllerMap::EMPTY;
-    on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back)).unwrap();
+    on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut buf(), &mut back)
+    })
+    .unwrap();
     assert_eq!(back, one, "the good side");
     flip(&mut s, b"A");
-    let gone = on_card(&mut s, |s, r| ctl::load(s, r, &name("EC4"), &mut back));
+    let gone = on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("EC4"), &mut buf(), &mut back)
+    });
     assert_eq!(gone, Err(LoadError::Missing));
     assert_eq!(back, one, "untouched");
 }
@@ -366,60 +422,131 @@ fn sx(k: u32, t: Mappable) -> Binding {
     m.entries()[0]
 }
 
-/// Up to `n` SysEx rows: each engine's section in turn, full.
-#[cfg(feature = "midi-map")]
-fn sysex_map(n: usize) -> ControllerMap {
-    let mut m = ControllerMap::EMPTY;
-    let mut k = 0;
-    let mut rows = |m: &mut ControllerMap, e: Option<EngineType>, on: EngineType| {
-        let ts: Vec<_> = BlockRef::ALL
-            .into_iter()
-            .flat_map(|b| (0..64).filter_map(move |p| Mappable::new(ParamAddr::new(b, ParamId(p)))))
-            .filter(|t| t.engine() == e)
-            .take(MAP_LEN)
-            .collect();
-        let mut own = Vec::new();
-        for t in ts {
-            if k == n {
-                break;
-            }
-            k += 1;
-            own.push(sx(k as u32 * 7919, t));
-        }
-        m.absorb(&map(&own), on).unwrap();
-    };
-    // Each engine's section full (a layer holds at most `MAP_LEN`: the
-    // shared section stays empty).
-    for e in EngineType::ALL {
-        rows(&mut m, Some(e), e);
-    }
-    m
-}
-
-/// A map whose SysEx rows don't fit its file is refused, the card's map
-/// as it was; the largest that fits saves and loads back whole.
+/// Ninety rows, SysEx among them, round-trip through the card.
 #[cfg(feature = "midi-map")]
 #[test]
-fn a_sysex_map_past_the_file_is_refused_and_the_largest_round_trips() {
+fn a_full_map_round_trips_through_the_card() {
     let _g = open();
     let mut s = MemStore::new(1);
-    let first = saved(&[cc(21, cutoff())], EngineType::Algo);
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &first)).unwrap();
-    let full = sysex_map(usize::MAX);
-    assert!(!ctl::fits(&full));
-    let got = on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &full));
-    assert_eq!(got, Err(SaveError::File(FileError::Bounds)));
+    let mut m = rows(ctl::MAP_ROWS - ctl::SX_KEYS);
+    let ts = cells();
+    for i in 0..ctl::SX_KEYS {
+        m.push(sx(i as u32 * 31 + 5, ts[m.len()])).unwrap();
+    }
+    assert_eq!(m.len(), ctl::MAP_ROWS);
+    on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &mut buf(), &m)).unwrap();
     let mut back = ControllerMap::EMPTY;
-    on_card(&mut s, |s, r| ctl::load(s, r, &name("BOX"), &mut back)).unwrap();
-    assert_eq!(back, first, "the card's map untouched");
-    // The largest that fits.
-    let n = (1..200)
-        .take_while(|&n| ctl::fits(&sysex_map(n)))
-        .last()
-        .unwrap();
-    let big = sysex_map(n);
-    on_card(&mut s, |s, r| ctl::save(s, r, &name("BOX"), &big)).unwrap();
+    let lost = on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("BOX"), &mut buf(), &mut back)
+    })
+    .unwrap();
+    assert_eq!((lost, back), (0, m));
+}
+
+/// An old sectioned map (ADR 0226, SUGGEST's) loads flattened: its
+/// sections in file order, rows past 90 skipped and counted; its next save
+/// writes `MapRows` only.
+#[test]
+fn an_old_sectioned_map_loads_flattened() {
+    use chimera_core::midi_map::codec;
+    use chimera_core::storage::{Crc32, FileKind, Generation, Header, RecordBuf, RecordTag};
+    let _g = open();
+    let mut s = MemStore::new(1);
+    let ts = cells();
+    // Five full sections, codes 0..4, as 0.3 wrote them.
+    let mut file = Header {
+        kind: FileKind::Controller,
+        generation: Generation::FIRST,
+        name: Some(name("OLD")),
+    }
+    .encode()
+    .to_vec();
+    let mut want = Vec::new();
+    let mut k = 0;
+    for code in 0u8..5 {
+        let mut sec = MidiMap::EMPTY;
+        for _ in 0..MAP_LEN {
+            let b = Binding {
+                input: Input::cc(20 + (k % 90) as u8).unwrap_or(Input::cc(2).unwrap()),
+                ..cc(21, ts[k])
+            };
+            sec.learn(b.input, b.target).unwrap();
+            let n = sec.len() - 1;
+            sec.set(n, b);
+            want.push(b);
+            k += 1;
+        }
+        let mut p = RecordBuf::new();
+        p.u8(code);
+        codec::encode(&sec, &mut p);
+        file.extend_from_slice(&RecordTag::MapSection.code().to_le_bytes());
+        file.extend_from_slice(&(p.as_slice().len() as u16).to_le_bytes());
+        file.extend_from_slice(p.as_slice());
+    }
+    let mut crc = Crc32::new();
+    crc.update(&file);
+    file.extend_from_slice(&crc.finish().to_le_bytes());
+    let (st, n) = ctl::stem(&name("OLD"));
+    let f = FileName::new(Dir::Maps, &st[..n], b"A").unwrap();
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Maps).unwrap();
+    s.plant(f, &file);
     let mut back = ControllerMap::EMPTY;
-    let lost = on_card(&mut s, |s, r| ctl::load(s, r, &name("BOX"), &mut back)).unwrap();
-    assert_eq!((lost, back), (0, big), "{n} rows");
+    let lost = on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("OLD"), &mut buf(), &mut back)
+    })
+    .unwrap();
+    // Five sections of 16 at most: 80 rows, all kept.
+    assert_eq!(lost, 0);
+    assert_eq!(back.rows().collect::<Vec<_>>(), want);
+    // Saved again: `MapRows` only.
+    on_card(&mut s, |s, r| {
+        ctl::save(s, r, &name("OLD"), &mut buf(), &back)
+    })
+    .unwrap();
+    let fb = FileName::new(Dir::Maps, &st[..n], b"B").unwrap();
+    let mut b = vec![0u8; 2048];
+    let k = chimera_core::storage::read_small(&mut s, vol, fb, &mut b).unwrap();
+    let b = &b[..k];
+    let has = |tag: u16| b.windows(2).any(|w| w == tag.to_le_bytes());
+    assert!(has(RecordTag::MapRows.code()));
+    assert!(!has(RecordTag::MapSection.code()));
+    let mut again = ControllerMap::EMPTY;
+    on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("OLD"), &mut buf(), &mut again)
+    })
+    .unwrap();
+    assert_eq!(again, back);
+}
+
+/// A map file a newer firmware wrote with a record this one must
+/// understand and doesn't is refused, never shown empty.
+#[test]
+fn an_unknown_critical_record_refuses_the_map() {
+    use chimera_core::storage::{Crc32, FileKind, Generation, Header};
+    let _g = open();
+    let mut s = MemStore::new(1);
+    let mut file = Header {
+        kind: FileKind::Controller,
+        generation: Generation::FIRST,
+        name: Some(name("NEW")),
+    }
+    .encode()
+    .to_vec();
+    file.extend_from_slice(&0x80FFu16.to_le_bytes());
+    file.extend_from_slice(&0u16.to_le_bytes());
+    let mut crc = Crc32::new();
+    crc.update(&file);
+    file.extend_from_slice(&crc.finish().to_le_bytes());
+    let (st, n) = ctl::stem(&name("NEW"));
+    let vol = s.mount().unwrap();
+    s.make_dir(vol, Dir::Chimera).unwrap();
+    s.make_dir(vol, Dir::Maps).unwrap();
+    s.plant(FileName::new(Dir::Maps, &st[..n], b"A").unwrap(), &file);
+    let mut back = ControllerMap::EMPTY;
+    let got = on_card(&mut s, |s, r| {
+        ctl::load(s, r, &name("NEW"), &mut buf(), &mut back)
+    });
+    assert_eq!(got, Err(LoadError::Missing));
 }

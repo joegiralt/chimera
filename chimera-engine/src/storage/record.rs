@@ -93,8 +93,12 @@ pub enum RecordTag {
     /// padded, after the Part's `Origin`. Not critical.
     Controller,
     /// A controller map file's section: its code (`midi_map::ctl::Section`),
-    /// then a `Bindings` payload. Not critical.
+    /// then a `Bindings` payload. Not critical. Read only (ADR 0323).
     MapSection,
+    /// A flat controller map file's rows (ADR 0323): a `Bindings` payload
+    /// of up to 16 rows, the map's rows the records' in file order.
+    /// Critical: an older reader refuses the file, never shows it empty.
+    MapRows,
     /// A project Part's Scala file (ADR 0259): its stem, 8 B padded, then
     /// the id of the name it shows (`scala_name::name_id`, u32 LE; a
     /// record of 8 B, from before long names, has none), after the Part's
@@ -150,6 +154,7 @@ impl RecordTag {
             RecordTag::Scala => 0x0023,
             RecordTag::Kit => 0x0024,
             RecordTag::KitSound => 0x0025,
+            RecordTag::MapRows => 0x8024,
         }
     }
 
@@ -189,6 +194,7 @@ impl RecordTag {
             0x0023 => RecordTag::Scala,
             0x0024 => RecordTag::Kit,
             0x0025 => RecordTag::KitSound,
+            0x8024 => RecordTag::MapRows,
             _ => return None,
         })
     }

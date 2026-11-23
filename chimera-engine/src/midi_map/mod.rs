@@ -295,7 +295,9 @@ impl Input {
     }
 
     /// Whether `c` belongs to this control, whatever its kind. A 14-bit
-    /// pair hears its MSB CC and the LSB CC, MSB + 32.
+    /// pair hears its MSB CC and the LSB CC, MSB + 32. Inlined, as
+    /// `same_control`: its callers are bank 2's.
+    #[inline(always)]
     pub fn heard(&self, c: &Ctl) -> bool {
         match (*self, c) {
             (Self::Cc(l, _), Ctl::Cc { cc, .. }) => cc.get() == l.get(),
