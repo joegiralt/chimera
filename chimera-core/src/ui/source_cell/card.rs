@@ -216,8 +216,21 @@ impl SourceCell {
                 Ok(h) => {
                     self.heads.put(h);
                     let sound = &p.part(part).sound;
-                    if to == HeadFor::Pick && sound.source_ref() == Some(h.sref) {
-                        p.edit_part(part).sound.pick_source(&h, None);
+                    match to {
+                        HeadFor::Pick if sound.source_ref() == Some(h.sref) => {
+                            p.edit_part(part).sound.pick_source(&h, None);
+                        }
+                        // The library's Sound still on it: loaded as on
+                        // its card row (#600).
+                        // The cell's own row on another Part is kept.
+                        HeadFor::Load
+                            if sound.source_ref() == Some(h.sref)
+                                && self.at.is_none_or(|a| a.0 == part) =>
+                        {
+                            self.at = Some((part, stem, size));
+                            self.load_in(p, part);
+                        }
+                        HeadFor::Pick | HeadFor::Load | HeadFor::Name => {}
                     }
                 }
                 Err(w) => self.note = Some(w),

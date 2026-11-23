@@ -47,6 +47,7 @@ use crate::storage::{
 use super::arena::{ARENA_BYTES, Cost, MAX_SOURCES};
 use super::pool::{Pool, entry_len};
 use super::sources::{SourceId, SourceRef, SourceSet, ref_cost};
+use super::streamed::HeadsCost;
 use super::swap::{LoadLink, Swap};
 use super::template::NEW_PARTS;
 use super::{EncodedSound, Origin, Part, PartId, PartSet, Project, SlotId};
@@ -555,6 +556,9 @@ struct Costs {
     refs: [SourceRef; MAX_SOURCES],
     n_refs: u8,
     part_used: u32,
+    /// What each ref's heads cost the arena, in granules, as a TAPE Part
+    /// would stream it (#600); `None` until one costs it, or if it can't.
+    heads: [Option<HeadsCost>; MAX_SOURCES],
 }
 
 impl Costs {
@@ -568,6 +572,7 @@ impl Costs {
         }; MAX_SOURCES],
         n_refs: 0,
         part_used: 0,
+        heads: [None; MAX_SOURCES],
     };
 
     #[optimize(size)]
@@ -813,12 +818,17 @@ impl ProjectCheck {
                 {
                     self.costs_mut().part_used |= 1 << k;
                 }
-                let staged = target.map(|t| {
-                    if let ReadTag::Known(k) = tag {
-                        crate::midi_in::keep_map(&mut t.kept[n.index()], k, p);
+                // Pass 1 decodes the Part's Sound into the stage too, to cost
+                // a streamed source's heads by its params (#600).
+                let staged = match target {
+                    Some(t) => {
+                        if let ReadTag::Known(k) = tag {
+                            crate::midi_in::keep_map(&mut t.kept[n.index()], k, p);
+                        }
+                        Some(&mut *t.perf.parts[n.index()].sound)
                     }
-                    &mut *t.perf.parts[n.index()].sound
-                });
+                    None => stage,
+                };
                 self.sound.step(e, staged)
             }
         }
@@ -832,6 +842,7 @@ impl ProjectCheck {
         let c = self.costs_mut();
         (c.slots, c.n_refs, c.part_used) = (0, 0, 0);
         c.slot_costs.fill(0);
+        c.heads.fill(None);
         (self.dropped_slots, self.dropped_sources) = (0, 0);
         (self.to_read, self.to_stream) = (SourceSet::EMPTY, SourceSet::EMPTY);
         (self.context, self.parts) = (Context::None, PartSet::EMPTY);
@@ -919,9 +930,9 @@ impl ProjectCheck {
         tag: RecordTag,
         p: &[u8],
         mut target: Option<&mut Project>,
-        stage: Option<&mut Sound>,
+        mut stage: Option<&mut Sound>,
     ) -> Result<(), FileError> {
-        self.close(target.as_deref_mut(), stage)?;
+        self.close(target.as_deref_mut(), stage.as_deref_mut())?;
         if tag == RecordTag::Fx {
             if !p.is_empty() {
                 return Err(FileError::Bounds);
@@ -968,6 +979,10 @@ impl ProjectCheck {
                 t.set_scala(n, None);
                 // A file from before kits has none: the default.
                 t.kits.kit_mut(n).reset();
+            }
+            // Pass 1's stage: no source left from the last context.
+            if let Some(st) = stage {
+                st.source = None;
             }
             (self.mix, self.origin) = (false, false);
             self.kit = KitRead::NONE;
@@ -1056,7 +1071,7 @@ impl ProjectCheck {
             },
             Context::Part(n) => {
                 let Some(t) = target else {
-                    return self.sound.finish(None);
+                    return self.part_heads(stage);
                 };
                 let part = &mut t.perf.parts[n.index()];
                 self.sound.finish(Some(&mut *part.sound))?;
@@ -1075,6 +1090,23 @@ impl ProjectCheck {
             }
             Context::None | Context::Fx | Context::Orbit => Ok(()),
         }
+    }
+
+    /// Pass 1's Part closed into `stage`: if it is the first TAPE Part on
+    /// a source, what that source's heads cost as it would stream them
+    /// (#600). The plan takes them for a source too big whole.
+    #[inline(never)]
+    #[optimize(size)]
+    fn part_heads(&mut self, stage: Option<&mut Sound>) -> Result<(), FileError> {
+        let Some(stage) = stage else {
+            return self.sound.finish(None);
+        };
+        self.sound.finish(Some(&mut *stage))?;
+        let c = self.costs_mut();
+        let refs = &c.refs[..usize::from(c.n_refs)];
+        let heads = &mut c.heads;
+        super::LoadDoor::with(|d| d.ask(super::LoadAsk::PartHeads { stage, refs, heads }));
+        Ok(())
     }
 
     /// The plan of this side's pass 1, against the whole arena: the
@@ -1108,6 +1140,18 @@ impl ProjectCheck {
             }
         };
         sources(true, &mut p, &mut left);
+        // A Part's source too big whole, as it streams it: its heads' room
+        // before the slots (#600). Still counted left out, as pass 2's
+        // streamed pass expects.
+        let taken = p.sources | p.missing;
+        super::LoadDoor::with(|d| {
+            d.ask(super::LoadAsk::PlanHeads {
+                part_used: c.part_used,
+                taken,
+                heads: &c.heads,
+                left: &mut left,
+            })
+        });
         for s in SlotId::ALL
             .into_iter()
             .filter(|s| c.slots & 1 << s.index() != 0)

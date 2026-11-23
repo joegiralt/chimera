@@ -376,7 +376,7 @@ mod streamed {
         use chimera_core::ui::settings::prompt::POOL_FULL;
         use chimera_core::ui::view::SourceState;
         let mut s = MemStore::new(1);
-        let (a, b) = (source(42, 102_800), source(43, 150_000));
+        let (a, b) = (source(42, 107_500), source(43, 150_000));
         put(&mut s, &a);
         put(&mut s, &b);
         let (mut p, t) = Project::boxed();
@@ -397,13 +397,34 @@ mod streamed {
         let mut w = chimera_core::ui::fmt::FmtBuf::new();
         st.text(&mut w);
         assert_eq!(w.as_str(), POOL_FULL);
+        // A whole takes the room the slots had: nine of them, and B.
         assert_eq!(
             note,
             Some(ProjectNote::DidntFit {
-                sounds: 0,
+                sounds: 9,
                 sources: 1
             })
         );
+    }
+
+    /// #600: pass 1's plan costs a too-big source a Part streams at its
+    /// heads, before the slots and the sources no Part plays: a source
+    /// nothing plays can't take the room the heads need.
+    #[test]
+    fn the_plan_keeps_room_for_a_parts_heads() {
+        let mut s = MemStore::new(1);
+        let (big, idle) = (source(44, 150_000), source(45, 106_000));
+        put(&mut s, &big);
+        put(&mut s, &idle);
+        let (mut p, t) = Project::boxed();
+        tape_part(&mut p, t, 0, big.0.sref);
+        p.source_absent(big.0.sref).unwrap();
+        // In the pool, played by no Part: costed after the Parts' sources.
+        p.source_absent(idle.0.sref).unwrap();
+        let (q, _) = round_trip(&mut s, &mut p, false);
+        assert!(q.pool().streamed(big.0.sref), "the Part's source streams");
+        let id = q.pool().find_source(idle.0.sref).expect("the ref kept");
+        assert!(q.pool().absence(id).is_some(), "the idle one gave way");
     }
 
     /// `file`'s seal on `s`.

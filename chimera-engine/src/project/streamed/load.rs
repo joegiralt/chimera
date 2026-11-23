@@ -9,7 +9,7 @@
 use chimera_hal::store::{RunsError, Seal, Store, StoreError};
 use chimera_hal::units::Bytes;
 
-use super::super::arena::ARENA_BYTES;
+use super::super::arena::{ARENA_BYTES, Cost};
 use super::super::pool::StreamRefused;
 use super::super::sources::source_cost;
 use super::super::{Absence, PartId, PoolFull, Project, SourceId, SourceSet};
@@ -375,5 +375,47 @@ pub(super) fn ask(a: super::LoadAsk<'_>) {
     match a {
         super::LoadAsk::Sources { s, r, p, ids, out } => *out = stream_sources(s, r, p, ids),
         super::LoadAsk::Follow { p, v, out } => *out = follow(p, v),
+        super::LoadAsk::PartHeads { stage, refs, heads } => part_heads(stage, refs, heads),
+        super::LoadAsk::PlanHeads {
+            part_used,
+            taken,
+            heads,
+            left,
+        } => {
+            for (k, h) in heads.iter().enumerate() {
+                let bit = 1 << k;
+                let c = h.map(|h| h.cost().bytes());
+                if part_used & bit != 0
+                    && taken & bit == 0
+                    && let Some(c) = c.filter(|&c| c <= *left)
+                {
+                    *left -= c;
+                }
+            }
+        }
+    }
+}
+
+/// `LoadAsk::PartHeads` (#600).
+fn part_heads(
+    stage: &crate::preset::Sound,
+    refs: &[crate::project::SourceRef],
+    heads: &mut [Option<super::HeadsCost>],
+) {
+    let Some(r) = stage
+        .source_ref()
+        .filter(|_| stage.engine() == crate::params::EngineType::Tape)
+    else {
+        return;
+    };
+    let Some(k) = refs.iter().position(|&x| x == r) else {
+        return;
+    };
+    if heads[k].is_none() {
+        heads[k] = crate::stream::stage::heads_in(r, &stage.params.tape)
+            .ok()
+            .and_then(|h| {
+                super::HeadsCost::of(Cost::of(super::super::sources::SOURCE_HEAD + h.held_len()))
+            });
     }
 }

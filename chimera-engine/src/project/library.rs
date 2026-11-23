@@ -774,6 +774,9 @@ pub struct LibRead {
 pub enum Staged {
     Read(SourceNeed),
     Missing(SourceRef),
+    /// Too big whole: absent until the SOURCE cell streams it as its heads
+    /// (#600).
+    Streams(SourceRef),
 }
 
 #[derive(Debug, PartialEq)]
@@ -1115,6 +1118,23 @@ impl Project {
     /// cost, no slot.
     /// Closed, a Sound with a kept map record never dedupes: a slot
     /// equal to it but for the map would lose it (#862).
+    /// A library TAPE Sound whose source `need` is too big for the room
+    /// whole, though the load fits without it (#600): it lands with the
+    /// source absent (`Staged::Streams`) and the SOURCE cell streams it.
+    /// Only bank 2's `notes::lib_stream` asks: inlined there.
+    #[inline(always)]
+    pub fn library_streams_in(&self, need: SourceNeed) -> bool {
+        need.readable()
+            && self.pool.scratch_ref().engine() == EngineType::Tape
+            && self.library_needs(Some(need)).is_err()
+            && self
+                .library_needs(Some(SourceNeed {
+                    on_card: false,
+                    ..need
+                }))
+                .is_ok()
+    }
+
     #[optimize(size)]
     pub fn library_needs(
         &self,
@@ -1200,6 +1220,13 @@ impl Project {
                 r,
                 held: 0,
                 on_card: false,
+            },
+            // On the card, absent until it streams: SOURCE MISSING, BUSY
+            // over it while it loads (#600).
+            Staged::Streams(r) => SourceNeed {
+                r,
+                held: 0,
+                on_card: true,
             },
         });
         let dedupe = self.library_needs(need).map_err(AdoptError::Full)?;

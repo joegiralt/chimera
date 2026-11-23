@@ -550,15 +550,25 @@ impl UiState {
             Err(n) => return self.lib_note(n),
         };
         if let Err(f) = self.project.library_needs(read.source) {
+            // Too big whole on a TAPE Sound: it lands with its source
+            // absent, which SOURCE then streams (#600). Bank 2's.
+            if let Some(need) = read.source
+                && self.lib_streams(card, store, vol, need)
+            {
+                return;
+            }
             self.lib.load = None;
             return self.refuse(f);
         }
         let Some(need) = read.source.filter(SourceNeed::readable) else {
-            return self.lib_adopt(read.source.map(|n| Staged::Missing(n.r)));
+            self.lib_adopt(read.source.map(|n| Staged::Missing(n.r)));
+            return;
         };
         match self.stream_size(card, store, vol, need) {
             // Gone or changed since the read: it loads absent.
-            None => self.lib_adopt(Some(Staged::Missing(need.r))),
+            None => {
+                self.lib_adopt(Some(Staged::Missing(need.r)));
+            }
             Some(size) => match SourceLoad::start(&mut self.project, need.r.stem(), size) {
                 Some(stream) => {
                     debug_assert!(
@@ -573,6 +583,30 @@ impl UiState {
                 }
             },
         }
+    }
+
+    /// #600's hand-off (`notes::Ask::LibStream`), bank 2's: out of line,
+    /// one copy whatever the store.
+    #[inline(never)]
+    fn lib_streams(
+        &mut self,
+        card: &mut Card,
+        store: &mut dyn Store,
+        vol: VolumeId,
+        need: SourceNeed,
+    ) -> bool {
+        let mut done = false;
+        crate::bank2::ui_door(|u| {
+            u.notes(crate::ui::notes::Ask::LibStream {
+                ui: self,
+                card,
+                store,
+                vol,
+                need,
+                done: &mut done,
+            })
+        });
+        done
     }
 
     /// The size of `need`'s file on `vol`, if it is still the size the read
@@ -634,7 +668,7 @@ impl UiState {
         match (step, source) {
             // Committed as the read costed it: the bytes staged are its file's.
             (StagedStep::Staged(got), Some(need)) if got.r == need.r => {
-                self.lib_adopt(Some(Staged::Read(need)))
+                self.lib_adopt(Some(Staged::Read(need)));
             }
             (StagedStep::Failed(w), _) => self.error(Line::new(w.words())),
             _ => self.error(Line::new(READ_FAILED)),
@@ -646,10 +680,11 @@ impl UiState {
 
     /// The held read's Sound adopted into the Part, then its pages and
     /// one toast; a refusal changes nothing.
-    fn lib_adopt(&mut self, staged: Option<Staged>) {
+    /// False if nothing was adopted (refused, or no read held).
+    pub(super) fn lib_adopt(&mut self, staged: Option<Staged>) -> bool {
         // The held read, taken once: only `adopt` consumes it.
         let Some(PendingLoad { read: r }) = self.lib.load.take() else {
-            return;
+            return false;
         };
         let (part, read) = (r.part(), r.read());
         let was = self.active_chain();
@@ -665,11 +700,16 @@ impl UiState {
                 } else {
                     self.notice(loaded_to(a.slot));
                 }
+                true
             }
             Err(AdoptError::Changed) => {
-                self.error(Line::new(prompt::refused(&ReplaceError::Changed)))
+                self.error(Line::new(prompt::refused(&ReplaceError::Changed)));
+                false
             }
-            Err(AdoptError::Full(f)) => self.refuse(f),
+            Err(AdoptError::Full(f)) => {
+                self.refuse(f);
+                false
+            }
         }
     }
 

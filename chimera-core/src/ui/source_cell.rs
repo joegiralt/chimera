@@ -460,6 +460,9 @@ pub(crate) enum HeadFor {
     Name,
     /// A pick: the name, and ROOT and PERIOD for the Part.
     Pick,
+    /// A library load's source, too big whole: the head, then its load
+    /// on the Part (#600).
+    Load,
 }
 
 /// Card work SOURCE queued: run by `card_work`, one a UI pass, under BUSY.
@@ -759,6 +762,22 @@ impl SourceCell {
             return SourceState::Absent(Absence::ReadFailed);
         }
         base.named(r.and_then(|r| self.heads.get(r.stem())).map(|h| h.name))
+    }
+
+    /// A library load landed `part` on card file `stem` (`size` B) too big
+    /// whole: its head read, then it loads as MIX + PLUS on SOURCE would,
+    /// as its heads (#600).
+    /// A job already queued keeps its slot: then nothing streams.
+    pub fn stream_from_card(&mut self, part: PartId, stem: Stem, size: u32) {
+        if self.job.is_some() {
+            return;
+        }
+        self.job = Some(SourceJob::Head {
+            part,
+            stem,
+            size,
+            to: HeadFor::Load,
+        });
     }
 
     /// SOURCE turned `delta` detents on `part`: a pool row plays at once;

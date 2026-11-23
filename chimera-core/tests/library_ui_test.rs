@@ -107,6 +107,13 @@ impl Store for Counted {
     fn seal(&mut self, v: VolumeId, f: FileName) -> Result<(), StoreError> {
         self.inner.seal(v, f)
     }
+    fn runs(
+        &mut self,
+        v: VolumeId,
+        f: FileName,
+    ) -> Result<chimera_hal::store::FileRuns, chimera_hal::store::RunsError> {
+        self.inner.runs(v, f)
+    }
 }
 
 struct Rig {
@@ -600,6 +607,59 @@ fn a_tape_load_streams_its_source_then_adopts() {
     let pool = r.ui.project().pool();
     assert!(pool.find_source(sref).is_some());
     assert_eq!(r.ui.project().part(P1).sound.source_ref(), Some(sref));
+}
+
+/// #600: a TAPE library Sound whose source is too big for the arena loads
+/// with it absent, then the SOURCE cell streams it as the heads the
+/// Sound's own params place, as MIX + PLUS on SOURCE would.
+#[test]
+fn a_tape_load_too_big_whole_streams_its_source() {
+    use chimera_core::dsp::tape_engine::Way;
+    use chimera_core::stream::registry::StreamRegistry;
+    chimera_core::bank2::DOOR_CELL.open_host_if_linked();
+    let mut r = Rig::new();
+    r.ui.project_mut()
+        .set_streams(Box::leak(Box::new(StreamRegistry::new())));
+    // 150,000 frames at 24 kHz: 225 KB, past the arena's 160 KB.
+    let frames = 150_000;
+    let data = held_plain(&sine(24_000, 100.0, frames), 24_000)[DESC_LEN..].to_vec();
+    let h = SourceHead {
+        sref: SourceRef {
+            crc: source_crc(WholeShape::Plain, 1, &data),
+            frames,
+            rate: 24_000,
+        },
+        shape: Shape::Plain,
+        count: 1,
+        root: 6_000,
+        period_q16: 0,
+        name: SoundName::new("BIG").unwrap(),
+    };
+    Card::new()
+        .run(&mut r.st.inner, |s, rd| write_source(s, rd, &h, &data))
+        .unwrap()
+        .result
+        .unwrap();
+    let mut s = Sound::init(EngineType::Tape);
+    s.pick_source(&h, None);
+    s.params.tape.set_way(Way::One);
+    s.name = SoundName::new("BIG").unwrap();
+    r.library_with(&s);
+    r.start_load();
+    // M7: landed absent, SOURCE reads SOURCE MISSING, BUSY over it while
+    // the head and heads load.
+    r.one_pass();
+    let mut band = chimera_core::ui::fmt::FmtBuf::new();
+    r.ui.source_state().text(&mut band);
+    assert_eq!(band.as_str(), "SOURCE MISSING");
+    assert!(r.ui.src_busy_for_test(), "BUSY while it loads");
+    r.work();
+    assert!(r.toast().starts_with("LOADED TO SLOT "), "{}", r.toast());
+    assert_eq!(r.ui.project().part(P1).sound.source_ref(), Some(h.sref));
+    assert!(
+        r.ui.project().pool().streamed(h.sref),
+        "streamed as its heads"
+    );
 }
 
 #[test]

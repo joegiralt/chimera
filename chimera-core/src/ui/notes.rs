@@ -79,6 +79,17 @@ pub enum Ask<'a> {
     },
     /// `key`: KEY's hint on the frame's status line.
     Key(&'a Frame<'a>, &'a mut Option<Hint>),
+    /// #600: a library TAPE Sound whose source `need` is too big whole:
+    /// if it streams, the Sound lands with it absent and SOURCE streams
+    /// it (`done`).
+    LibStream {
+        ui: &'a mut crate::ui::UiState,
+        card: &'a mut crate::storage::Card,
+        store: &'a mut dyn chimera_hal::store::Store,
+        vol: chimera_hal::store::VolumeId,
+        need: crate::project::SourceNeed,
+        done: &'a mut bool,
+    },
     /// `heads_of`'s hint for `part`'s SOURCE (#599).
     Heads(
         &'a crate::project::Project,
@@ -144,6 +155,14 @@ pub(crate) fn ask_in(a: Ask<'_>) {
         } => loops(on, algo, at, &links),
         Ask::OpsChain { formant, out } => *out = Some(ops_chain(formant)),
         Ask::Key(f, out) => *out = key(f),
+        Ask::LibStream {
+            ui,
+            card,
+            store,
+            vol,
+            need,
+            done,
+        } => *done = lib_stream(ui, card, store, vol, need),
         Ask::Heads(p, part, out) => *out = heads_of(p, part).map(|q| HEADS_HINTS[q.index()]),
         Ask::Stage {
             addr,
@@ -810,6 +829,50 @@ pub fn cell(addr: ParamAddr, s: &Sound) -> Option<&'static str> {
         (BlockRef::Delay, id) => crate::ui::delay_sync::word(id),
         _ => None,
     }
+}
+
+/// `Ask::LibStream` (#600): `need` streams for the library's TAPE Sound,
+/// and its file on `vol` is the size the read costed: the Sound lands with
+/// it absent (`Staged::Streams`) and SOURCE reads its head, then loads it
+/// as MIX + PLUS would.
+fn lib_stream(
+    ui: &mut crate::ui::UiState,
+    card: &mut crate::storage::Card,
+    store: &mut dyn chimera_hal::store::Store,
+    vol: chimera_hal::store::VolumeId,
+    need: crate::project::SourceNeed,
+) -> bool {
+    let Some(part) = ui.lib.load.as_ref().map(|l| l.read.part()) else {
+        return false;
+    };
+    if !ui.project.library_streams_in(need) {
+        return false;
+    }
+    // Bank 1's listing: a closure of this module's behind `list`'s `dyn`
+    // would leave its vtable in bank 1's data.
+    let stem = need.r.stem();
+    let ran = card.run(store, |s, r| {
+        let size = (r.volume() == vol)
+            .then(|| crate::storage::TapeList::list(s, r))
+            .transpose()?
+            .and_then(|l| l.files().iter().find(|f| f.0 == stem).map(|f| f.1));
+        Ok::<_, chimera_hal::store::StoreError>(size)
+    });
+    let Some(size) = ran.ok().and_then(|o| {
+        ui.saw(Some(o.event));
+        o.result.ok().flatten()
+    }) else {
+        return false;
+    };
+    if crate::storage::held_for_file_len(size).is_none_or(|h| h as usize != need.held) {
+        return false;
+    }
+    // Adopted, or refused and said so: either way the load is done. A
+    // queued SOURCE job keeps its slot: the source stays absent (M5).
+    if ui.lib_adopt(Some(crate::project::Staged::Streams(need.r))) {
+        ui.src.stream_from_card(part, need.r.stem(), size);
+    }
+    true
 }
 
 #[cfg(test)]

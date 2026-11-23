@@ -1587,6 +1587,29 @@ fn stream_rows_follow_their_card() {
     );
 }
 
+/// M5 (#1087's review): the library's stream hand-off never replaces a
+/// SOURCE job already queued: SOURCE's own listing still runs and lands
+/// its Part on the card row.
+#[test]
+fn a_library_hand_off_keeps_a_queued_source_job() {
+    use chimera_core::project::Project;
+    use chimera_core::ui::source_cell::SourceCell;
+    let b = bed(7);
+    let mut rig = Rig::new(std::slice::from_ref(&b));
+    let (mut p, _) = Project::boxed();
+    let p2 = PartId::ALL[1];
+    let mut cell = SourceCell::NEW;
+    cell.turn(&mut p, p2, 1);
+    assert!(cell.busy(), "SOURCE's listing queued");
+    cell.stream_from_card(P1, b.0.sref.stem(), 1);
+    cell.work(&mut rig.card, &mut rig.s, &mut p);
+    let st = cell.state(p2, SourceState::None, &p);
+    assert!(
+        matches!(st, SourceState::Card { .. }),
+        "the listing ran: {st:?}"
+    );
+}
+
 /// The same card mounts again: its rows stay.
 #[test]
 fn same_card_keeps_its_rows() {

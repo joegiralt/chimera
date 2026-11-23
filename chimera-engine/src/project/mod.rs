@@ -63,8 +63,8 @@ pub use store::{
     project_file, save_project, save_project_as,
 };
 pub use streamed::{
-    LoadDoor, LoadKind, NotFound, Refusal, StreamFail, StreamLoad, StreamStep, StreamedPass,
-    load_kind,
+    LoadAsk, LoadDoor, LoadKind, NotFound, Refusal, StreamFail, StreamLoad, StreamStep,
+    StreamedPass, load_kind,
 };
 pub use swap::{GateStep, LOAD_ACK_TIMEOUT_MS, LOAD_LINK, LoadGate, LoadLink, Settled, Swap};
 pub use template::{NEW_PARTS, TemplateCrc};

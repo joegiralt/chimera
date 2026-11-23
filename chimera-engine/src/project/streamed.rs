@@ -100,6 +100,28 @@ pub struct LoadDoor {
     ask: fn(LoadAsk<'_>),
 }
 
+/// What a source's heads cost the arena, in granules (#600): never 0,
+/// and any that fits the arena fits the word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeadsCost(core::num::NonZeroU16);
+
+const _: () = assert!(super::arena::ARENA_BYTES / super::arena::GRANULE <= u16::MAX as usize);
+
+impl HeadsCost {
+    /// `c`, if it fits the arena at all.
+    pub fn of(c: super::arena::Cost) -> Option<HeadsCost> {
+        let g = c.bytes() as usize / super::arena::GRANULE;
+        (c.bytes() as usize <= super::arena::ARENA_BYTES)
+            .then(|| core::num::NonZeroU16::new(g as u16))
+            .flatten()
+            .map(HeadsCost)
+    }
+
+    pub fn cost(self) -> super::arena::Cost {
+        super::arena::Cost::of(usize::from(self.0.get()) * super::arena::GRANULE)
+    }
+}
+
 /// `LoadDoor`'s other questions, one entry for all.
 pub enum LoadAsk<'a> {
     /// A project load's streamed pass (`load::stream_sources`).
@@ -115,6 +137,22 @@ pub enum LoadAsk<'a> {
         p: &'a mut Project,
         v: VolumeId,
         out: &'a mut bool,
+    },
+    /// #600: pass 1's Part Sound `stage`: if TAPE and the first on its
+    /// source (one of `refs`), its heads' cost into `heads`, bytes (0:
+    /// it can't stream).
+    PartHeads {
+        stage: &'a crate::preset::Sound,
+        refs: &'a [SourceRef],
+        heads: &'a mut [Option<HeadsCost>],
+    },
+    /// #600: the plan takes the heads of each Part source (`part_used`)
+    /// not taken whole or missing (`taken`) out of `left`.
+    PlanHeads {
+        part_used: u32,
+        taken: u32,
+        heads: &'a [Option<HeadsCost>],
+        left: &'a mut u32,
     },
 }
 
@@ -175,6 +213,12 @@ impl LoadDoor {
             out: &mut out,
         });
         out
+    }
+
+    #[inline(always)]
+    #[optimize(size)]
+    pub(crate) fn ask(&self, a: LoadAsk<'_>) {
+        (self.ask)(a)
     }
 
     /// `f` on the door: bank 2's through the door with `bank2`, `None`
