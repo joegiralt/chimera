@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ALGO's MORPH is smooth, never steppy (owner UAT 2026-10-08, #417;
 //! ADR 0111). Turns go through the real path: the panel's acceleration,
 //! `Block::nudge`, a publish, the Instrument. What is measured is the MORPH

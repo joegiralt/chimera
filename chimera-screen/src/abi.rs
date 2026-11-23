@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The wasm exports: plain `extern "C"`, one mirror per engine and their
 //! buffers. JS writes a batch's addresses and values through `text_ptr`
 //! and `vals_ptr`, and reads the pixels and rectangle through `buf_ptr`

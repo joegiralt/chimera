@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! START and END on TAPE (#698 finding 6): a turn moves them in time, not
 //! in 128ths of the source, and MIX + turn snaps to the next onset the way
 //! the turn goes (an MPC's and Octatrack's "snap to transient" while

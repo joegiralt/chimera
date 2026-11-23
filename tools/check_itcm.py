@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """ITCM holds only its listed CPU-only residents (ADR 0266, 0286; standard
 library only).
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![no_main]
 
 // Any bytes: an error or a finite source at a real rate, never a panic; the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI CONFIG › CONTROL (ADR 0254): MIXER's and SEQUENCER's fixed maps,
 //! heard only where no Part's own channel takes theirs, and the settings
 //! page that sets them. The charts are `docs/guide/MIDI.md`'s.

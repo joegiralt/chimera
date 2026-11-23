@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Stream admission (slice 1 § 5): the card's byte budget.
 
 use chimera_engine::MidiNote;

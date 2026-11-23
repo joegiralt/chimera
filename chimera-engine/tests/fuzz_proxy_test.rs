@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FUZZ through the door (ADR 0157): open, `Fuzz::play` crosses to bank 2's
 //! `Fuzz::run` and returns its every bit; closed, the block stays dry and
 //! the pedal's state waits. The host builds its own door (`open_host`); the

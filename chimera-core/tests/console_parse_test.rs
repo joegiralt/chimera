@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The console's command table and line parser (spec § Protocol).
 
 use chimera_core::console::*;

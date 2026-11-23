@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! KEY's block (ADR 0303), bank 2's: an S4 group (`bank2.x`,
 //! `*8comp_key4kern*`), reached through `KeyDoor`. `run` is the
 //! compressor's own loop (`MasterComp::process_keyed`, inlined here) with

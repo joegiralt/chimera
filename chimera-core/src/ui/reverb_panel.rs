@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each reverb TYPE's panel as `const` data (reverb TYPEs spec § Pages,
 //! the pattern ADR 0037's `filter_panel` set): REV's knobs 1–4 and
 //! REV › MORE's six, each slot's word, value text and encoder step under

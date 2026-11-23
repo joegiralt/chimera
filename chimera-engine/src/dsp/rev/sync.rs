@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tempo sync (reverb TYPEs spec § Tempo sync): the tempo ORBIT's clock
 //! hands the reverb, the note values a synced knob walks, and the fold
 //! that keeps a synced time inside its TYPE's range.

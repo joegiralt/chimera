@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `just factory-sounds`: the public factory Sounds (spec § 3, ADR 0134)
 //! and the demo projects (spec § 5) from `tools/factory-sounds/` into
 //! `target/factory-sounds/public/`.

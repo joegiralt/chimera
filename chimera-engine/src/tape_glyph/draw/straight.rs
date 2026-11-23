@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WALK's glyph, STRAIGHT (ADR 0209): runners on the home straight, seen
 //! from the side, drawn for the glyph's real size (64 × 48 on the unit's
 //! screen): at most two, each a head and 2 px limbs, one ink a runner,

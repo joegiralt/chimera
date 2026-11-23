@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `chimera-import tx` (showcase spec § 6; importer spec § 6's TX81Z
 //! rows): a TX81Z bank's voices to private text Sources, one per voice,
 //! plus the import report. Pure: `to_text` maps a voice; `import` is the
@@ -104,7 +107,7 @@ const OPS: [&str; 6] = ["OP_A", "OP_B", "OP_C", "OP_D", "OP_E", "OP_F"];
 
 /// LFO speed, LFS 0-99 → Hz: PROVISIONAL, an exponential from 0.06 to
 /// 47 Hz standing in for the TX81Z's own SPEED → Hz chart (importer spec
-/// § 6.6), which replaces it once entered from the owner's manual.
+/// § 6.6), which replaces it once entered from the manual.
 pub fn lfo_hz(lfs: u8) -> f32 {
     0.06 * (47.0f32 / 0.06).powf(f32::from(lfs) / 99.0)
 }
@@ -126,7 +129,7 @@ fn note_hz(n: f32) -> f32 {
 }
 
 /// A fixed operator's Hz: FIXRG's octave of 16 Hz steps of CRS (top four
-/// bits) plus FINE, from the owner's manual's chart (255 Hz at range 0
+/// bits) plus FINE, from the manual's chart (255 Hz at range 0
 /// up to 32 640 Hz at 7), 8 Hz where both are 0.
 fn fixed_hz(fixrg: u8, crs: u8, fine: u8) -> f32 {
     let steps = (16 * u32::from(crs >> 2) + u32::from(fine)).max(8);

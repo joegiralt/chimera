@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Learn senses the kind (spec §§ 6.3, 8.1). The first control heard on
 //! the armed Part's channel writes the focused cell's entry as `Absolute`
 //! (`Jump`), and learn stays open: each message of that control is a sample

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The PIT page (#162): PITCH on A, FINE on B, STEAL on C and its GLIDE
 //! TIME on D (#254), SNAP on E (TAPE Task 12b), F free.
 

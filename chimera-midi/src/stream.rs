@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Layer 1: bytes to MIDI events. Pure, no allocation, never panics.
 
 use crate::value::{Bend, Channel, Key, U7, U14, Velocity};

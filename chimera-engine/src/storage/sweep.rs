@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lost-cluster sweep's trigger (ADR 0094): a boot sweeps only when
 //! the card's mark owes it (an unclean change, fewer than `DOUBT_HALT`
 //! doubting boots in a row, or a sweep asked for), and a sweep that

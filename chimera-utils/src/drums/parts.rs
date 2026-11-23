@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The engine's own parts as the DRUM prototypes play them: VA's NOISE and
 //! oscillator, the filter's TYPEs, ALGO's kernel, MODAL's bank, the FX
 //! slot's curves. Thin wrappers only; the DSP is chimera-engine's.

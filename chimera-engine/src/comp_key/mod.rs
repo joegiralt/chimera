@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The master compressor's KEY (ADR 0303): what its detector listens to.
 //! FULL is the compressor as it was (`MasterComp::process`, bank 1's, bit
 //! for bit). LOW, HIGH and HIT filter the detector's copy of the mix and

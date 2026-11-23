@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pure CC core (MIDI map spec §§ 5-6): the inter-arrival ramp, jitter,
 //! stepped binning with hysteresis and the round-robin MOVES budget.
 

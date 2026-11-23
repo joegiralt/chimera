@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What ORBIT's pages draw: RHYTHM's pattern unrolled, VOICE's gates as
 //! bars, NOTES' chips, CHRD's segments as chips over the loop's bars, and
 //! the CUSTOM circle; the text of ORBIT's

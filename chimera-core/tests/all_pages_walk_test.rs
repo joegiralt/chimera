@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! All-pages walk: every page the UI can show, driven hard, rendered both
 //! ways. On every frame the dirty-region render must equal a full render,
 //! and neither may draw outside 240×320.

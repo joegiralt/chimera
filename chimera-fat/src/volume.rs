@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The MBR, the partition boot sector and the volume's `Layout`: where the
 //! FATs, the root and the clusters are, and FAT entry reads and writes.
 //! Pure; never panics.

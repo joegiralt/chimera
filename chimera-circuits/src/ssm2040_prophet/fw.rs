@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The firmware-shaped models: today's 2040 structure (TPT stages, the OTA
 //! on the stage's linear error, the loop solved linearly in one step) on
 //! the circuit's own numbers, in f32. `Fast` at 2× with the Padé tanh is

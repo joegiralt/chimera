@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter picture's resonance peak against the engine's own response
 //! (#574): one small impulse through each kind, its FFT's peak above the
 //! pass band, against the drawn curve's peak above its own pass band.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `EngineSlot` dispatch and the VCA/activity table (spec §3), one test per row:
 //!
 //! | Engine | Amp env on VCA | Voice active while     |

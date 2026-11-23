@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI out's pass (spec §§ 7, 8.4, 9-10): with MIDI CONFIG › ECHO on, the
 //! echo plan's identity replies and value echo, then PARAM OUT's NRPNs
 //! (ADR 0258) and a dump asked for (ADR 0301), into DIN's ring and USB's,

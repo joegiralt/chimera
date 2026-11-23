@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bench-only phase stamps: a cycle clock the target hands in, a stamp
 //! per phase boundary, and accumulators for costs a block repeats.
 

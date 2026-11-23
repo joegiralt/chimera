@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The gates (spec § 4): pure measurements over sample buffers, each
 //! with its bar and its verdict.
 
@@ -57,7 +60,7 @@ pub const ALIAS_NOTES: [u8; 2] = [84, 96];
 pub enum Verdict {
     Pass,
     Fail,
-    /// Not measured against the bar, and why: the owner's ear decides.
+    /// Not measured against the bar, and why: a listening test decides.
     Exempt(String),
 }
 

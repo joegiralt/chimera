@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Streamed loads' bank-1 side (ADR 0137): open, `heads_for` and
 //! `load_kind` reach bank 2's placement through the door's `LoadDoor`;
 //! closed, nothing is placed, so a source too big for the arena is

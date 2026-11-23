@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_engine::storage::twelve::pack12;
 use chimera_engine::stream::layout::{CHUNK_BYTES, CHUNK_FRAMES, ChunkIdx};
 use chimera_engine::stream::ring::{AudioTurn, CardSide, Guard, Rings, ThirdSlots};

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What SMART EQ is doing (ADR 0296), planned for a page's viz band: on
 //! MIXER › PRT › EQ, beside each Part's LEVEL bar and meter (ADR 0293),
 //! its four cut bands, LOW to HIGH, each hanging down from its top by its

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The board's bank-2 driver names bank 2's own registers only. It lives
 //! here, not in chimera-board (a thumb crate with no host tests), and reads
 //! the driver's source as text.

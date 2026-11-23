@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `Rx`: `put`'s data a packet a fill (a USB hold), handed out a byte at a
 //! time (ADR 0222).
 

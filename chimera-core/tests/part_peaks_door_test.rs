@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Parts' meters through bank 2's door (ADR 0293): open, a played
 //! Part reads; closed, nothing is measured (`part_meter_test` holds that
 //! measuring never changes a sample).

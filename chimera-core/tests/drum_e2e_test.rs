@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM end to end (slice 1 Task 9), as the desktop runs it: a `UiState`
 //! loads DRUM INIT on Part 1 from the browser, publishes each pass to a
 //! real `Instrument` (project, UI, kits), and notes 0–11 on Part 1's

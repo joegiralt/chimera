@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Digitone-style voice allocation (instrument-core spec § Voice allocation).
 
 use chimera_core::MidiNote;
@@ -513,7 +516,7 @@ fn a_note_on_takes_the_dying_voice_shed_first() {
     assert_eq!(voice(on(&mut a, 1, Poly, 80)), first);
 }
 
-/// The owner's UAT (2026-09-30): a re-struck key re-plucks its own string,
+/// UAT (2026-09-30): a re-struck key re-plucks its own string,
 /// held or ringing, as a guitarist's does; another Part's same note takes
 /// a voice of its own.
 #[test]

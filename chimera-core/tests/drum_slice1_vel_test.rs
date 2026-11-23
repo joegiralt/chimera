@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! At VEL 1 a pad's law is slice 1's own (v / 127, the kernel's level,
 //! before the filter; ADR 0269): the slice-1 fixture with every pad on
 //! VEL 1 renders slice 1's golden, from before the VEL ruling re-recorded

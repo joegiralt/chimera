@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::name::Name;
 use chimera_core::storage::{
     CRITICAL, Crc32, Event, FileError, FileKind, Framer, Generation, HEADER_LEN, Header,

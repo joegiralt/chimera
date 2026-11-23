@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The SEM labs' stimuli (`sem-lab` def4f753, reused by the circuit lab):
 //! the listening set (bass, brass stab at LP and BP, pad, the MODE sweep,
 //! the cutoff sweep), the RES sweep, and the probes' sine, burst and

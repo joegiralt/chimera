@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """factory_zip packs the whole card set, or refuses (standard library only)."""
 
 import importlib.util

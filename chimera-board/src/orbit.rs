@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's hooks in the shell, its one seam: the runner on the audio
 //! thread, and its view, the beat LED and its publish on the UI loop.
 //! Without the `orbit` feature each is a no-op twin with the same calls,

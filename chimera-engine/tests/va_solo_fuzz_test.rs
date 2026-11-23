@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's saw solo (ADR 0283) fuzzed (`va_fuzz`): every scene plays twice
 //! in one tree, the solos taken where they may and then every plain block
 //! forced to its pair (`ForcePairs`), and each block's bits must match.

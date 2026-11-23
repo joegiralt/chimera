@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STRETCH's one door onto the grain core (`dsp::grain::core`, #749): the
 //! source as a `GrainSource`, and the cloud, the core's `Engine` with what
 //! STRETCH reads of it that the core keeps to itself. Nothing else in

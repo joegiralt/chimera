@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # The SMEAR A/B (reverb TYPEs spec § A/B): QUAD at its defaults, MIX 1, the
 # dry send plus the return, on the kick, snare, strings, pad and an IDM
 # phrase, into target/ab/<tag>/.

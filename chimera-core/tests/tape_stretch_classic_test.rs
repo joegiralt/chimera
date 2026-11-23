@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE STRETCH CLASSIC (ADR 0204; spec § 2 STRETCH, Why period-locking): two grains read
 //! at the note's pitch, spliced every D-TIME/2 under one complementary fade
 //! while a time pointer runs at MOTION's speed. Precedent: Akai S950

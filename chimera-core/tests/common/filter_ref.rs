@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter types' references (spec § Tests): CLEAN's topology in f64 with
 //! exact divides, the per-sample `g` a block's ramp gives, and level measures.
 

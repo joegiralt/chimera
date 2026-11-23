@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMEAR's depth and RATE's law (ADR 0121): at SMEAR 1 every TYPE's held
 //! tone moves by a chorus's few cents at the default RATE and by no more
 //! than 15 at RATE's top; SMEAR 0 sounds the same at any RATE.

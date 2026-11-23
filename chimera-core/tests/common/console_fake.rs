@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The console tests' fake unit, its sink and `ask`.
 #![allow(dead_code)]
 

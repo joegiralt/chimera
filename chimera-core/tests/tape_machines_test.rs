@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's machines (spec § 2 Machines, ADR 0093, #369): WALK (ONE, LOOP,
 //! PING), TRON, STRETCH, TRANSWAVE, SCRUB; END before START plays
 //! reversed; SLICE, WOW WARBLE, PIT's SNAP and SCRUB's jog. Precedent:

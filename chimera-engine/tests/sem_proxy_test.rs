@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SEM through the door (ADR 0192): open, the block crosses to bank 2's
 //! kernel and is heard, the same as a build without bank 2 would play it;
 //! closed, the block stays dry. The host builds its own door (`open_host`);

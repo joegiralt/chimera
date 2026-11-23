@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › TUNING's card side in bank 1 (ADR 0259, under ADR 0251:
 //! ORBIT's bank 2 is full): a TUNING turn past MTS through the card's
 //! Scala files in the order of the names they show, the file a Part names

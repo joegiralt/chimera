@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MPE (#845, ADR 0252): a zone's member channels play the Parts on its
 //! master channel, each note's bend, pressure and timbre (CC 74) its own,
 //! glided; the master's bend, pressure and timbre reach the whole zone.

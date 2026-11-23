@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MANAGE PROJECTS' commands, and what each does to the project under the
 //! bar, loaded or not: one table, `Command::on`, that both the dimming and
 //! the run read.

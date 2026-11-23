@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use cortex_m::peripheral::scb::SystemHandler;
 use cortex_m::peripheral::{NVIC, SCB};
 use stm32h7xx_hal::pac;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `status`: firmware, project, Part, where the UI is and bank 2.
 
 use core::fmt::{self, Write};

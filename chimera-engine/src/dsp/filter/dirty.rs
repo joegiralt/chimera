@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DIRTY: the Chamberlin state-variable filter (spec § 4), run twice a
 //! sample with the input held. Cheap, digital and edgy near the top: no
 //! divide, no saturator, only hard clamps.

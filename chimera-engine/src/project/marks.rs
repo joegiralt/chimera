@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The marks, derived and never stored (projects spec § Derived marks): a
 //! Part's `*` and `◦` from its Sound, Origin and slot; the project's `*`
 //! from its CRC. And the Part actions, offered only where they apply.

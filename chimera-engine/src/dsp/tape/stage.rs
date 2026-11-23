@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The master tape stage's DSP, compiled only with the `master-tape`
 //! feature (ADR 0055).
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Envelope A (filter-routing spec § Envelope A, § Tests "Envelope A").
 
 use chimera_core::dsp::envelope::{EnvMods, Envelope};

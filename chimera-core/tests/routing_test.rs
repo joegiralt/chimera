@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The matrix's eight sources (filter-routing spec § 2).
 mod common;
 use common::Rig;

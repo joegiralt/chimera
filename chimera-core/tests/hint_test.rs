@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Gesture hints (ADR 0086): each MIX gesture's hint in the focus band of
 //! the cell it acts on, there while that cell is the touched one and gone
 //! when another is; the matrix's by its cursor's route, the browser's by

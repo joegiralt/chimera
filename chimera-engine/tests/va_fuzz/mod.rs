@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's fuzzed scenes (ADR 0283): seeded draws of every MODE, WAVE and
 //! SHAPE (moving apart and together, on the saw's anchor, a ulp either
 //! side, −0, NaN, ±inf, huge, out of range), STABILITY, BLEND, SUB,

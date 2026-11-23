@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `VarOsc`'s modulated read phase (the MOD path, ADR 0158): the read
 //! phase beside the clean clock, FM through zero, backward reads, the
 //! reversing turn and `settle`. Tolerances per the VA MODEs ruling R1.

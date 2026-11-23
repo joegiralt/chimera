@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's kernels at their knobs' extremes (plan Review Focus 1): every
 //! slice-1 machine at its defaults, all knobs 0, all 127, and each knob
 //! alone at 0 and 127, as tuned and transposed to both ends of the keys

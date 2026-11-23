@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SCRUB is playable (ADR 0205): LENGTH is a time, its default 70 ms so
 //! FINGER moves from the first turn; KEY POSITION places the finger and
 //! plays at ROOT; the jog's speed reads steady, and no input path steps

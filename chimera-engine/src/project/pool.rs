@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The project's Sounds: 128 slots of encoded Sounds in the arena (ADR
 //! 0087), each with a generation that every store and clear moves, so a
 //! Part can tell its slot was replaced. A Part decodes its Sound into its

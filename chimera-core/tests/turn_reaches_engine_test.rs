@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A hand's turn reaches the sound on every Part engine, as the unit runs
 //! it: a `UiState` fed encoder frames, published each pass to a real
 //! `Instrument` (the board's `publish`), with bank 2's door open where the

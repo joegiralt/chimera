@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The SETTINGS tree: rows with a kind, one static table. A `Later` row is in the
 //! table, so a feature is built out by replacing its `Later(issue(n))`
 //! kind and navigation stays as it is.

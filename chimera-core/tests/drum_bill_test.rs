@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM slice 2 (ADR 0269): a DRUM hit is billed for its kit's pads'
 //! filters and mods, not its Sound's filter.
 //!

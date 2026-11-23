@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The one golden check every harness uses (#108). A case matches its row
 //! in the harness's `GOLDENS` table bit-for-bit; a case with no row, or a
 //! row with no case, fails too. Re-record only for an intended change,

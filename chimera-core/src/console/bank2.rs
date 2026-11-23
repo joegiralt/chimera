@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `bank2` and `bank2 install` (ADR 0137): bank 2's state, and the staged
 //! `/CHIMERA/SYSTEM/BANK2.BK2` written into it. The board runs the install
 //! before the answer starts; what it did is a `Bank2Answer`. The boot's

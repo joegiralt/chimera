@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's bank-1 proxy (ADR 0137): open, it forwards every call through the
 //! door's `TapeDoor` and plays bit for bit as `TapeDeck`; closed, it is
 //! `off`'s silent engine. The host builds its own door (`open_host`). One

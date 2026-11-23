@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FB's kernels behind bank 2's door (ADR 0190, as FUZZ's, ADR 0157).
 //!
 //! Each TYPE's FB loop is its `moving` loop with every sample's `g` through

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Slot bindings (spec §5, § Testing "Bindings").
 
 use chimera_core::addr::{BlockRef, Op, ParamAddr};

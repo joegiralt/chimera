@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The three fixes the first renders' measurements flagged (design note,
 //! "Ship list"): each rendered `_before` (the 2cacaeae prototype) and
 //! `_after`, with the numbers that say what moved.

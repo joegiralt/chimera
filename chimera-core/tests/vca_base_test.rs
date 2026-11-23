@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! AMP's BASE (ADR 0292): the stored VCA value is where the sum of the
 //! routes into VCA starts. 0, every saved Sound's, is today's VCA bit for
 //! bit (`vca_lpg_test`'s and the goldens' hashes hold it); with no route

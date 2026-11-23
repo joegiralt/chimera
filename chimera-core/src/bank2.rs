@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2 as the boot judged it (ADR 0137): `status`'s line, ABOUT's label.
 
 use core::fmt::{self, Write};

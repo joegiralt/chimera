@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Loading while playing (projects spec § Loading while playing, ADR
 //! 0046): a load epoch fades every voice through the old snapshot, the
 //! audio acks, and the gate reopens on the snapshot tagged with the epoch.

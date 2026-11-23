@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI in's bank-1 side (spec § 7.1): `midi_in::feed` and `idle` reach
 //! the pipe through the door's `MidiDoor`; closed, MIDI in is deaf, notes
 //! included (spec § 13), and nothing panics. The host builds its own door

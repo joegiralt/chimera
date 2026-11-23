@@ -1,4 +1,7 @@
-//! WALK as little people running a track: the owner's mockups
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! WALK as little people running a track: the approved mockups
 //! (`.superpowers/ledgers/walk-glyph/`). Runners stand on the track,
 //! side on, the way they run; DIRECTION sets which way and where, POSITION
 //! and LENGTH light the stretch they run, DRIFT jitters their spacing and

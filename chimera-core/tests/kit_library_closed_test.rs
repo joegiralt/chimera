@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A DRUM Part's kit with bank 2's door closed (ADR 0305, `KitDoor`),
 //! under `bank2` on a host. Closed is a value its callers handle: a DRUM
 //! Part's library save is refused whole (its file would hold no kit),

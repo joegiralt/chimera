@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_theory::{
     Chord, Degree, Interval, Key, Note, PcSet, PitchClass, Quality, Scale, SnapTo, Stack,
     TABLE_BYTES, snap,

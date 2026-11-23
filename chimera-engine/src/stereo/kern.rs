@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The stereo's blocks (ADR 0294), bank 2's: an S4 group (`bank2.x`,
 //! `*6stereo4kern*`), reached through `StereoDoor`.
 

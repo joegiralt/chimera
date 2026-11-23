@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! #698's musical findings, one regression each where a voice shows it: one
 //! release a note (3), ONE's hit (4), equal-power fades (9), AGE from the
 //! source's band (10) and VEL → START (11). The streamed ones (1, 2, 5,

@@ -138,7 +138,7 @@ These are the failure modes the spec implies but no spec'd test exercises, most 
   - the fast clock is 12.5 MHz (100 / 8) or 25 MHz (100 / 4), chosen at the Task 2 STOP.
 
   Precedent: the stock firmware runs SPI1, SPI2 and USART1 from PLL2 (M 1, N 40, P 5 → 64 MHz). Nothing else in Chimera uses PLL2 (SAI is on PLL3; the ADC, PLL2_P's only other reset consumer, is unused). The rejected options: HSI (display 32 MHz), PLL1_Q at 100 MHz (not an integer divide of rev V's 960 MHz VCO), PLL3 (audio's), init above 400 kHz, bit-banging.
-- **CS and card-detect: unconfirmed.** Nothing in the repo's docs or code gives them. The only source is `.claude/projects/-HOME-user-dev-chimera/memory/reference_preenfm3_firmware.md` (transcribed from Ixox/preenfm3), which gives **CS = PE12**, AF5 on SPI2, and no card-detect line.
+- **CS and card-detect: unconfirmed.** Nothing in the repo's docs or code gives them. The only source is an agent memory note (since removed from the repo) (transcribed from Ixox/preenfm3), which gives **CS = PE12**, AF5 on SPI2, and no card-detect line.
   - The plan builds on PE12 and on "no card-detect": `Absent` is inferred from an acquire failure (`StoreError::NoCard`).
   - The owner confirms both at the Task 2 STOP, against `MX_SPI2_Init` and `MX_GPIO_Init` in the stock firmware's CubeMX `main.c` (github.com/Ixox/preenfm3), or the schematic. Until then no ADR records them as fact. A card-detect line, if there is one, is filed as a follow-up issue, not built here.
 - **SPI mode.** MODE 0, the SD standard. If the card doesn't acquire, try MODE 3 (SD's other SPI mode), then MODE 1 (the stock firmware's CPHA = 2EDGE). The probe tries all three in that order.

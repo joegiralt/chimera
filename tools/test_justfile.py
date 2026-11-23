@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """The Justfile never makes a .bin of both banks (standard library only)."""
 
 import pathlib

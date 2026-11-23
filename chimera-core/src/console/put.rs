@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ls` and `put`: files onto a card that can't leave the unit.
 //! `put` takes a whole project file and saves it the way the unit saves
 //! (ADR 0045): to the side a load doesn't keep, with the next generation

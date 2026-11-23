@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! N5: a whole 1 MiB bank-2 image `put` at 16 KiB/s lands inside
 //! `PUT_DEADLINE_MS`, on a host clock that runs as the bytes arrive.
 #![cfg(feature = "card-put")]

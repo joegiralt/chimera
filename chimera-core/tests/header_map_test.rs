@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Direction A header and map (UI refresh spec § Shared components 1, 5).
 
 mod screen;

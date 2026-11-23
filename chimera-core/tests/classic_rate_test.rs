@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CLASSIC LFO RATE's turn (ADR 0279, #1005): a twelfth of an octave a
 //! tick, so the slow end has room; what is stored is unchanged.
 

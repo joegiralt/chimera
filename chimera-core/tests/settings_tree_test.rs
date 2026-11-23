@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::ui::block_registry::ALL_CHAINS;
 use chimera_core::ui::settings::leaves::{CHANNELS, OUTPUTS};
 use chimera_core::ui::settings::{Kind, ROOT, Row, row_at, rows};

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ONESHOT's slices (spec § 2 Machines): 16 exact, equal slices of the
 //! window, as CHOMPI's TEMPO cuts a loop (ideas only, ADR 0093). Under
 //! NOTE the key picks one (C4 is slice 1, wrapping every 16), under 1–16

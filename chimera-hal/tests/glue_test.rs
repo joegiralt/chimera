@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The display and controls glue both targets share (#97).
 
 use chimera_hal::{ButtonState, FB_SIZE, SCREEN_WIDTH, draw_into_fb};

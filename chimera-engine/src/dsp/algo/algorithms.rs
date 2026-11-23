@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 32 algorithms (spec § Algorithms), as data. Operators are 1–6 in the
 //! tables; higher numbers modulate lower ones.
 

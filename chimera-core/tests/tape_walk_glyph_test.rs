@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WALK's footsteps glyph (ADR 0203): DIRECTION lays them, DRIFT scatters
 //! them, FADE fades the last, TRON marks its tape's end; quantised inputs,
 //! no frame term. `GLYPH_OUT=dir cargo test -p chimera-core --features

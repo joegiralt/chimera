@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STRETCH (ADR 0204): two TYPEs. CLASSIC (`classic`) is the Akai S950's
 //! two-grain splice, MONO or POLY, as it always was: its notes render bit
 //! for bit as before. GRAIN (`grain`) plays the source over LENGTH seconds

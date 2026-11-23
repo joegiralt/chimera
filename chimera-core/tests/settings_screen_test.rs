@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS screens: the leaf's bands, the legends, the breadcrumb, the
 //! marks and the list's scroll.
 

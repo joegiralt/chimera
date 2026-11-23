@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ's viz band, bank 1's side (ADR 0296): what the band shows,
 //! read from the audio's live cuts (`SMART_VIEW`) and the Parts' roles,
 //! its dirty key, and the one call through the UI door that paints it

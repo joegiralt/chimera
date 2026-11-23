@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! GRAIN and HF share (ADR 0095, ROOM as built: GRAIN). GRAIN is a
 //! noise-power ratio: the notched noise burst's notch cores against their
 //! flanks. An LTI reverb leaves the notches empty; arithmetic grain (or any

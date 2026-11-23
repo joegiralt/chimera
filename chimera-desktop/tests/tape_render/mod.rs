@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A TAPE Sound through the whole instrument, raw levels (ab-method: no
 //! normalisation), for the PLAY tests and the listening page.
 #![allow(dead_code)]

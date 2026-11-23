@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Target limits (ADR 0013): the budgets derived from the chip's constants.
 
 use chimera_core::hw::{self, BlockBudget, Cost, Cycles, SampleBudget};

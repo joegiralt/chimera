@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SD card in SPI mode on SPI2, polled (spec § Card): SCK PA9, MISO PB14,
 //! MOSI PB15, CS PE12. Every transaction checks the operation's deadline.
 //! An acquire first asks whether a card is there (#186), so an empty slot

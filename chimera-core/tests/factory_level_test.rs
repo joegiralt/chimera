@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Factory Sounds sound as they did before ADR 0049: its norm moves them,
 //! and each one's data compensates (carrier LEVELs in whole steps ahead of
 //! the SVF, then VOLUME; SQR BASS's LEVEL and DRIVE). The reference is

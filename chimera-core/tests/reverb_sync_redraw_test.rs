@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A synced reverb cell redraws when the clock moves (reverb TYPEs spec §
 //! Tempo sync): its text reads the tempo and fold the audio thread
 //! publishes, outside the cell's own value. Its own binary: it publishes

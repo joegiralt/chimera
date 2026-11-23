@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Card files: framing, records and the CRC trailer (ADR 0045).
 
 mod block_codec;

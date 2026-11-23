@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FLT shows the set cutoff and RES, and modulation as a separate ghost
 //! (#575): the CUTOFF number and the solid curve never follow it.
 

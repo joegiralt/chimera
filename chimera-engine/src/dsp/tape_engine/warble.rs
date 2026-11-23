@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WOW WARBLE (spec § 2 Machines): CHOMPI's Warble, ideas only (ADR 0093).
 //! A random target within ±33 cents at TAPE 1, redrawn every 0.1–0.6 s,
 //! glided to by a one-pole of 0.2 s, once a block. It replaces the

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The formant operators' render fixtures and measures (spec § 3–5).
 
 use super::filter_ref::fft;

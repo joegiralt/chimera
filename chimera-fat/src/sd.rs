@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Is a card in the slot? Asked before an acquire, so an empty slot costs
 //! a few CMD0s, not the acquire deadline (#186). Pure: the shell sends
 //! `CMD0` with CS low and hands over the `NCR_BYTES` it clocks back.

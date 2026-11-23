@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Privacy guard: no TX81Z port, bank or private Source ever in the index.
 
 use chimera_desktop::privacy::offences;

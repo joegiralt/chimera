@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `just factory-tapes`: the TAPE factory set (spec § 7) into
 //! `target/tapes-v1/`. `factory-tapes qa [--wav <dir>]` plays every source
 //! through every machine (LOOP and STRETCH also with END before START,
@@ -177,7 +180,7 @@ fn run_qa(wav: Option<&String>) -> Result<bool, String> {
     Ok(pass)
 }
 
-/// The owner's short listening set (A/B listening stimuli): each machine
+/// The short listening set (A/B listening stimuli): each machine
 /// on two factory Sounds, `(Sound, MODEL in its place, semitones of each
 /// take from the root, 1.5 s apart, and a param ramped over the render)`.
 type Demo = (

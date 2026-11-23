@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `shot`: the framebuffer streamed through the palette, a row at a time.
 
 use super::{Colours, Out, Stalled};

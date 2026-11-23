@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Incoming pitch bend and the sustain pedal (#437): per Part, smoothed,
 //! on every engine; every other CC is the Part's MIDI map's (#247).
 

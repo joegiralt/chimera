@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Filter A/B against the unit: one Sound file (a library `get`), one
 //! event script (notes and CCs, the unit's `take.py` plays the same list),
 //! rendered through the real `Instrument` at each VOICE; the lab harness's

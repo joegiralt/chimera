@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The instrument audio path (instrument-core spec § Audio path): voices per
 //! part, mono bus, constant-power pan and level into the part's DAC pair,
 //! sends into the FX bus, FX return into DAC pair 1.
@@ -1601,7 +1604,7 @@ fn string_part() -> AudioShared {
     shared
 }
 
-/// The owner's UAT (2026-09-30): three strikes of C3 on a STRING Part,
+/// UAT (2026-09-30): three strikes of C3 on a STRING Part,
 /// held or released between, ring one voice, as one guitar string
 /// re-plucked; and neither a re-strike nor a steal of a loud C2 tail (by
 /// a D2, as smooth a pluck) clicks.

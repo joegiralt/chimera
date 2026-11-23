@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Waves: a target renders the tables into faster RAM once (ADR
 //! 0122), the same bits as `WAVES`, and every read goes there after. Its own test binary: the copy is process-wide.
 

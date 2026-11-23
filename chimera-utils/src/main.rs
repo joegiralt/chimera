@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! chimera-utils: A/B Chimera's DSP against external references (ADR 0098).
 //! Host only; renders in-process through chimera-core.
 

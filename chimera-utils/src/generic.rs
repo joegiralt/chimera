@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The generic A/B: any reference program against any Chimera device, on
 //! noise (and a sine, for an effect) or from nothing (a source).
 

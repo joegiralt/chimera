@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Host importers: files from outside into Chimera's own. `tape` (TAPE
 //! spec § 6): a WAV to a sealed source on the desktop sim's card
 //! (`CHIMERA_CARD`, else `chimera-card/`). Never the unit's card: a

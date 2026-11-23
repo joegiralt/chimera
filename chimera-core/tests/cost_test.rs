@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CPU costs (ADR 0013): cycles/sample per voice, measured on the bench
 //! (rev V at 480 MHz, 2026-09-27) and rounded up.
 
@@ -2111,7 +2114,7 @@ fn all_pairs() -> Vec<(AlgoId, AlgoId)> {
         .collect()
 }
 
-/// The owner's three-voice floor (2026-10-12) for Sounds with a FRMT, on
+/// The three-voice floor (2026-10-12) for Sounds with a FRMT, on
 /// every algorithm pair: a FRMT bills linked where either algorithm links
 /// into it. One FRMT past what the budget holds breaks it.
 #[test]

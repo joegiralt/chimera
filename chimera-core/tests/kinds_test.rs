@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Operator kinds and the formant budget (formant-operators plan, Tasks 3
 //! and 4).
 

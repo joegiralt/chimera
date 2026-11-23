@@ -1,3 +1,7 @@
+// Copyright 2014-2015 Emilie Gillet (Mutable Instruments Rings, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 // The SVF bandpasses, fast tangent, cosine oscillator and stiffness table follow
 // Mutable Instruments Rings and stmlib (ADR 0032):
 //

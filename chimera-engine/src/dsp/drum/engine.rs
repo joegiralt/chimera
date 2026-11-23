@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's engine (ADR 0265): a voice slot playing one hit. A hit only
 //! starts from a `DrumHit` (`strike`); a plain note never starts one.
 

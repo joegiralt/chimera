@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Slice 1's QA gate for ORBIT (Task 11): the init scene played from a NEW
 //! project, on NEW's factory Sounds, on the desktop's real mix path,
 //! measured per DAC pair and summed. Clicks are judged where sound can

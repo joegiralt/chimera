@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SYSTEM's PUSH ENCODERS through the UI (ADR 0140): a push let go with no
 //! turn sets the cell to its default, a turn while pushed steps a tenth,
 //! MIX wins over the push, cells with no value take nothing, OFF changes

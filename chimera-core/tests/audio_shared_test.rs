@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What crosses from the UI to the audio thread (spec § Threading).
 
 use chimera_core::addr::{BlockRef, ParamAddr};

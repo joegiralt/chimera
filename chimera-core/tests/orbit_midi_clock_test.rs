@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Real-time MIDI and the MIDI clock (Task 12, spec § 6.1–6.3): the parser,
 //! the queue's order, and the runner following a leading clock, through the
 //! QA rig's `Engine::block` order (the drain inside the load gate).

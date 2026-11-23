@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Universal Device Inquiry: the request and Chimera's identity reply;
 //! the MIDI Tuning Standard's retunes (`mts`); Chimera's own messages:
 //! the parameter dump's request and end (#984).

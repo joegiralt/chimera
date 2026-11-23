@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `voice-plot`: WAVs side by side as an SVG, for comparing formant
 //! operators by eye: each one's waveform over a few note periods at one
 //! moment (peak-normalised, stacked), their spectra there overlaid (dB to

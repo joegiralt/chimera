@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The stereo through bank 2's door (ADR 0294): open, OUT PAN places a
 //! note and WIDTH narrows it; closed, every note plays centred and every
 //! Part's side as panned (`stereo_test` holds the rest).

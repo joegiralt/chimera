@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bench only (`bench-warm`, the bench-algo set): a hook around each
 //! voice's render, through which the bench's WARM page renders a voice's
 //! block twice, the second from a copy of the voice, and times both

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A parameter's editor address: `<block>.<ident>`, e.g. `OP_C.CRSE`,
 //! `KIT.TONAL`, `PAD3_FLT.CUTOFF`, `PART3.LEVEL`, `CHORUS.MIX`. A Sound's
 //! block is its `disk_ident`; the kit's is `KIT`; a pad's is `PAD<n>` and a

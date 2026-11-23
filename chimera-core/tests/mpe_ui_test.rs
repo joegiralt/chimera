@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MPE's UI side (#845, ADR 0252): an MPE Configuration Message sets a
 //! zone, RPN 0 on a member channel its bend, a member channel's controls
 //! never reach a Part's map, and MIDI CONFIG › MPE sets the zones by hand;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 2040 lab's harness (`circuit2040.rs`), shared by every four-pole
 //! lab: one render's input and controls (`Case`), the rest pads, the output
 //! coupling, the band limit, the saw and the sweeps and probes.

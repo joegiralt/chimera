@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! An incoming data value as a `Place`, by the parameter's value law (ADR 0216).
 
 use crate::ctl::DataValue;

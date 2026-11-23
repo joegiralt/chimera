@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! HARMONIC: additive, 24 sine partials at whole multiples of the pitch.
 //! HARMONICS moves a bump's peak over the partials (log-spaced: 1 at 0,
 //! 24 at 1), TIMBRE widens it (from one partial to a flat, bright comb),

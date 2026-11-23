@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB MIDI 1.0 event packets (class spec table 4-1) to and from MIDI bytes,
 //! and the port's state between polls: the IN queue and Configured's edge.
 

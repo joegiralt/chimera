@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FLT › FX's curve as rows: the type's memoryless transfer (`curve`, with
 //! FUZZ's real one) traced over one sine period for the band to draw. With
 //! `bank2` this module and the curves are bank 2's (`bank2.x`), reached only

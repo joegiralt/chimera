@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's saw alone on its anchor behind bank 2's door (ADR 0283). With
 //! WAVE held on ⅔, OSC 1 and, but as SYNC's slave, OSC 2 play one run of
 //! the saw, the pulse quiet (`OnAnchor`), instead of the pair's. `play`

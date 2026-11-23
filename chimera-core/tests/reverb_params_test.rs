@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb's TYPE, its semantic slots and their maps (reverb TYPEs
 //! spec § Parameters, § Tempo sync).
 

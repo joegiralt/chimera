@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! BLOOM (ADR 0095 § BLOOM): the MidiVerb II's allpass cascade, 15 unity
 //! allpasses in one loop with no plain delay, its feedback through a
 //! one-pole, and 3-allpass decorrelators (reverb TYPEs spec § Level plan,

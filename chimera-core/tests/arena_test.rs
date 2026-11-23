@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pool arena (ADR 0087): Sounds down from the top, sources up from 0,
 //! one gap; no source byte moves under a sounding voice.
 

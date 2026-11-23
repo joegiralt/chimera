@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A statistical profiler for the bench (`pc-sample`, #793): TIM6 fires
 //! about every 2,400 timer clocks and records the PC it interrupted, while
 //! `arm` holds. The bench runs in thread mode with no other interrupt

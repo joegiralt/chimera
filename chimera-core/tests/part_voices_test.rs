@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's MAX VOICES and RESERVE (ADR 0281, #966): at its cap a Part
 //! steals its own voice, free voices or not; at or below its reserve
 //! another Part's note can't steal its voices; a shed takes guarded
@@ -404,7 +407,7 @@ fn a_part_above_its_reserve_loses_down_to_it() {
     assert_eq!(got, [0, 1, 2, 5], "three of Part 0's, then Part 1's own");
 }
 
-/// The owner's ruling (2026-11-18): RESERVE guards held notes only. A
+/// ADR 0281 (2026-11-18): RESERVE guards held notes only. A
 /// guarded Part's released tail is fair game for another Part, and only
 /// its held notes count toward the reserve.
 #[test]
@@ -560,7 +563,7 @@ fn key(p: u8) -> u8 {
 /// The dspmax case (chimera-releases#5) on a kit: DRUM Part 1 on RESERVE 3
 /// rings three pads, each pad's note-off sent at once; Part 2 then plays
 /// eight notes. A hit counts toward its reserve until its voice finishes
-/// (the owner's ruling, 2026-11-18): the kit's three voices are never
+/// (ADR 0281, 2026-11-18): the kit's three voices are never
 /// taken.
 #[test]
 fn a_reserved_drum_part_keeps_its_hits_through_a_busy_part() {

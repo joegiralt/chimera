@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! IWDG: a reset stops the SAI clocks, so a hung or locked-up audio
 //! interrupt, or a halt after a fault, ends in silence and a reboot instead
 //! of the DMA looping its last ring.

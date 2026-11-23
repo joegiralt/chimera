@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIXER › PRT › EQ (ADR 0284): TILT and LO CUT, under VOICES; the
 //! Part's mix, never its Sound.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The command channel through real triple buffers (spec § 4.3): random
 //! UI frames, runner blocks, ack reads, loads and stalls. The reference
 //! numbers every seq with a `u32` that never wraps, and models the outbox

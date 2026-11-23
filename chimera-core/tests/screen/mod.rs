@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Screen test harness (UI refresh spec § Testing): an in-memory 240×320
 //! RGB565 display, the named screens the goldens lock, and a hash.
 //!

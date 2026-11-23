@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `flash`: the flash controller's state for bank 2 (RM0433 § 4.9), read
 //! only. Raw words in, decoded lines out; the shell does the reads.
 

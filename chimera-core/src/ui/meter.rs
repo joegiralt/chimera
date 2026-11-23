@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pool meter (ADR 0087): one bar of the arena, Sounds then sources
 //! then pending holes then free, with an add's preview after the used
 //! part. A readout of pool state, so it redraws at its width, never lerps.

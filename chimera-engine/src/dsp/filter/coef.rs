@@ -1,3 +1,7 @@
+// Copyright 2014 Emilie Gillet (stmlib's FREQUENCY_ACCURATE, MIT; notice: see dsp/modal/mod.rs)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 //! The filters' coefficients and their in-loop saturator.
 
 use core::f64::consts::PI;
@@ -53,7 +57,7 @@ pub fn exp2_poly(x: f32) -> f32 {
 /// was, then `1 + u − u²/2` for `u = |x| − 1`, flat at ±1.5 from ±2. Its
 /// value and slope are continuous (C1), so a loud signal bends, not steps:
 /// the old curve jumped from 1 to 0.83 at ±1, and from 0.96 to 1 at ±1.5,
-/// a buzz on anything that reached it (the owner's UAT, 2026-09-30). No
+/// a buzz on anything that reached it (found at UAT, 2026-09-30). No
 /// divide: it runs in every steady loop (spec H3).
 #[inline(always)]
 pub(crate) fn sat_c1(x: f32) -> f32 {

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 32 B directory entry: 8.3 names only, and the LFN checksum that ties
 //! a long-name run to its entry. Pure.
 

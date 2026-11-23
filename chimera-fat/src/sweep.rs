@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lost-cluster sweep (#360, ADR 0094): clusters the FAT holds that no
 //! directory on the volume reaches, found in one operation at boot and,
 //! only in `Sweep::Free`, freed.
@@ -332,7 +335,7 @@ impl<B: Blocks> Walk<'_, '_, '_, B> {
     }
 
     /// Marks the chain from `start` in full: a cluster reached twice is
-    /// `CrossLinked`, a break before an end mark is the owner's doubt, and
+    /// `CrossLinked`, a break before an end mark is the user's doubt, and
     /// so is a file chain shorter than its length.
     fn mark_chain(&mut self, start: u32, owner: Owner) -> Result<(), Fail<B::Error>> {
         let broken = match owner {

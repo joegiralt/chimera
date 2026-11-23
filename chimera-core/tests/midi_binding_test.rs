@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The typed binding (ADR 0217, spec §§ 4.2, 6.1-6.2).
 #![cfg(feature = "midi-map")]
 

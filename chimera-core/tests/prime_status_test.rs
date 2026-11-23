@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mod-priming feedback (issue #21): MIX+PLUS reports its outcome in the
 //! focus band — `ADDED`, `ALREADY ROUTED`, `NOT MODULATABLE`, `MATRIX
 //! FULL` — until the next encoder, button or page change, and the matrix

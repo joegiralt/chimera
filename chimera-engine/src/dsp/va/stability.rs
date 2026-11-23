@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STABILITY (spec § Stability): per-voice drift walks, trim, HF tracking,
 //! scale error and per-cycle jitter, all scaled by `d = (1 − STAB)²`. At
 //! `d == 0` every output is exactly neutral, so STAB 1 is bit-identical;

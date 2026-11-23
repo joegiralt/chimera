@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's types (ADR 0265): every index, value, code and mode a newtype or
 //! an enum, built clamped or as an `Option`, never by a panic.
 

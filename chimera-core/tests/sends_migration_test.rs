@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ADR 0123: a project written before the sends moved to the Sound carries
 //! them in each Part's mix (PART ids 5-7); they land in that Part's Sound.
 

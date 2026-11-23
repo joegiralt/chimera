@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PART and the Sound rung (settings spec § The PART branch):
 //! each action from `part_actions`, each prompt's answers, and no replace
 //! without REPLACE (#257, #258).

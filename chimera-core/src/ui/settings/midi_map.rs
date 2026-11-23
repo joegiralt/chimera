@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PART › MIDI MAP (spec § 8.2, ADR 0226): the active Part's
 //! controller map on row 0, its layer's rows, then its Sound's own rows,
 //! and the keys that edit them. A Sound row's edit is a Sound edit, so `*`

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bindings behind bank 2's door (`MidiUiDoor`, ADR 0198, 0217), under
 //! `bank2` on a host, where the table answers only while the door cell is
 //! open. Closed, what MIDI in heard is drained and dropped: nothing moves,

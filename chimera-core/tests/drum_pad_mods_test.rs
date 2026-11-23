@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM slice 2 (ADR 0269): each pad's mod envelope, LFO and four routes
 //! move its hit's CUTOFF, RES, VOLUME and its own LFO, latched at the hit.
 //!

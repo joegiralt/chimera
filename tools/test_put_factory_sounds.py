@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """`just put-factory-sounds` against a stubbed console (CHIMERA_USB_CMD):
 it refuses over user projects, installs on a card without PROJECTS, and
 --replace-demos overrides the refusal. Standard library only."""

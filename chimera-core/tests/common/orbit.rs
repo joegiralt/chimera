@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's QA rig (`orbit_qa_test.rs`): a NEW project, the real
 //! `Instrument`, `FxBus` and `DacBlocks`, and an `OrbitRunner`, driven in
 //! `Engine::block`'s order (the gate, then inside it the live keys and the

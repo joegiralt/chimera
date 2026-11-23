@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Semantic addresses (spec §2) and `ParamSnapshot::block(_mut)`.
 
 use chimera_core::addr::{BlockRead, BlockRef, Blocks, Op, OpOutOfRange, ParamAddr};

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A streamed load's work: the passes that read a source's heads and
 //! publish its rows, and a project load's streamed sources. With `bank2`
 //! it is bank 2's (`bank2.x` globs this module); bank 1 reaches it only

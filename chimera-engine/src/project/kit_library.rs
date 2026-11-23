@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A DRUM Part's kit beside its Sound (ADR 0305): in the library's file,
 //! and what a library load would lose of it. Bank 1's side: the types
 //! and the door to `kern`, which is bank 2's.

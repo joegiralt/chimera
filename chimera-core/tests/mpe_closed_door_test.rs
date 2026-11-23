@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MPE's zones through SYSTEM with bank 2's door closed (ADR 0252): a
 //! load stores each cell as saved and a save writes it back, so a boot
 //! with the door closed never drops the user's zones (as #815's maps).

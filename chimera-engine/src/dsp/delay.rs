@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay, TYPE TAPE or GRAIN (ADR 0202). TAPE: Space Echo-style, with
 //! MECHANICS (wow and flutter), saturation and high-frequency rolloff.
 //! GRAIN: Beads-style repeats, grains read from the same line (`grain`,

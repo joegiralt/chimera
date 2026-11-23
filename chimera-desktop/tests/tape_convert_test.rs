@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE host conversion (spec § 6 steps 1–4 and 6): WAV in, 12-bit out.
 
 use chimera_desktop::import::tape::convert::{

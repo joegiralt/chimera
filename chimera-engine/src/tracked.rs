@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A value that says when it may have changed (ADR 0112, 0115): each
 //! Part's Sound is one, so the Part's knobs look at a Sound again only when
 //! that Sound was written, not on any edit to the Project.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI CONFIG › CONTROL's routes (ADR 0254): each pass the UI hands the
 //! pipes AUTO's channel and the focused Part's, and SEQUENCER's, each only
 //! where no Part's own channel takes it. One test: `ROUTES` is a

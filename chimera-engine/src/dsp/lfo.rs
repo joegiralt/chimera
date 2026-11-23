@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LFO — Low Frequency Oscillator for modulation.
 //! Outputs -1.0 to +1.0 (bipolar) at sub-audio rates.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The roll (#809, ADR 0232): a Sound rewritten inside musically safe
 //! ranges, per engine, from a seed. Bank 2's (`bank2.x`), reached through
 //! the UI's door.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! One D-pad on every chain (#316, ADR 0081): MINUS and PLUS along it,
 //! EDIT down and wrapping from the bottom, SEQ up and inert at the top.
 

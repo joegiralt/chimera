@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Envelope B (spec § Envelope B): the Cascadia's function generator in
 //! ENV, LFO and BURST modes; a FUNC LFO runs it in LFO mode.
 

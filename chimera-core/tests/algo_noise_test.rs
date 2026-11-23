@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The NOIS operator in the engine (spec § 4): a band of noise centred on
 //! CENTRE, WIDTH wide, at the −12 dB reference; RES blends in the tone;
 //! seeded per voice, never reset at note-on.

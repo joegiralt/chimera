@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The FAT core on a recording RAM partition: the allocator's bounds, the
 //! FAT copies, bounded chain walks, the entry codec and FSInfo.
 

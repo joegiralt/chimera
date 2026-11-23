@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PERSONALIZE › ALGO PAGES (#985, ADR 0300): FIRST picks which
 //! of ALGO's views OSC opens on. Every page stays, only the order changes,
 //! and PARAMETER, the default, is the chain as it was.

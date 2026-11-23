@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `key` and `turn`: the console's hands. A request queues a gesture;
 //! `Hands::step`, once a UI loop lap, says which switches are down and
 //! which detents arrived, as the HC165 scan would have read them.

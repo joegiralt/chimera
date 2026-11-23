@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Rendering: six PM operators on an edge list, feedback averaged
 //! over two samples, a crossfade between adjacent mips.
 

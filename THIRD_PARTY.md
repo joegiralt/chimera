@@ -1,5 +1,17 @@
 # Third-party files
 
+Chimera is licensed under the GNU General Public License, version 3 or (at
+your option) any later version (`LICENSE`; SPDX `GPL-3.0-or-later`). The
+code below comes from others or follows their published work. Every licence
+here is compatible with GPLv3, and each upstream notice is kept in its file.
+
+Most of it is permissive (MIT, BSD-3-Clause, Apache-2.0, CC BY 4.0, the Sun
+notice), so it can also follow the author's own code into a closed product
+(ADR 0271 § 3) as long as its notice goes with it. **One entry cannot:** the
+reverb values derived from thement/midiverb_emulator are GPL-3.0, so they may
+only ship under the GPL and must be re-derived before ROOM, BLOOM or LOOP go
+into any closed or dual-licensed product.
+
 - `chimera-engine/src/dsp/modal/` (`mod.rs`, `rings.rs`, `dispersion.rs`, `chords.rs`): see ADR 0032 for the Rings and stmlib (MIT) notice. `chords.rs` holds Rings' chord table (`dsp/part.cc`).
 - Host-only crates (`chimera-desktop`, never linked into the firmware), used by the TAPE importer (TAPE spec § 6):
   - `hound` 3.5 (WAV reading): Apache-2.0. https://github.com/ruuda/hound
@@ -9,7 +21,7 @@
 - `chimera-engine/src/dsp/mod.rs` (`fast_tanh`): stmlib's `SoftClip` (`dsp/dsp.h`, MIT, Copyright 2012 Emilie Gillet; ADR 0097).
 - `chimera-engine/src/dsp/grain/core.rs` and `chimera-engine/src/dsp/delay/grain.rs` (the grain core and the delay TYPE GRAIN; ADR 0202): a port of Mutable Instruments Beads' grain engine (`beads/dsp/granular_player.h`, `delay_grain.h`, `grain_envelope.h`, `voice_stealing_envelope.h`, `trigger_generator.cc`, `granular_processor.h`, `delay_line.h`'s Hermite read), MIT, Copyright 2017 Emilie Gillet, https://github.com/pichenettes/eurorack; notice in the file.
 - `chimera-engine/src/dsp/filter/coef.rs` (`tan_accurate`): stmlib's `FREQUENCY_ACCURATE` polynomial coefficients (`dsp/filter.h`, MIT, Copyright 2014 Emilie Gillet; ADR 0096).
-- `chimera-engine/src/dsp/rev/` (`room.rs`, `bloom.rs`, `loop_engine.rs`: ROOM's and BLOOM's delay, allpass and tap tables, HALL's `DIFFUSER_MS`): the numbers were derived using the MidiVerb II decompilation of github.com/thement/midiverb_emulator (GPL-3.0), as constants in our own Rust; no emulator code is included (ADR 0095). **Open question, not a conclusion:** whether that makes distributing binaries other than under the GPL-3.0 permissible is for the owner and a lawyer to settle before V1.
+- `chimera-engine/src/dsp/rev/` (`room.rs`, `bloom.rs`, `loop_engine.rs`; ADR 0095): ROOM, BLOOM and LOOP start from delay and coefficient values derived from thement/midiverb_emulator (GPL-3.0). The parameterizable engine built around them is original to Chimera. Upstream: https://github.com/thement/midiverb_emulator. Those values are the only part taken from it: the tables of delay lengths, allpass and tap positions and their coefficients, plus HALL's `DIFFUSER_MS`; no emulator code is in the tree, and the A/B tool (`chimera-utils`) only runs the emulator from outside the repo. GPL-3.0 is the project's own licence, so the firmware may carry them; **they cannot go into a closed product**, dual-licensed or not, until they are re-derived.
 - `chimera-engine/src/dsp/va/lbfm.rs` (VA MODE LOOPFM; ADR 0162, 0166): Tamara Smyth, "Loopback Frequency Modulation Using a Time-Varying Delay Line", DAFx-26, paper 36, https://www.dafx.de/paper-archive/2026/papers/DAFx26_paper_36.pdf, licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Adapted: the closed form (eq. 25) reimplemented in our own Rust with our own b0 curve, normalisation, pitch-dependent b0 cap and per-block ramps (the b0 mapping, eq. 26, only as a test's reference); no code or text from the paper is copied.
 - `chimera-engine/src/dsp/filter/sem.rs` (filter TYPE SEM; ADR 0192) and `chimera-circuits/src/sem1a/` (its circuit lab, kept; ADR 0196): L. Köper, M. Holters, F. Esqueda, J. D. Parker, "A Virtual Analog Model of the EDP Wasp VCF", Proc. DAFx20in22, Vienna 2022, pp. 17–24, licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Adapted: its nodal Newton method for the circuit lab's reference and its measured CA3080 fit (α, β; Table 3), which sets the integrators' tanh scale; our own model and Rust, derived from the Oberheim SEM-1A schematic and the parts' datasheets; no code or text from the paper is copied.
 - `chimera-circuits` (host only, never linked into the firmware; ADR 0196), ported code with its notice kept in the file:
@@ -18,3 +30,11 @@
 - `chimera-circuits/src/vtl5c3/` and `src/buchla292b/` (host only; ADR 0196): the vactrol model of J. Najnudel, R. Müller, T. Hélie, D. Roze, "Power-balanced dynamic modeling of vactrols: application to a VTL5C3/2", Proc. DAFx-23, Copenhagen 2023, https://www.dafx.de/paper-archive/2023/DAFx23_paper_50.pdf, licensed CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Adapted: its equations and Table 1 reimplemented in our own Rust, the VTL5C3's rates refit by us to the PerkinElmer data sheet; no code or text from the paper is copied. J. Parker, S. D'Angelo, "A digital model of the Buchla lowpass-gate", DAFx-13: equations only.
 - `chimera-engine/src/dsp/lpg.rs` (the VCA's low-pass gate, AMP's LPG, DECAY and STRIKE; ADR 0195): a port of Mutable Instruments Plaits' low-pass gate, `plaits/dsp/fx/low_pass_gate.h`, the `LPGEnvelope` of `plaits/dsp/envelope.h`, the decay and colour mapping of `plaits/dsp/voice.cc` and stmlib's `Svf` (`dsp/filter.h`, FREQUENCY_DIRTY), github.com/pichenettes/eurorack, MIT, Copyright 2014–2016 Emilie Gillet. The MIT notice is kept in the file.
 - `chimera-engine/src/dsp/delay/tape.rs` (`tanhf`, `expm1f`: TAPE's saturation, inlined bit for bit, #793): libm 0.2.16's (https://github.com/rust-lang/libm, MIT OR Apache-2.0, Copyright (c) 2018 Jorge Aparicio; musl: Copyright © 2005-2020 Rich Felker, et al.), from musl and FreeBSD msun's `s_tanhf.c` and `s_expm1f.c`, Copyright (C) 1993 Sun Microsystems, Inc., freely granted provided the notice is preserved; the notice is in the file.
+- `chimera-utils/src/stim.rs` and `src/sig.rs` (host only; the A/B tool's stimuli and signal helpers): ported from NumPy (`SeedSequence`, `random_standard_normal`, `next_double`, `random_interval`, `Generator.shuffle`; BSD-3-Clause, Copyright (c) 2005-2024 NumPy Developers, Copyright (c) 2019 Kevin Sheppard), PCG64 (Apache-2.0 or MIT, Copyright 2014 Melissa O'Neill) and SciPy (`resample_poly`, `butter`, `sosfilt`, `welch`; BSD-3-Clause, Copyright (c) 2001-2002 Enthought, Inc., 2003 SciPy Developers); each notice is in the file (`chimera-utils/README.md` § Third-party notices).
+- `chimera-board/src/display.rs` (the ILI9341 panel's init list): martnak/STM32-ILI9341 (MIT, Copyright (c) 2017 martnak, https://github.com/martnak/STM32-ILI9341) via PreenFM3, whose `lib/Src/ili9341.c` (`ILI9341_Init`) says its list is based on it; the MIT notice is in the file.
+
+## Not third party
+
+- `chimera-engine/src/dsp/modal/string.rs` (the Karplus-Strong string): the author's own code from his Carcosa firmware for the Ambika (`voicecard/karplus.h`), brought in by its author. The original Ambika firmware has no Karplus-Strong engine and none of its GPL code was copied (#56, ADR 0032).
+- `chimera-engine/src/dsp/va/` (`osc.rs`, `blep.rs`, `stability.rs`): clean room; each file's `GPL_CHECK` says what was read.
+- The factory Sounds: Chimera's own. The TX81Z-inspired ports are mutated well away from their voices and carry no bank bytes (ADR 0138, `tools/factory-sounds/ports.toml`); the factory TAPE sources are Chimera renders, the tool's own synthesis or CC0 recordings, credited in `tools/factory-tapes/`.

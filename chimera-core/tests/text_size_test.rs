@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TEXT SIZE (ADR 0154): LARGE draws the reading text a size up where it
 //! fits, NORMAL's faces where it doesn't; the setting turns from its leaf
 //! and redraws every band.

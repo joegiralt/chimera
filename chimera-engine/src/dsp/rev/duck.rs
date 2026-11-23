@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The reverb's duck (ADR 0295): its wet return turned down while its own
 //! input is loud, coming back in the gaps, as a 2290's dynamic delay or
 //! Pro-R 2's ducking. Keyed by the reverb's send (the Parts' REVERB sends

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! METAL's squares and PLAIN IMPULSE's pulse a block at a time null
 //! against their old render, a sample at a time (`render_ticked`): HAT
 //! closed and open, CYMBAL, COWBELL, JINGLE and IMPULSE, at their

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FAT16/FAT32 behind `chimera_hal::store`: the volume parser, the FAT
 //! core (`blocks`, `fat`, `dir`, `fsinfo`, `fs`), the card deadline and
 //! presence check, the lost-cluster sweep, and the `Store` over them.

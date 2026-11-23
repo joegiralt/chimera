@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Priming mod destinations from pages (spec §5, Review Focus 1 and 5).
 
 use chimera_core::addr::{BlockRef, ParamAddr};

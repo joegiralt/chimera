@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The output stage (ADR 0050): after the master section, the last stage
 //! before the DACs. It gains the mix by `OUTPUT_GAIN` and holds each sample
 //! at or under `CEILING` along a soft knee (`KNEE`, ADR 0109), with one gain linked across every pair and side,

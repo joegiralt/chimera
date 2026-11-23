@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Playing a Sound headlessly (spec § 4): a `Plan` through the real
 //! `Instrument` (as `loudness_test` plays a scene: Part 1, P1, after the
 //! limiter), offline at 48 kHz, at the unit's voice budget.

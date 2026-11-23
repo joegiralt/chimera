@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The console's `card` on the unit (bench builds): multi-block reads over
 //! two test files' runs, each posted to the card IRQ (`BenchPort`) and
 //! timed there by the cycle counter, from the UI loop while audio runs.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The delay through the door (ADR 0202, 0213): open, `TapeDelay::run`
 //! crosses to bank 2's `tape::run`, which plays TAPE or the grains, every
 //! bit of what a build without bank 2 plays; closed, the delay is silent,

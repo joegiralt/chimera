@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Typed indices: a Part, a pool slot, a set of Parts. Only `new` makes an
 //! id, so every one is in range.
 

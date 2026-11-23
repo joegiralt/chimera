@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The chain map (y 266..320, Direction A): nodes on a thin line, the
 //! current block a filled accent pill with a dark label, the others a small
 //! ring with a grey label below. THEME's PAGES (ADR 0145) picks how a

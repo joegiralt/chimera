@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TLV records: `u16` tag, `u16` length, the payload, all little-endian.
 
 use chimera_hal::store::{ByteSink, StoreError};

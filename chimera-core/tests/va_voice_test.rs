@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA in the voice (spec § Voice and engine, § Stability): its note ends
 //! through the VCA or, with no route, at key-up through the fade; its
 //! oscillators and walks run on across the idle slot's rebuild below

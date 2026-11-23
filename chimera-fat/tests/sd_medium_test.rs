@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_fat::{BusPhase, FatStore, Medium, SdBus};
 use chimera_hal::store::{Store, StoreError};
 use core::cell::{Cell, RefCell};

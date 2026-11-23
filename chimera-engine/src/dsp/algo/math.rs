@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `f32` approximations of the few transcendental functions the engine needs.
 
 use core::f32::consts::LN_2;

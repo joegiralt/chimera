@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Live snapping (spec § 5.2): a played key snaps per Part to ORBIT's key
 //! or chord while ORBIT runs, a key-up releases what it started, and a
 //! held key on a RE-SNAP Part glides to the new chord without a click.

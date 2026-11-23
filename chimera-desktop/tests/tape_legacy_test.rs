@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Old-machine Sounds load as WALK and sound the same (ADR 0203): each
 //! file `fixtures/tape_legacy.txt` holds, written before WALK, decodes and
 //! renders through the whole instrument bit for bit as it did then, but

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Where the UI is, and where each key takes it: one `Location` and a pure
 //! `step` (ADR 0044, amended by ADR 0066; its D-pad by ADR 0081).
 

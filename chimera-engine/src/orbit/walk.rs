@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! POOL rings: 1..=8 sorted notes, walked over RANGE extra octaves.
 
 use super::MAX_POOL;

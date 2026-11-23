@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-29-exclusive-state-design.md` (owner-approved, binding). Read it with this plan. The § numbers below are the spec's.
 
-**Where it runs:** worktree `/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/wt-excl`, branch `exclusive-state`. Every command runs from that root.
+**Where it runs:** worktree `<scratchpad>/scratchpad/wt-excl`, branch `exclusive-state`. Every command runs from that root.
 
 ## Global Constraints
 

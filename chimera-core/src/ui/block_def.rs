@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{ParamId, ParamSpec, find_spec};
 use crate::orbit::RingIdx;

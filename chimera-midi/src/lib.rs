@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI vocabulary and pure decisions: no hardware, no allocation.
 #![no_std]
 #![forbid(unsafe_code)]

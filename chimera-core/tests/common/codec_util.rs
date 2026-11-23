@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Card-file helpers shared by the codec compat, SYSTEM and fuzz tests and
 //! the `cargo fuzz` target (which includes this file by path): two-pass
 //! decode, CRC repair, the bounds every decoded Sound and project must

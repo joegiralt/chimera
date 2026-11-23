@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The frozen code tables (ADR 0045): a block, a mod source or a stored enum
 //! is named on the card by a code chosen here, never by a Rust discriminant,
 //! a variant's position or a `ParamId`'s place in a page. Codes are forever:

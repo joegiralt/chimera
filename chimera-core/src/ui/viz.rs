@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Direction A visualizations (ADR 0016): drawn as the main element with a
 //! soft accent fill under a 1.5-px accent line (spec § Shared components);
 //! drawn 2 px since the display has no anti-aliasing. No grid lines.

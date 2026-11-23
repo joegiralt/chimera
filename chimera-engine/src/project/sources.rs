@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The pool's sources (ADR 0087): a `SourceRef` names one, the pool holds
 //! its bytes, and who uses it is derived from the project when asked,
 //! never stored.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The card: mounted per operation, a swap seen by volume serial and label.
 
 use chimera_hal::store::{Store, StoreError, Unsupported, VolumeId};

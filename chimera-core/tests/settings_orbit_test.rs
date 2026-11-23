@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › ORBIT (#262): CLEAR, SAVE TO PROJ and RELOAD FROM PROJ act
 //! on the playing scene, each behind its prompt; RENAME is later (#298).
 #![cfg(feature = "orbit")]

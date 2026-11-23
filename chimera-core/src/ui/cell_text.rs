@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A cell's text, as the box draws it: the renderer's and `ed get`'s one
 //! source. What a page's cell reads beyond its value is `CellCx`.
 

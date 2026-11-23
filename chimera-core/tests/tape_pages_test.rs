@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's pages (spec § 3, ADR 0093, TAPE Task 15, ADR 0178): the chain
 //! SRC · DECK · DRV · FLT · AMP · MOD opening on DECK, DECK holding MODEL
 //! and every knob that moves the machine's glyph, the model page the rest

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The shared FX bus (instrument-core spec § Audio path): chorus, delay and
 //! reverb run once per block on the sum of every part's sends. Send/return:
 //! each effect returns only its wet signal, its MIX acting as the return

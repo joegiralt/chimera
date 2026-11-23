@@ -1,5 +1,8 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The formant budget, derived from the cost model so that ADR 0026's
-//! four-voice floor (three with a FRMT, the owner's 2026-10-12 ruling)
+//! four-voice floor (three with a FRMT, ruled 2026-10-12)
 //! holds for the costliest table Sound under the reference heavy routing (`ModRouting::HEAVY`; never typed in). Runtime admission
 //! still bills each voice's real cost.
 
@@ -60,7 +63,7 @@ const fn formant_budget(floor: u32, part: Cost, voice: Cost) -> Cost {
 /// A Sound of tables and noise bands: ADR 0026's four-voice floor.
 pub const FORMANT_BUDGET: Cost = formant_budget(FLOOR_VOICES, Cost::ZERO, Cost::ZERO);
 
-/// A Sound with a FRMT: the owner's three-voice floor (2026-10-12), with
+/// A Sound with a FRMT: the three-voice floor (ruled 2026-10-12), with
 /// recost's reach billed (ADR 0131).
 pub const FORMANT_BUDGET_FRMT: Cost = formant_budget(
     FLOOR_VOICES_FORMANT,

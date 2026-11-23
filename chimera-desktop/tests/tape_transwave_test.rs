@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The importer's transwave (TAPE spec § 6 step 5): whole cycles cut from
 //! the input, each built into octave levels by FFT truncation and held
 //! oversampled. Precedent: PPG Wave and Waldorf Microwave (band-limited

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Privacy guard: which tracked files must never exist (raw TX81Z bank data; ADR 0138).
 
 use std::ops::RangeInclusive;

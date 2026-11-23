@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Sound codec (ADR 0045): a Sound encodes to card records and decodes
 //! back bit-equal; bad values fall back to the frozen neutral base.
 

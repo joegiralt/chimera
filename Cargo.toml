@@ -33,7 +33,7 @@ default-members = [
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 # Optimize all firmware dependencies in dev builds
 [profile.dev.package.chimera-stm32]

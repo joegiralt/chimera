@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Voice pitch as a matrix destination (#162, ADR 0042): PITCH and FINE on
 //! every engine's PIT page.
 

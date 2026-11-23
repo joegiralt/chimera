@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The SETTINGS menu: its tree is one static table (ADR 0066).
 
 pub(crate) mod job;

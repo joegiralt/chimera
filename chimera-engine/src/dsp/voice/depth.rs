@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! LFO DEPTH's routes (ADR 0250): each LFO's DEPTH column summed over the
 //! last block's source values, onto the played copy before the LFOs run.
 //! The pass is bank 2's (`kern`, `bank2.x` links `*5voice5depth4kern*`);

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § Principles: `f32` only in the render path. The chip has no
 //! double-precision FPU, so `f64` becomes software float (#26), and libm's
 //! `f32` trig calls soft-double internally.

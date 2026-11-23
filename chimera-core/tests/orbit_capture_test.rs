@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Capturing notes and chords (spec § 5.3, plan Task 14): what the keys
 //! play while LEARN or PLAY is armed becomes a ring's notes or a
 //! segment's chord. Through the QA rig: the drain's `live` hook, the

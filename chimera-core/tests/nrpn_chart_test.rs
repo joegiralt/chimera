@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The NRPN address space (ADR 0216): derived from the frozen disk identity,
 //! and pinned by `fixtures/nrpn_v1.txt`, which only ever grows.
 

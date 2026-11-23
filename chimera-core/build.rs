@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Stamps the build with the git hash and a dirty flag (#406). Only the
 //! `stamp` feature (the firmware) reads git; every other build carries the
 //! fixed "dev" so tests and goldens do not churn per commit.

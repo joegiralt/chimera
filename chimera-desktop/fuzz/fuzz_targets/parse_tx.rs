@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![no_main]
 
 // Any bytes: refused, or 32 voices that each map to a Source that builds,

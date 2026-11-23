@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `lpg-amp render OUTDIR SOUND EVENTS`: the VCA's low-pass gate (ADR 0195)
 //! on its listening set, through the real `Instrument` (Part 1, sends 0,
 //! after the limiter, mono (L+R)/2), raw: 32-bit float, no gain, never

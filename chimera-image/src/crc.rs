@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! CRC-32/ISO-HDLC: reflected poly 0xEDB88320, init and xorout 0xFFFF_FFFF.
 
 /// A `static`, so it is in flash once however many places inline `update`.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! VA's scenes around the saw's solo (ADR 0283): MODE detours into and out
 //! of it, a Sound browsed (MODE and WAVE in the same block), glide, a
 //! steal, a restart, SHAPE swept and at its ends. They use only the

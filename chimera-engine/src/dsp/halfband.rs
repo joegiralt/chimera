@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 35-tap half-band FIR (FX diet spec § Rate): 2:1 into the reverb
 //! ring, 1:2 back out.
 

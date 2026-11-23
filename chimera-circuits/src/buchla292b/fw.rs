@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 292B in a firmware's shape: f32 at 48 kHz. The LED driver and the
 //! vactrol (`crate::vtl5c3::fw`) once every 16 samples; the audio core as
 //! Parker & D'Angelo's topology-preserving trapezoidal solve (DAFx-13

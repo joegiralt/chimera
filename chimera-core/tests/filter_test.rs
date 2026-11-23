@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The filter: typed modes (#111) and retired ids (#112).
 
 use chimera_core::addr::{BlockRef, ParamAddr};

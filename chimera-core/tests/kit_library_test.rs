@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A DRUM Part's kit beside its Sound (ADR 0305, #949): saved into the
 //! library's file and brought back by its load, and weighed by a library
 //! load's guard, the one replace that takes a kit. Under `bank2` the

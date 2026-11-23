@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A project: its name, its pool of Sounds and the Parts that play them
 //! (projects spec § Model). The fields are private, so only this module
 //! sets an `Origin` or moves a slot's generation.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS (ADR 0289, slice 3). Its pages: the tree's leaves with a
 //! param, in tree order, but the read-only ones and DEMO's, each with its
 //! crumbs, a static built from `settings::tree::ROOT` at compile time, in

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Direction A shared components (UI refresh spec § Shared components):
 //! header, focus band, cells. The map lives in `dungeon_map`.
 

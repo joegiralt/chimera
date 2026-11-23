@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! bank2-seal and door-check on fake images and object-file fixtures.
 
 #[allow(dead_code)]

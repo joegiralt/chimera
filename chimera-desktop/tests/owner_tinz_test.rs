@@ -1,4 +1,7 @@
-//! TINZ, the owner's TAPE Sound (saved on the unit, build 14fecc46): the
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! TINZ, a TAPE Sound made by hand on the test unit (saved there, build 14fecc46): the
 //! file as the firmware decodes it, and the factory build of its recipe,
 //! param for param.
 
@@ -10,7 +13,7 @@ use chimera_core::preset::Sound;
 use chimera_core::storage::{Check, Decode, Framer, SoundDecoder, sound_crc};
 use std::fmt::Write as _;
 
-/// The owner's file, as `get` fetched it (decoded from its base64).
+/// The saved file, as `get` fetched it (decoded from its base64).
 const TINZ: &[u8] = include_bytes!("fixtures/TINZ.A");
 
 /// `bytes` decoded as a load decodes them: a check pass, then apply.
@@ -136,7 +139,7 @@ fn dump_tinz() {
     std::fs::write(std::env::var("TINZ_DUMP").unwrap(), text).unwrap();
 }
 
-/// The factory build of TINZ's recipe is the owner's file, param for param.
+/// The factory build of TINZ's recipe is the saved file, param for param.
 #[test]
 fn factory_tinz_is_the_owners() {
     use chimera_desktop::factory_tapes::{audio, originals, read_recipes, source, tape_sound};
@@ -145,7 +148,7 @@ fn factory_tinz_is_the_owners() {
     let src = r.sources.iter().find(|x| x.name == s.source).unwrap();
     let built = source(src, audio(src, &originals()).unwrap().unwrap()).unwrap();
     let (built, mut owner) = (tape_sound(s, &built.head), load(TINZ));
-    // ADR 0278: the recipe re-voices the owner's sends for the send taper,
+    // ADR 0278: the recipe re-voices the file's sends for the send taper,
     // the grid level whose gain is the one the unit stored.
     let revoiced = |l: SendLevel| SendLevel::from_gain(Gain::new(l.get()));
     owner.params.out.sends = owner.params.out.sends.map(revoiced);

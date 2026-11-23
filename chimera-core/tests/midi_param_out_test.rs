@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI CONFIG › ECHO › PARAM OUT (#913): every edit made on the unit goes
 //! out as its NRPN (ADR 0216's address and law) on the Part's channel, the
 //! latest value a pass while DIN has room; never a value MIDI brought in,

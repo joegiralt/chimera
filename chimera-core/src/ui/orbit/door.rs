@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's pages behind bank 2's door (ADR 0208): the viz bands,
 //! ORBIT's own cells' text, its focus band and the keys that redraw them.
 //! `draw` holds them, drawn on `raster`'s `Ink`: one display type, so each

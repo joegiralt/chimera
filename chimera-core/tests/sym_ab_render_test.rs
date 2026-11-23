@@ -1,4 +1,7 @@
-//! The owner's SYM A/B renderer (sends spec § 3a): the INIT ALGO chord stab at
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+//! The SYM A/B renderer (sends spec § 3a): the INIT ALGO chord stab at
 //! FOLD 0.3, SYM swept 0 -> 1 over the render, to `$SYM_AB_OUT/<name>.wav`
 //! (48 kHz 16-bit stereo, peak-normalised to -3 dBFS).
 //!

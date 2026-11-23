@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each FX TYPE's pots as `const` data (ADR 0155, `filter_panel`'s
 //! pattern): the words FLT › FX's P1–P3 cells show under that type.
 //! TYPE, INPUT and MIX sit on the page outside the panel.

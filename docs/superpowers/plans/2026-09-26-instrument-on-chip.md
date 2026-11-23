@@ -16,7 +16,7 @@
 - CLAUDE.md's rules: a `// SAFETY:` comment on every `unsafe`; no allocation or blocking in the audio path; no libc; nothing snaps.
 - Audio goldens bit-identical (`golden_test.rs`, `fx_golden_test.rs`, `signal_chain_test.rs`, …): no task may re-record an audio golden.
 - Never stage `docs/chimera-ui-ux-spec.md` (it has unrelated local edits): always `git add` explicit paths, never `git add -A`/`git add .`/`git commit -a`.
-- Build/test command: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+- Build/test command: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 - One commit per task. Commit messages: no conventional prefixes (no `fix:`, `feat:`, `style:`, `docs:`, `chore:`, `refactor:`, `test:`); terse, plain and short, saying what changed (e.g. `TripleBuffer for AudioShared`).
 - Code comments only where genuinely needed: a `// SAFETY:` justification (required by CLAUDE.md), a non-obvious "why", or a `ponytail:` ceiling note. No other doc or inline comments in new code; `/// # Safety` sections stay on `unsafe fn`s.
 - Run `cargo fmt --all` before each check: the plan's code blocks are not hand-wrapped to rustfmt's width.
@@ -403,7 +403,7 @@ In `docs/adr/README.md` change the 0013 row's status cell to `Accepted; budget c
 
 - [ ] **Step 6: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: all tests pass, desktop and firmware build, clippy and fmt clean.
 
 - [ ] **Step 7: Commit**
@@ -723,7 +723,7 @@ Append to `docs/adr/README.md` after the 0020 row:
 
 - [ ] **Step 6: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -911,7 +911,7 @@ In `docs/adr/README.md` insert before the 0020 row:
 
 - [ ] **Step 6: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -1157,7 +1157,7 @@ Expected: PASS (13 tests).
 
 - [ ] **Step 5: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -1455,7 +1455,7 @@ Expected: PASS (8 tests).
 
 - [ ] **Step 5: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -1645,7 +1645,7 @@ Expected: PASS (6 tests).
 
 - [ ] **Step 5: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -1790,7 +1790,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -2206,7 +2206,7 @@ Expected: PASS; no golden changes.
 
 - [ ] **Step 7: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
@@ -2494,7 +2494,7 @@ In `chimera-stm32/src/main.rs`:
 
 - [ ] **Step 9: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS (firmware builds and links).
 
 - [ ] **Step 10: Commit**
@@ -2554,17 +2554,17 @@ In `chimera-core/src/instrument.rs` the docs that describe the old double buffer
 
 - [ ] **Step 2: Run the desktop tests and build**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig cargo test -p chimera-desktop`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig cargo test -p chimera-desktop`
 Expected: PASS (`pairs_sum_to_stereo`, `solo_hears_one_pair`).
 
 - [ ] **Step 3: Check by ear**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just desktop`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just desktop`
 Expected: Z..N play Part 1; turning an encoder on the FILTER page lerps the sound as before; MIX+B2 then changing Part 2's level/pan is heard.
 
 - [ ] **Step 4: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2649,7 +2649,7 @@ In `chimera-desktop/src/main.rs` add after `mod display;`:
 mod midi;
 ```
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig cargo test -p chimera-desktop midi`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig cargo test -p chimera-desktop midi`
 Expected: PASS for the three `pick_port` tests.
 
 - [ ] **Step 3: Keys and MIDI as note sources**
@@ -2721,7 +2721,7 @@ fn connect_midi(shared: Arc<SharedState>) -> Option<midir::MidiInputConnection<(
 Run:
 
 ```bash
-export PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig
+export PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig
 cargo test -p chimera-desktop
 cargo build -p chimera-desktop --no-default-features
 cargo clippy -p chimera-desktop --no-default-features --all-targets -- -D warnings
@@ -2731,12 +2731,12 @@ Expected: tests PASS; the no-`midi` build and clippy are clean (only `Source::Ke
 
 - [ ] **Step 5: Check with a USB MIDI keyboard**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just desktop` with a USB MIDI keyboard plugged in.
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just desktop` with a USB MIDI keyboard plugged in.
 Expected: the terminal prints `MIDI in: <keyboard name>`; keys on MIDI channel 1 play Part 1, channel 2 Part 2 (MIX+B2 ▸ CH to confirm), chords sound all their notes, note-offs release; the computer keyboard still plays at the same time. Unplugged: `no MIDI input port; playing from the keyboard only`, and the simulator runs.
 
 - [ ] **Step 6: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -3239,7 +3239,7 @@ Expected: both builds link; `_stack_end` 20000000, `_stack_start` 20020000, `__s
 
 - [ ] **Step 11: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 12: On-device checks (bring-up step 1)**
@@ -3695,7 +3695,7 @@ In `chimera-stm32/src/main.rs`:
 
 - [ ] **Step 6: Build and run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS (firmware builds and links; `RINGS` is 3 KB inside `.ram_d2_dma`).
 
 - [ ] **Step 7: On-device checks (bring-up step 2)**
@@ -3838,7 +3838,7 @@ In `chimera-stm32/src/main.rs` after the PE6 lines add:
 
 - [ ] **Step 5: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 6: On-device checks (bring-up step 3)**
@@ -4110,7 +4110,7 @@ Run:
 
 ```bash
 cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
-PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check
+PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check
 ```
 
 Expected: both PASS; the link places `INSTRUMENT` (≈247 KB) in `.ram_d2` after `.ram_d2_dma` within 288 KB.
@@ -4156,7 +4156,7 @@ In `chimera-stm32/src/main.rs` rename `_shared_w` to `mut shared_w` and in the l
 
 - [ ] **Step 2: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS.
 
 - [ ] **Step 3: On-device checks (bring-up step 5)**
@@ -4594,7 +4594,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS (the all-pages walk visits the new sub-page; dirty equals full).
 
 - [ ] **Step 7: Commit**
@@ -4965,7 +4965,7 @@ Run:
 ```bash
 cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --no-default-features
 cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --features bench
-PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check
+PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check
 ```
 
 Expected: all PASS.
@@ -5048,7 +5048,7 @@ Replace the comment above `check` with:
 
 - [ ] **Step 2: Run the full check**
 
-Run: `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS, including the three firmware clippy runs with zero warnings. (The one pre-existing firmware lint, `needless_range_loop` in `controls.rs`, was fixed in Task 12.)
 
 - [ ] **Step 3: Commit**
@@ -5103,7 +5103,7 @@ In `chimera-core/tests/instrument_test.rs::sound_change_mid_chord_stays_in_budge
 
 - [ ] **Step 5: Run the allocator tests and the full check**
 
-Run: `cargo test -p chimera-core --test cost_test --test voice_alloc_test --test instrument_test`, then `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`
+Run: `cargo test -p chimera-core --test cost_test --test voice_alloc_test --test instrument_test`, then `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`
 Expected: PASS; the audio goldens don't move (costs only change which notes are refused over budget).
 
 - [ ] **Step 6: If six voices plus FX don't fit**

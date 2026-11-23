@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PERSONALIZE › THEME: backlight, panel gamma, accent and
 //! ground (ADR 0033), light mode (ADR 0126), whether focus bands show gesture hints (ADR
 //! 0086), how the chain map draws sub-pages (ADR 0145), and the text size
@@ -9,7 +12,7 @@
 //! thread.
 //!
 //! Stored in SYSTEM (`storage::SystemSettings`); with no card, no file or an
-//! error, boot takes the owner's pick, 70 / PUNCH / TEAL / −2.
+//! error, boot takes the chosen look, 70 / PUNCH / TEAL / −2.
 
 use crate::block::{
     Block, Change, DiskCode, Motion, OFF_ON, ParamId, ParamSpec, ValFmt, apply_code,
@@ -412,7 +415,7 @@ impl Default for ThemeSettings {
 }
 
 impl ThemeSettings {
-    /// Boot state without a SYSTEM file: the owner's pick, 70 %, PUNCH, TEAL, −2.
+    /// Boot state without a SYSTEM file: the chosen look, 70 %, PUNCH, TEAL, −2.
     pub const DEFAULT: ThemeSettings = ThemeSettings {
         bright: Bright::DEFAULT,
         gamma: Gamma::Punch,
@@ -462,7 +465,7 @@ const _: () = assert!(BRIGHT_IDENTS.len() == THEME_SPECS[0].max as usize + 1);
 const _: () = assert!(BLACK_IDENTS.len() == THEME_SPECS[3].max as usize + 1);
 
 /// Choices by index: BRIGHT 0..=18 (10..100 %), BLACK 0..=6 (−2..+4). The
-/// defaults are the owner's pick: 70, PUNCH, TEAL, −2.
+/// defaults are the chosen look: 70, PUNCH, TEAL, −2.
 pub static THEME_SPECS: [ParamSpec; 11] = [
     ParamSpec::choice(
         0,

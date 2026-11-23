@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed` on the mixer (ADR 0289, protocol 4's slice 1): every Part's mix
 //! and sends and the buses addressed, `ed describe MIXER`, the reverb's
 //! panels, `param` flags, `ed schema`'s hash, and `since`'s MIXER section.

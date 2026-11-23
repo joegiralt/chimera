@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB MIDI 1.0's class descriptors (spec § 4): an AudioControl and a
 //! MIDIStreaming interface under one IAD, cable 0's embedded and external
 //! jack each way, an embedded IN jack a Part cable (ADR 0243), each named,

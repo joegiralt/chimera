@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Volume-relative 512 B block I/O, and the errors the FAT core returns.
 
 use chimera_hal::store::StoreError;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each Part's kit (ADR 0265): beside the Parts, not in them. The Parts
 //! live in the UI's state in D2, which is full; the kits are an ITCM
 //! static on the chip (ADR 0266), lent to the project with the pool's

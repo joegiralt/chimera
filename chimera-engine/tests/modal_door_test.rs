@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MODAL's block through the door (ADR 0215): bank 1's own path on a host
 //! and the host's open door (`--features bank2,test-support`) both play
 //! what MODAL played before the move, bit for bit; closed, a MODAL note is

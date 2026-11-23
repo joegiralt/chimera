@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The one guard on every replace that can lose work (projects spec § Types
 //! decide what's possible): a slot into an `Edited` Part, or `+ NEW` or a
 //! project load over a `Modified` project. Only a `Confirmed` replaces, and

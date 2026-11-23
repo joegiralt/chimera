@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DIN OUT's byte ring (spec § 4.2): the UI queues whole messages, the
 //! TX interrupt pops bytes; a message that doesn't fit is refused whole.
 

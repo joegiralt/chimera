@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's type layer (ADR 0265): pads, knobs, machines, kit notes.
 
 use chimera_core::MidiNote;

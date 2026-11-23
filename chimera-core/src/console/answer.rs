@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `answer`: one request in, its whole answer out, ending in one `OK` or `ERR` line.
 
 use core::fmt::{self, Write};

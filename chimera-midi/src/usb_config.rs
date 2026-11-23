@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The configuration descriptor whole, as bytes (#885, design
 //! 2026-11-10), for layouts past usb-device's 256-B control buffer: USB
 //! audio both ways, the six-channel capture, the Part cables beside them.

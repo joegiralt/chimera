@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What one control message does to its binding's param (spec § 6.2):
 //! pure, over the binding, its runtime and the param's place now. The
 //! caller scales a `Place` into the span and ramps or bins it, and turns

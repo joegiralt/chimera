@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Batch E's Sympathetic pacing and DRUM bills (#306, #962, #977; ADR
 //! 0311, 0320): bank 2's, reached only through `AdmitDoor`'s entries.
 //! `bank2.x` links this module into an S4 group (`10instrument9sym_admit`),

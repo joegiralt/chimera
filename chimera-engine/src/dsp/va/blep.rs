@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 2-point polyBLEP and polyBLAMP kernels (spec § Oscillator
 //! antialiasing): `blep_into`, `blamp_into` and `blamp6_into` are the one
 //! kernel home (the sub's flip writes `blep_into` out, its half step the

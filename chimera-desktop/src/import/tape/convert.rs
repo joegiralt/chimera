@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WAV to 12-bit samples (TAPE spec § 6 steps 1–4 and 6): read, clean, pitch,
 //! resample, quantise. Pure functions over `f32` buffers; the packing is
 //! `chimera-core`'s `pack12`, so host and unit share the bytes.

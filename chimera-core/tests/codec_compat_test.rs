@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Frozen v1 card files (ADR 0045): every later firmware loads them and
 //! renders them identically. The fixtures are written once and never again.
 

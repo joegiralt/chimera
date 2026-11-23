@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The mod destination registry: parameters a sound has primed for
 //! modulation, by semantic address (spec §2, §4).
 

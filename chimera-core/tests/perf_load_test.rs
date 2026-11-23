@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::clock_plan::SiliconRev;
 use chimera_core::hw::BlockBudget;
 use chimera_core::note_queue::MAX_NOTE_SOURCES;

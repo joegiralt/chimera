@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The module chain's six kinds, each with the design's law, at block rate.
 //! Cells are generic (three knobs in 0..1 a slot); `Module` is the typed
 //! view built from them: a knob belongs to its kind.

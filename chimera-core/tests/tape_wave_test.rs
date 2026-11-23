@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's TRANSWAVE (spec § 2 TRANSWAVE): octave mip levels, the note-on
 //! level, hysteresis at the alias limit, the one-block level fade, and the
 //! per-sample scan. Precedent: Ensoniq VFX/SD-1 transwaves; PPG Wave and

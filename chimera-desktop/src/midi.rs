@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The desktop's midir input: port choice, a pure function so "no device"
 //! and "loopback only" are host-tested without opening a real port; and
 //! the port's bytes through a `DinPipe`, as the firmware's DIN. Active

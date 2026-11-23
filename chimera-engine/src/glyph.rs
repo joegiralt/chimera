@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Which gauge a parameter's spec names for its focus band
 //! (`ParamSpec::glyph`): the names and the params each composite reads.
 //! `chimera_core::ui::glyph` draws them.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 mod common;
 use chimera_midi::ctl::*;
 use chimera_midi::stream::*;

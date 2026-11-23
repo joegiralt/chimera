@@ -1,3 +1,7 @@
+// After J. Najnudel, R. Müller, T. Hélie, D. Roze, DAFx-23 (CC BY 4.0; see THIRD_PARTY.md)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Buchla 292B low-pass gate as a circuit. From the lpg-circuit lab
 //! (`lpg_circuit.rs`, `lpg_gate.rs`); `docs/lpg/` has the research, the
 //! validation tables and the gate checks.

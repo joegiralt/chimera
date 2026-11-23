@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VCA's low-pass gate (ADR 0195): LPG, DECAY and STRIKE at 0 leave
 //! every Sound as it was, bit for bit.
 

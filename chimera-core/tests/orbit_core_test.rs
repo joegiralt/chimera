@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::Velocity;
 use chimera_core::orbit::RingIdx;
 use chimera_core::orbit::euclid::{Fill, HitMask, Steps, accents, euclid};

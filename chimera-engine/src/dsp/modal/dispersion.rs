@@ -1,3 +1,7 @@
+// Copyright 2014-2015 Emilie Gillet (Mutable Instruments Rings, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 // The dispersion curve follows Mutable Instruments Rings' `ap_gain` (ADR 0032):
 //
 // Copyright 2014-2015 Emilie Gillet.

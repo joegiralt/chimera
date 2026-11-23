@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Every continuous parameter's declaration is true (ADR 0112): the ones
 //! the Part's knobs glide are `param_motion_test`'s; here the rest.
 //! `Unheard` leaves a held note's output bit for bit; `NoteOn` too, until

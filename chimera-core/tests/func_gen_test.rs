@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Envelope B (filter-routing spec § Envelope B, § Tests "Envelope B").
 
 use chimera_core::dsp::modulator::func::{BCoefs, FuncGen, Slides};

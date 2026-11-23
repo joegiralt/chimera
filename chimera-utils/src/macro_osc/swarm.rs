@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SWARM: eight of VA's band-limited oscillators (`va::osc::VarOsc`,
 //! called a block at a time, never copied), each on a slow random walk.
 //! HARMONICS spreads them: `1200·h³` cents across the eight (≈30 cents at

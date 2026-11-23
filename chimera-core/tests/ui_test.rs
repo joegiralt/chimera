@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::addr::Op;
 use chimera_core::project::PartId;
 use chimera_core::ui::animation::AnimatedValue;

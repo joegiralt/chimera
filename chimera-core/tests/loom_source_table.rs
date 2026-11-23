@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A loom model of `SourceTable` (ADR 0087's gate): one audio thread
 //! running blocks through its `AudioToken`, one UI thread closing the gate,
 //! waiting for the answer, moving on an ack and opening. A shadow cell

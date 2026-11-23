@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Modal 2's resonators (spec 2026-09-29-modal-2-resonators § Tests).
 mod common;
 
@@ -463,7 +466,7 @@ fn bowed_low_notes_sound() {
     assert!(common::peak(&block) > 1e-3, "silent last block");
 }
 
-/// The owner's sitar rule (ADR 0054): a released SYMP note's halo rings
+/// The sitar rule (ADR 0054): a released SYMP note's halo rings
 /// out on its own decay, after the main string has died, and the voice
 /// keeps it until then.
 #[test]
@@ -487,7 +490,7 @@ fn db_at(out: &[f32], at: f32) -> f32 {
     20.0 * common::rms(&out[i..i + SR as usize / 10]).log10()
 }
 
-/// The owner's ruling: the halo gets no release. After note-off it decays
+/// Ruling: the halo gets no release. After note-off it decays
 /// as it does held, within 10 %, over 1 to 2 s. The halo is the full
 /// note less the bare one: the
 /// halo never drives the main string, and at these levels the tanh is
@@ -816,7 +819,7 @@ fn period_of(note: u8) -> f32 {
     SR as f32 / note_to_freq(note)
 }
 
-/// The owner's UAT (2026-09-30): the halo glides as a Prophet's glide
+/// UAT (2026-09-30): the halo glides as a Prophet's glide
 /// does. SYMP note 48 held on chord 1; at block 100 STRUCTURE crosses to
 /// chord 3, string 4 from 9.99 to 13.99 semitones. Its pitch moves one
 /// way only, reaches 90 % of the interval 150 to 250 ms on, lands, and
@@ -1925,7 +1928,7 @@ fn a_settled_bow_does_not_drift() {
     assert!(worst.0 < -45.0, "{:.1} dB at {}", worst.0, worst.1);
 }
 
-/// The owner's UAT (2026-09-30): a released string rings on, as Rings'
+/// UAT (2026-09-30): a released string rings on, as Rings'
 /// does. STRING and SYMP at C3, released 0.3 s in: the fundamental's T60
 /// from 0.1 s after the note-off is the held note's over the same span
 /// within 10 %, and the 100 ms after the note-off are within 1 dB of the
@@ -1992,7 +1995,7 @@ fn an_undamped_c5_frees_60_db_under_its_peak() {
     assert!(last <= peak * 1e-3, "freed at {last} of a {peak} peak");
 }
 
-/// The owner's UAT (2026-09-30): a re-strike adds to what rings, as a
+/// UAT (2026-09-30): a re-strike adds to what rings, as a
 /// re-plucked string does, and clears nothing. C3 struck at v127, rung
 /// 0.3 s (released on the strings, held on the bow), then struck again:
 /// softly (v1) on the plucked and struck models, at v100 on a held bow.

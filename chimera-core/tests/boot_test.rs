@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::boot::{
     BootAction, BootSeen, BootStage, DFU_MAGIC, FROM_CONSOLE, FROM_MENU, ROM_DFU_BASE,
     USB_RETRY_MS, USB_TRIES, UsbOff, UsbRegs, UsbRetry, UsbState, UsbStep, after_reset, wait_until,

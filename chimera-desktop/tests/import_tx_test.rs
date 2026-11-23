@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The TX81Z map and `chimera-import tx` (showcase spec § 6, importer spec
 //! § 6, § 8.2). Every voice is built here from field values, never a
 //! Yamaha bank; every file goes under `CARGO_TARGET_TMPDIR`.

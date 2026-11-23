@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The RSF Kobol Expander's VCF at transistor level: the lab's reference,
 //! run by ngspice (an external tool, never linked; `util::spice`).
 //!
@@ -89,7 +92,7 @@ impl Kobol {
         iabc3: 500e-6,
     };
 
-    /// The owner's unit: `SCHEMATIC` with CI5's offset at 1.5 mV (in spec:
+    /// The test unit: `SCHEMATIC` with CI5's offset at 1.5 mV (in spec:
     /// 0.4 typical, 5 max), read off the recording's ring H2 (−39 dBc).
     pub const UNIT: Kobol = Kobol {
         vos5: 1.5e-3,

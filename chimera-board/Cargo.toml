@@ -2,6 +2,7 @@
 name = "chimera-board"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # The unit off the audio path (ADR 0108): its drivers, the boot and the UI
 # loop. `chimera-stm32` is the binary, the audio interrupt and the bench;

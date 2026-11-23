@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """The A/B stimuli (reverb TYPEs spec § A/B): 48 kHz mono float WAVs, each
 followed by 12 s of silence, from seed 343. Writes <dir>/<name>.wav. The
 drums are synthesised here (Chimera has no drum engine yet); the strings,

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's runner behind bank 2's door (ADR 0208): its block, its
 //! clock's real-time, a live key into capture, and its view. With `bank2`
 //! and `orbit` these entries and what only they reach (the steps, MUTATE,

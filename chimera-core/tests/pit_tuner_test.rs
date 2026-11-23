@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! PIT's tuner (ADR 0201): the scope's corner reads the pitch the edited
 //! Part's last note sounds at, worked out from the note and the Sound:
 //! note and cents at A4 = 440 Hz, then Hz to a tenth. TAPE's source plays

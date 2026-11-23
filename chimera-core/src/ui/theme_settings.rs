@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! THEME as the panel shows it: the accent's and ground's colours, the
 //! backlight's PWM duty and the ILI9341's gamma tables. The values and
 //! their disk codes are the engine's (`chimera_engine::theme_settings`).

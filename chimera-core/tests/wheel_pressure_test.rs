@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WHEEL and PRESSURE (#514): the mod wheel and aftertouch as matrix
 //! sources, per Part's channel (and per key for poly pressure), glided.
 

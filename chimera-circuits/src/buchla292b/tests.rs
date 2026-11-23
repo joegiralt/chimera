@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lpg-circuit lab's checks as assertions: `validate()` (§1, §4–6 of
 //! `docs/lpg/validation.md`, cell VTL5C3/2 as the lab ran it), the ping
 //! timelines (`docs/lpg/levels.md`, VTL5C3/2) and the gate checks

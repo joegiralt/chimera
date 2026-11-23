@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A reverb's metrics, residuals, verdict and distance: the MidiVerb
 //! harness's `mvlib` measurer, ported call for call.
 
@@ -14,7 +17,7 @@ pub const BANDS: [u32; 7] = [125, 250, 500, 1000, 2000, 4000, 8000];
 pub const JUDGED: [u32; 5] = [250, 500, 1000, 2000, 4000];
 pub const NED_AT: [u32; 3] = [20, 50, 100];
 
-/// The owner's match bar, in each metric's units.
+/// The match bar, in each metric's units.
 pub mod tol {
     pub const BAND_RT60: f64 = 0.05;
     pub const PREDELAY_MS: f64 = 1.0;

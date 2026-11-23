@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 #![no_std]
 
 use embedded_graphics_core::draw_target::DrawTarget;

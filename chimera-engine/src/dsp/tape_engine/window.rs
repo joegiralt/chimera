@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The window and its loop (spec § 2 The macros and the window): the pure
 //! arithmetic both banks take. Bank 1's, outside `bank2.x`'s globs: the
 //! deck calls it per pass, and a streamed load places its heads by it.

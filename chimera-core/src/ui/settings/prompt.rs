@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The prompt (spec § Screens): a teal-outlined panel with the question,
 //! the reason in the route colour, and two or three pills. any encoder picks, EDIT
 //! confirms, MENU and SEQ cancel. Each prompt answers in its own enum,

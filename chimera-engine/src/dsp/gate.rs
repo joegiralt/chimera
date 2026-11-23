@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice's amp gate (ADR 0110): after the filter, open while the key is
 //! down; from note-off the voice may be no louder than `REACH` times the
 //! engine feeding it, so a filter that self-oscillates dies with the note

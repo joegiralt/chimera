@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Part's FREE LFOs run on its phase clock (ADR 0135, #489): every voice
 //! of the Part at one phase, whenever its note started; RETRIG restarts; a
 //! RATE change keeps the phase; nothing on the audio path allocates.

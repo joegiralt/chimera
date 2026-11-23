@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The VA's `MOD` oscillators behind bank 2's door (ADR 0163). Every
 //! `MOD` render the engine plays is an entry here, its runs `run`'s
 //! instances, so with `bank2` the module links into `.bank2` whole

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_core::audio_out::{
     DacSample, Half, HalfPlan, Heartbeat, LSI_MAX_HZ, LSI_NOMINAL_HZ, WATCHDOG_TIMEOUT_MS,
     desynced, interleave, iwdg_reload_at_div4, kick_gap_us, plan_halves, rearm_due, to_dac,

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The effects demo projects (spec § 5): `[[project]]` tables in
 //! `projects.toml`, each built on NEW's template into an ordinary project
 //! file, `P000000n.A`, through the firmware's own `encode_project`. The

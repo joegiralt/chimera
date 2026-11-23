@@ -1,3 +1,7 @@
+// Copyright 2012 Emilie Gillet (stmlib's SoftClip in fast_tanh, MIT; notice: see dsp/modal/mod.rs)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 /// Convert MIDI note number to frequency in Hz.
 pub fn note_to_freq(note: u8) -> f32 {
     440.0 * libm::powf(2.0, (note as f32 - 69.0) / 12.0)

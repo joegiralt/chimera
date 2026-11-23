@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `fault` (fault-inject builds): provokes a DMA transfer error on a trailing
 //! audio stream, to test its re-arm on a unit with no debug probe; `fault
 //! ndtr` dumps the three streams' registers to see what the re-arm left;

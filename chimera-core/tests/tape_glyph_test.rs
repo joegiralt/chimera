@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's machine glyphs (#641, ADR 0173): each machine's still and live
 //! pictures locked by golden, the focus band's glyph keyed only on its
 //! quantised steps (a dirty redraw is a full one while a knob turns, and
@@ -313,7 +316,7 @@ fn cases() -> Vec<(String, TapeGauge)> {
             "scrub_back",
             Machine::Scrub(sponge(0.4, -0.5, 0.0, 0.5, 0.0)),
         ),
-        // The owner's DRAG 0, LENGTH 27 (#645), its end crossfaded.
+        // The chosen DRAG 0, LENGTH 27 (#645), its end crossfaded.
         (
             "scrub_length_xfade",
             Machine::Scrub(sponge(0.3, 0.5, 27.0 / 127.0, 0.0, 1.0)),

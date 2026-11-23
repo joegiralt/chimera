@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! One source of truth for engine choice (spec §6).
 
 use chimera_core::params::{EngineType, ParamSnapshot};

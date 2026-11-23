@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's voice groups (ADR 0280, #993): a kit has at most 8, each choke
 //! group in use once and each pad with choke OFF once; a choke edit that
 //! would make a 9th is refused on the cell with its reason; a STACK pad

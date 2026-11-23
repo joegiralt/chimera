@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Tape on DAC pair 1 (FX diet spec § Tape, § Testing). Only with the
 //! `master-tape` feature (ADR 0055).
 #![cfg(feature = "master-tape")]

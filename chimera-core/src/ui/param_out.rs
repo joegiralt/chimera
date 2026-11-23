@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI CONFIG › ECHO › PARAM OUT (ADR 0258): each edit the hand makes
 //! goes out as its NRPN (ADR 0216's address and law) on the Part's
 //! channel. Pushed by the hand's own call (`hand_in`), so a value MIDI or

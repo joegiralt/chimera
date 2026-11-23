@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ROOM (ADR 0095 § ROOM v2) and HALL on the LOOP engine (reverb TYPEs
 //! spec § LOOP engine, § PLATE is a zone of HALL, § Level plan, § Moving a
 //! length, § Pitch bounds, § Tests).
@@ -1886,7 +1889,7 @@ fn level_plan_holds_for_hall() {
     // THD. One damper a loop (ADR 0095 § HALL, as built) leaves 5 kHz's
     // mode G 4.5 against two dampers' 2.4, so a held 5 kHz clips too and
     // aliases: −30 dB as built (−21 before the f32 diffuser), held to −20
-    // for the owner's sign-off (ADR 0095 § HALL, as built).
+    // for sign-off (ADR 0095 § HALL, as built).
     check_loop_level_plan::<Hall>(p, 0.2, -20.0);
 }
 

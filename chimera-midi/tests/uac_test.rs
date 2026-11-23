@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB audio's pure half (ADR 0248): the ring, the packet bytes, the
 //! frame parity, and the pacer against a model of the unit, where the SAI
 //! clock drifts from the host's SOF and the audio interrupt holds the USB

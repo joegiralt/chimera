@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! 12-bit samples, two in three bytes (the sound-pool spec's "12-bit
 //! packing", 2026-10-04-sound-pool-budget-design): a little-endian 12-bit
 //! stream. `b0 = s0[7:0]`, `b1 = s0[11:8] | s1[3:0] << 4`, `b2 = s1[11:4]`.

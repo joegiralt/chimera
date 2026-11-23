@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Why the chip last reset, from RCC_RSR's flags (RM0433, RCC reset status
 //! register). Pure: `chimera-stm32` reads the register at boot, clears it,
 //! and the AUDIO page shows the cause.

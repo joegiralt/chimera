@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's settings in the project (Task 7): the ring, chord and tempo
 //! blocks, their frozen codes, and the drift the UI absorbs from the view.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed since <n>`: the editor pulls what changed. `<n>` is the number of
 //! the last answer it got (`0`: nothing yet). The unit keeps, per section,
 //! a copy of what it last reported, and the last answer's number (`Gen`);

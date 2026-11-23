@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! WALK (ADR 0203): one machine for what ONE, LOOP, PING-PONG and TRON
 //! were. Each DIRECTION, FADE without clicks, POSITION and DRIFT (its
 //! bounds, wrap, both signs and spread), TRON's run-out and pad, the old

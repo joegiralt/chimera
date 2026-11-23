@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The voice FX slot (ADR 0155) driven on rendered engine blocks: its TYPE
 //! and PLACE switches crossfade over `FX_FADE`, MIX 0 is the dry signal on
 //! every engine, and each engine meets the slot's reference level.

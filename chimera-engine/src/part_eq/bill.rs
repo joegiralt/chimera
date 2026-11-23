@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What a Part's EQ costs the voice budget (ADR 0296 § Billing): booked on
 //! the Part's first voice, as its knobs are (ADR 0112), so admission and
 //! `recost` account for the EQ and SMART EQ and a full pool can't overrun

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The Part button toggles sound and mixer; the mixer opens on SENDS (ADR 0057).
 
 mod screen;
@@ -50,7 +53,7 @@ fn at(ui: &UiState) -> (On, u16) {
     (on(ui.location()), ui.page_def().id)
 }
 
-/// The owner's repro: MIX+B1, C +1 turned REV, not OUT.
+/// The reported repro: MIX+B1, C +1 turned REV, not OUT.
 #[test]
 fn mix_b1_then_c_turns_the_reverb_send_not_out() {
     let mut ui = UiState::new();

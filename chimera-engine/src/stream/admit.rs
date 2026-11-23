@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Admission (slice 1 § 5): will a new streamed note fit the card's byte
 //! budget, and if not, which playing voice goes.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Loudness through the real `Instrument` (ADR 0109, #411, #193): the
 //! level table, the targets, and the ceiling every scene stays under.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The proof that a plain block plays the saw alone (ADR 0283), sealed:
 //! only `VarOsc::on_anchor` builds an `OnAnchor`, and it holds the
 //! oscillator it was built on, so it plays that one and no other, and

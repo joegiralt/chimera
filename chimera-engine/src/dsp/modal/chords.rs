@@ -1,3 +1,7 @@
+// Copyright 2015 Emilie Gillet (Mutable Instruments Rings, MIT; notice below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND MIT
+
 // The chord table follows Mutable Instruments Rings' `rings/dsp/part.cc`
 // (ADR 0032):
 //
@@ -29,7 +33,7 @@ use super::string::MAX_STRING_DELAY;
 
 pub const CHORD_COUNT: usize = 11;
 /// A chord change's glide (`Glide`), seconds to 63 %: 90 % in 184 ms,
-/// as a Prophet's glide (the owner's UAT, 2026-09-30).
+/// as a Prophet's glide (UAT, 2026-09-30).
 pub const CHORD_GLIDE_TAU: f32 = 0.08;
 
 /// Rings' single-voice chords (part.cc, `chords[0]`), the 0.0 the main

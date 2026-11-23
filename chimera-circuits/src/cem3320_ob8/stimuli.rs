@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The lab's stimuli: the CURTIS lab's three musical phrases (`bassline`,
 //! `stab`, `pad`: input and a FREQ track, the input peak-normalised to 1)
 //! and the CEM3320 lab's fixed-control cases (`sine_case`, `saw_case`,

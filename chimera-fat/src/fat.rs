@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The FAT: one cached sector, written to every copy, bounded chain walks and
 //! the allocator. Only clusters `Layout::holds` accepts are ever read,
 //! followed or written.

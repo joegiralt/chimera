@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIXER › PRT's live meters (ADR 0293): beside each Part's LEVEL bar, a
 //! bar of what its bus plays after its EQ and before LEVEL, falling 20 dB
 //! a second with its peak held a second; and over its number a mark while

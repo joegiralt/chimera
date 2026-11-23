@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The 292's switch, its audio-path parts and the 292B's fixed stages.
 //! Values from Buchla Associates drawing B21208 (10/12/70, rev. 7-76) and
 //! Parker & D'Angelo, DAFx-13, Table 1; `docs/lpg/research.md` has each.

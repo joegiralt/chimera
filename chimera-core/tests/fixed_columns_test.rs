@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The four permanent matrix columns, FREQ, Q, VCA and FOLD (filter-types
 //! spec § 7): outside the registry, migrated from old patches, saved as
 //! ordinary route records.

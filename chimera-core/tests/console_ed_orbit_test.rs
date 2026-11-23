@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed` on ORBIT (ADR 0289, protocol 4's slice 5): `ed describe ORBIT`
 //! from `ORBIT_CHAIN` with RHYTHM, VOICE and NOTES once a ring and the
 //! cells no param as `act` lines, `ORBIT`, `RING<k>` and `TEMPO` set

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `chimera-import tape` (TAPE spec § 6): a WAV to a sealed `.SRC` on the
 //! sim's card, and the report that says what it made.
 

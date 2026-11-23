@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's hits (plan Task 5): a DRUM Part's notes strike its kit's pads,
 //! RETRIG CUT and the choke groups end voices through the fade, note-off
 //! never cuts a ringing pad unless the Sound's AMP routes say so, and pad

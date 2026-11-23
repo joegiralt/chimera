@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `chimera-import tape` (TAPE spec § 6): a WAV into a TAPE source, sealed
 //! on the sim's card. `build` is the pure part, WAV samples to a head and
 //! its packed bytes; `import` reads the file and writes through

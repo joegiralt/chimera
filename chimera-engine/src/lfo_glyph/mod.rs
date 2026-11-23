@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The LFO page's pictures (#649, ADR 0177): a glyph a control in the
 //! focus band's 64 × 48 box, and the scope's one cycle of the LFO itself.
 //!

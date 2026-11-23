@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Host tests for check_itcm.py and tools/itcm-residents.txt (standard library only)."""
 
 import importlib.util

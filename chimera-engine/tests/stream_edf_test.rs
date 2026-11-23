@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_engine::stream::edf::{Pick, Want, pick, wants};
 use chimera_engine::stream::layout::ChunkIdx;
 use chimera_engine::stream::ring::{Rings, ThirdSlots};

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! MIDI learn (MIDI map spec § 4, phase 1 § 6.3): MIX+SEQ arms on the
 //! focused cell; the first control on the Part's channel maps to it, and
 //! learn senses its kind from what it sends till MIX+SEQ, a nav key, a page

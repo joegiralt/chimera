@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Streamed admission's work (slice 1 § 5.5, #595): a TAPE note's bill,
 //! the pick that steals what the card needs for it, and the block's
 //! re-bill. With `bank2` it is bank 2's (`bank2.x` globs this module):

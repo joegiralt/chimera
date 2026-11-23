@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `ed set <addr> <value>`: the value resolved here, bank 2's, queued for
 //! the shell's UI pass, which applies it as a knob turn (`UiState::edit_to`,
 //! ADR 0112's glide): never a snap, never a zipper. A pad's lands on that

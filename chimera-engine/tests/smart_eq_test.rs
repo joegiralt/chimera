@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SMART EQ's settings (ADR 0296): ROLE a Part, SMART EQ and AMOUNT on the
 //! master, each a typed code; the rest state is zero bytes.
 

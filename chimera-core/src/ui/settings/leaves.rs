@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! One chain per SETTINGS leaf page, from the existing System defs.
 
 use crate::addr::BlockRef;

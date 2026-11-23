@@ -1,5 +1,8 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM (0.4, #214): host prototypes of the design note's machines and of
-//! the sample layer's COMBINE, rendered for the owner to pick the ship
+//! the sample layer's COMBINE, rendered to pick the ship
 //! list by ear (ruling 6, 2026-11-10). Built from chimera-engine's parts
 //! (`parts`); never in a firmware build. Kept as model work.
 //!
@@ -637,7 +640,7 @@ fn knob_map(id: Id, k: &[u8]) -> Value {
     Value::Object(m)
 }
 
-/// Rendered: the ship list, and VOX for the owner's first listen.
+/// Rendered: the ship list, and VOX for a first listen.
 fn rendered(s: &machines::Spec) -> bool {
     s.ships || s.family == "VOX"
 }

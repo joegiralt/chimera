@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › TUNING's TUNING and MAPPING, the active Part's (ADR 0240,
 //! 0259): each Part's choice made its table. Pulled, not pushed: after the
 //! keys, any Part whose TUNING, MAPPING or Scala file differs from what its

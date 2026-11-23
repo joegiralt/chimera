@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SUGGEST, the factory controller map (ADR 0226): a shared section and
 //! one an engine, on MIDI's undefined CCs, written through the firmware's
 //! own map codec from the param tables, so it can't drift. CC 20 is each

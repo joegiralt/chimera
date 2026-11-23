@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What an editor's set does on the box beside its write (ADR 0285): a set
 //! on a cell ends any choice held dimmed there, as a turn that lands does,
 //! and a set the box refuses says why in a toast, as a CC's refusal does.

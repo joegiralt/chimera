@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! One slot of a stream's ring: a state word the audio and the card move
 //! by compare-and-swap, and the deadline the audio wants it filled by.
 //!

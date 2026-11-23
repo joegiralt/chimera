@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STM32H750 PLL3/SAI clock planning (ADR 0020): pure arithmetic, no
 //! register access. `chimera-stm32` reads `DBGMCU_IDC.REV_ID` and writes
 //! these values; this module only computes them.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_hal::{DEBOUNCE_TICKS, Debounce, NUM_ENCODERS, PUSH_BITS, StartHold, push_levels};
 
 /// All released: every push bit high, as is the top byte.

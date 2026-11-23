@@ -1,3 +1,8 @@
+// Copyright (c) 2005-2024 NumPy Developers; Copyright (c) 2019 Kevin Sheppard (NumPy, BSD-3-Clause)
+// Copyright 2014 Melissa O'Neill (PCG64, Apache-2.0 or MIT; notices below)
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later AND BSD-3-Clause AND (Apache-2.0 OR MIT)
+
 //! Test signals: the click, interrupted noise (ISO 3382-2), the Latin
 //! hypercube and the listening set, drawn as numpy's `default_rng(seed)`
 //! draws them (SeedSequence, PCG64, the ziggurat normal), so a seed gives the

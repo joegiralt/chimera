@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The host as the console sees it: where answers go (`Out`), and `put`'s
 //! data read a packet at a time (`Rx`).
 

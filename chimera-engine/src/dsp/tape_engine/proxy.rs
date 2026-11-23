@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE in bank 1 with `bank2` (ADR 0137): `off`'s surface over a
 //! `TapeDeck` that bank 2's code plays, through the door's `TapeDoor`.
 //! Closed, it is `off`'s silent engine. Open, the deck is built through the

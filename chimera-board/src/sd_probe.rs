@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! On-unit SD bring-up (`--features sd-probe`): clocks, acquire in each SPI
 //! mode, the volume, then through `SdStore` (our FAT layer, ADR 0048) a
 //! mount and a `/CHIMERA` listing, a 16 KB write/read/delete at two clocks,

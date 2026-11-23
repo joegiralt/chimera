@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Host tests for bank1_budget.py and its file (standard library only)."""
 
 import importlib.util

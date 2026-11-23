@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The whole reference unit: f64, 8× oversampled (384 kHz), the LED
 //! driver, the vactrol and the audio path stepped together each sample.
 

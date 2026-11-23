@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Each Part's live peak for MIXER › PRT's meters (ADR 0293): the most
 //! its bus reached since the UI last looked, after its EQ and before its
 //! LEVEL, PAN and sends, a DRUM pad's side counted (`|mid| + |side|`, the

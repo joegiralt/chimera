@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Scenes (Task 16, spec § 4.1, § 6.3): SCN's SCENE queues one, which
 //! lands on the loop; SEQ saves the playing one with its drift; SCN's SAVE
 //! over another saved scene asks, and only its pill overwrites.
@@ -868,7 +871,7 @@ fn seq_saves_nothing_on_any_orbit_page() {
     }
 }
 
-/// NEW plays the owner's pick (V4, ADR 0073) as scene 1; the other seven
+/// NEW plays the picked take (V4, ADR 0073) as scene 1; the other seven
 /// slots are neutral, and nothing waits.
 #[test]
 fn new_plays_v4_as_scene_1() {
@@ -1394,7 +1397,7 @@ fn switch(rig: &mut ShellRig, by: i8) {
     assert_eq!((song.current(), song.queued()), (to, None));
 }
 
-/// The owner's report (ADR 0083): KEY and SCALE turned on scene 1 (ring
+/// The reported bug (ADR 0083): KEY and SCALE turned on scene 1 (ring
 /// 2's harmony with every other ring's), a switch to scene 2 and back
 /// while playing: scene 1 comes back with its edit, and plays it.
 #[test]

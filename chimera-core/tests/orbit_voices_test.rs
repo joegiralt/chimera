@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's notes in the voice pool (Task 4): `Instrument::handle_from` and
 //! a note-off that matches its origin too (spec § 5.2).
 

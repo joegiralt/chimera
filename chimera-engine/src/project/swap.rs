@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Loading while playing (projects spec § Loading while playing, ADR
 //! 0046): a project load bumps the epoch; the audio fades every voice
 //! through the old snapshot, acks, and holds the note queues until a

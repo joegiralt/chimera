@@ -99,7 +99,7 @@ Every task's requirements include this section. Numbers are the spec's, verbatim
 - Decisions that constrain future work get an ADR in `docs/adr/` (template `0000-template.md`, listed in `docs/adr/README.md`); an accepted ADR is never edited except for its status in the README row.
 - Commit messages are plain: no `fix:`/`feat:`-style prefix. Comments are terse, only where needed.
 - **Never stage `docs/chimera-ui-ux-spec.md`.** Stage files by name in every commit; never `git add -A` or `git add .`.
-- Build and test with `PKG_CONFIG_PATH=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/pkgconfig just check`, written `just check` below. Run it exactly as given: its stack check reads `./target`. Every single `cargo` command below (a focused test run) is prefixed `CARGO_TARGET_DIR=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/wt-fr-target`, written `$T` below (`export T=...` once per shell). Run `cargo fmt --all` before `just check`.
+- Build and test with `PKG_CONFIG_PATH=<scratchpad>/scratchpad/pkgconfig just check`, written `just check` below. Run it exactly as given: its stack check reads `./target`. Every single `cargo` command below (a focused test run) is prefixed `CARGO_TARGET_DIR=<scratchpad>/scratchpad/wt-fr-target`, written `$T` below (`export T=...` once per shell). Run `cargo fmt --all` before `just check`.
 
 ## Review Focus
 
@@ -202,9 +202,9 @@ Modified: `dsp/mod.rs`, `dsp/filter.rs`, `dsp/envelope.rs`, `dsp/lfo.rs`, `dsp/v
 Shell shorthands used in every task:
 
 ```bash
-export T="CARGO_TARGET_DIR=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/wt-fr-target"
-export S=/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/screens
-cd /tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad/wt-fr
+export T="CARGO_TARGET_DIR=<scratchpad>/scratchpad/wt-fr-target"
+export S=<scratchpad>/scratchpad/screens
+cd <scratchpad>/scratchpad/wt-fr
 ```
 
 `env $T cargo test ...` below means the focused run with the target dir. **Looking at a screen** always means: `mkdir -p $S && SCREEN_DUMP=$S env $T cargo test -p chimera-core --test screen_golden_test screen_goldens_match`, then `magick $S/<case>.ppm $S/<case>.png` (or `convert` on ImageMagick 6), then Read the PNG and check what the step lists. A screen that looks wrong is fixed before its golden is recorded.
@@ -1186,7 +1186,7 @@ fn write_lfo_cutoff_wavs() {
         for s in out {
             w.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
         }
-        let dir = "/tmp/scratch-1000/-HOME-user-dev-chimera/05a415fc-f8d7-4033-943f-e96e5bd74fff/scratchpad";
+        let dir = "<scratchpad>/scratchpad";
         std::fs::write(format!("{dir}/{}.wav", case.name()), w).unwrap();
     }
 }

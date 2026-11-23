@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! USB audio from the host (#885): the explicit-feedback servo and the
 //! audio interrupt's priming, against a model of the unit and of Linux's
 //! snd-usb-audio, where the SAI clock drifts from the host's SOF.

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The bench beds (slice 0's gate): one aperiodic chirp WAV a stream, and the
 //! per-chunk CRC table the unit checks every chunk it consumes against.
 //!

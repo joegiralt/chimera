@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The master compressor (FX diet spec § Master comp): the last stage, one
 //! detector on the sum of all three DAC pairs, one gain on every pair.
 //! Hard knee, smoothed in the log domain (octaves of amplitude), the gain

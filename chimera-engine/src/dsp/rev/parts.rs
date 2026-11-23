@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! What every reverb engine is built from (reverb TYPEs spec § Shared
 //! machinery, § Level plan, § Moving a length, § Smoothing). Lines are
 //! i16, full scale ±2.0 in line units; values passed in LSBs.

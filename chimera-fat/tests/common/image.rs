@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! RAM-disk card images: FAT16, FAT32, exFAT and the superfloppies; `Rec`,
 //! a recording view of one's partition; `Overlay`, a copy-on-write view of
 //! one; and `embedded-sdmmc`, a second FAT implementation, over them.

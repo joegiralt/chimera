@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! STEAL = GLIDE (#254, ADR 0065): a note that steals a sounding voice of
 //! its own Part and model glides the ring to its pitch, as a Prophet's
 //! glide, and strikes it anew on the way; CUT strikes at the new pitch.

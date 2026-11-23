@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A voice's tuning offset (ADR 0240): a strike starts on its key's, a
 //! glide eases to the new key's at the glide's own pace, never a step.
 

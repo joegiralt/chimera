@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The metal kernel: VA's squares through CLEAN band-passes. TONE COWBELL,
 //! TONE CYMBAL and METAL HAT (the bank), METAL JINGLE (the bank's squares
 //! gated by burst particles); machines.rs:913–1197.

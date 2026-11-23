@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A folder as a Mac leaves it after the bootloader's card mode (#930, ADR
 //! 0259): AppleDouble `._FOO.<ext>` (short name `_FOO~1`, not hidden),
 //! `.DS_Store` and a hidden file beside the real one, and a file of another

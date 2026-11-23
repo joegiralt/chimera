@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The public set: every Sound Source in `tools/factory-sounds/` checked
 //! and built into `<out>/CHIMERA/SOUNDS/S91xxxxx.A`, the demo projects in
 //! `projects.toml` into `<out>/CHIMERA/PROJECTS/P000000n.A`, with
@@ -213,23 +216,35 @@ fn write_set(
 pub const PORTS_VAR: &str = "CHIMERA_TX_PORTS";
 /// Where the TX81Z banks live, for the edits check (spec § 6).
 pub const BANKS_VAR: &str = "CHIMERA_TX_BANKS";
+/// The ledgers' root under `$HOME`: the checkout's own `.superpowers/`
+/// (ignored by git), kept off any worktree so it outlives one.
+pub const LEDGERS: &str = "dev/chimera/.superpowers/ledgers";
+
+/// `$HOME/LEDGERS/<name>`.
+pub fn home_ledger(name: &str) -> PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    Path::new(&home).join(LEDGERS).join(name)
+}
+
 /// Everything private by default: `ports/`, `banks/` and `qa/`, a sibling
 /// of the showcase ledger, which is published (never a port in it).
-pub const PRIVATE_LEDGER: &str = "~/dev/chimera/.superpowers/ledgers/showcase-private";
+pub fn private_ledger() -> PathBuf {
+    home_ledger("showcase-private")
+}
 
-/// `$CHIMERA_TX_PORTS` (`var`), else `PRIVATE_LEDGER/ports`.
+/// `$CHIMERA_TX_PORTS` (`var`), else `private_ledger()/ports`.
 pub fn ports_dir(var: Option<OsString>) -> PathBuf {
-    var.map_or_else(|| Path::new(PRIVATE_LEDGER).join("ports"), PathBuf::from)
+    var.map_or_else(|| private_ledger().join("ports"), PathBuf::from)
 }
 
-/// `$CHIMERA_TX_BANKS` (`var`), else `PRIVATE_LEDGER/banks`.
+/// `$CHIMERA_TX_BANKS` (`var`), else `private_ledger()/banks`.
 pub fn banks_dir(var: Option<OsString>) -> PathBuf {
-    var.map_or_else(|| Path::new(PRIVATE_LEDGER).join("banks"), PathBuf::from)
+    var.map_or_else(|| private_ledger().join("banks"), PathBuf::from)
 }
 
-/// `qa --private`'s ledger: `PRIVATE_LEDGER/qa`.
+/// `qa --private`'s ledger: `private_ledger()/qa`.
 pub fn private_qa_ledger() -> PathBuf {
-    Path::new(PRIVATE_LEDGER).join("qa")
+    private_ledger().join("qa")
 }
 
 /// The port Source files in `dir` (`*.toml`), by name; none, or no

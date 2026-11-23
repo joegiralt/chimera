@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ORBIT's pages as drawn and turned: RHYTHM's pattern, VOICE's bars,
 //! NOTES' chips, CHRD's segments and ORB's CUSTOM circle; and the custom
 //! set's record. Their screens are locked in `screen_golden_test`

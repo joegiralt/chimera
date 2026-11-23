@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TRANSWAVE (spec § 2 TRANSWAVE): a table of single-cycle frames, scanned.
 //! Each frame is held at octave mip levels, nominal `N` from the top (256,
 //! or 512 with `--top 1024`) down to 16, each band-limited to `⌊0.35 · N⌋`

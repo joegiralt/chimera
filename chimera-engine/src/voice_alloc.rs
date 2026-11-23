@@ -1,11 +1,14 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Digitone-style voice allocation (instrument-core spec § Voice
 //! allocation): pure bookkeeping over the `MAX_VOICES` pool, no DSP.
 //!
 //! 1. A Mono part owns one voice while it sounds; a new note retriggers it.
 //!    Mono voices are never stolen.
 //! 2. A Poly part re-striking a key it sounds, held or ringing, takes that
-//!    voice back if the budget allows: a re-plucked string (the owner's
-//!    UAT, 2026-09-30); if not, the rules below.
+//!    voice back if the budget allows: a re-plucked string (UAT,
+//!    2026-09-30); if not, the rules below.
 //!    Else a free voice, round-robin; with none free, a dying
 //!    one, nearest the end of its fade (its note starts when the fade ends).
 //! 3. Pool full: steal from any part the oldest released (note-off'd, tail
@@ -156,8 +159,7 @@ pub enum Key {
 
 /// What a booked voice plays (ADR 0281): a note, which counts toward its
 /// Part's RESERVE while its key is down, or a DRUM hit, which counts until
-/// its voice finishes, its pad's note-off or not (the owner's rulings,
-/// 2026-11-18).
+/// its voice finishes, its pad's note-off or not (2026-11-18 rulings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Strike {
     Note(Key),
@@ -347,8 +349,7 @@ impl Allocator {
     }
 
     /// Part `part`'s voices that count toward its reserve: live notes with
-    /// their key down, and live DRUM hits (`Strike::reserves`, the owner's
-    /// rulings, 2026-11-18).
+    /// their key down, and live DRUM hits (`Strike::reserves`, ADR 0281).
     #[inline(never)]
     #[optimize(size)]
     fn reserving(&self, part: PartId) -> VoiceSet {
@@ -416,8 +417,7 @@ impl Allocator {
 
     /// The voices whose stream a note on `part` may stop for card bandwidth
     /// (ADR 0281): any but another Part's guarded ones, at the cap too. The
-    /// cap limits only how many voices the Part sounds (the owner's ruling,
-    /// 2026-11-18).
+    /// cap limits only how many voices the Part sounds (ADR 0281, 2026-11-18).
     pub fn card_stealable(&self, part: PartId) -> VoiceSet {
         VoiceSet::ALL.without(self.guarded(Some(part)))
     }
@@ -654,7 +654,7 @@ impl Allocator {
 
     /// The voice's engine went silent: free it if it was released or shed,
     /// or played a DRUM hit, which ends with its voice whatever its pad's
-    /// key (the owner's ruling, 2026-11-18): a later note-off finds
+    /// key (ADR 0281, 2026-11-18): a later note-off finds
     /// nothing held.
     pub fn release_finished(&mut self, voice: VoiceIdx) {
         if let Some(s) = self.slots.get_mut(voice.index())

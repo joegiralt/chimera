@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The tape delay (FX diet spec § Delay).
 
 use chimera_core::dsp::SendLevel;

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Sound's MIDI map (spec §§ 2-3): up to 16 CC -> param entries, a fixed
 //! array with no heap. `Mappable` is the whitelist type, so an address a CC
 //! may not drive (a switch, a setting) can never be stored.

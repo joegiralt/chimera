@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! SETTINGS › PROJECT against `MemStore` (settings spec § The PROJECT
 //! branch): LOAD, SAVE AS, quick save, CARD CHANGED, and `card_work`.
 

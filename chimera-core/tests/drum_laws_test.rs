@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! DRUM's machine laws (ADR 0265): each machine's knob labels, curves and
 //! defaults, and the typed kernel params they resolve to.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spans (slice 1 § 7.2): what a streamed note reads a block through. A
 //! span is a run of source frames in RAM, a head in the arena or a Ready
 //! ring slot (its guard included), read through a `SourceView` of just

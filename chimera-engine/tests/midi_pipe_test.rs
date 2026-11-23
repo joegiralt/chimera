@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! `DinPipe`: both parser layers into the note queue and the control ring.
 //! What the retired `MidiParser` + `route` queued is frozen here as
 //! `old_route_queued`.

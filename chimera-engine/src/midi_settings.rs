@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The instrument-wide settings SYSTEM keeps beside the theme: MIDI
 //! CONFIG's SYNC, who drives ORBIT's transport (ADR 0080), SETTINGS >
 //! TUNING's TUNE, the A4 reference as cents off 440 Hz, SYSTEM > PUSH

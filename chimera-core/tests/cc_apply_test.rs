@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Mapped CCs move the Sound in the UI (spec §§ 5-7): through the
 //! encoder's edit path, ramped over the gap between CCs, and never more
 //! than `MOVES − 1` knob moves in flight a Part, so the audio never lands

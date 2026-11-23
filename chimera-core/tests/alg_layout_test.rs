@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Spec § UI and § Testing: the computed diagram stays inside the viz band
 //! for all 32 algorithms, with no overlapping nodes and every link pointing
 //! down; a deep chain switches to the compact spacing.

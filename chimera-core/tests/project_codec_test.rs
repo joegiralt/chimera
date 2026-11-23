@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The project codec (projects spec § Format): slots, Parts and FX as card
 //! records, round-tripped bit for bit; the structure rules; the CRC.
 

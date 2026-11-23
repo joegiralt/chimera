@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A gesture hint (ADR 0086): what a MIX or hold gesture does here, shown
 //! where the touched cell, row or route is read, and only while it is.
 //! One look everywhere: the keys in bold INK, then what they do in MID.

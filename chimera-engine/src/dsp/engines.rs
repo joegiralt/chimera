@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A voice's engine: one slot holding the engine it plays, rebuilt in
 //! place when it plays another (ADR 0051, superseding 0008). The variant
 //! is the engine; dispatch is one exhaustive `match` per method. Adding an

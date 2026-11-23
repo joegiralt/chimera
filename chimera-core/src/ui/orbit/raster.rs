@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! Bank 2's side of ORBIT's pages (`door`): the table's entries, each
 //! `draw`'s, on an `Ink`.
 

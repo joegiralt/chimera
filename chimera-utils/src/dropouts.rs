@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The drop-out analyser: finds gaps, repeats and skips in a recording of
 //! stream 0 (the MOTU's) against the bed it played.
 //!

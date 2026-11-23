@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Host tests for chimera-usb.py against a fake unit (standard library only).
 
 Run: python3 -m unittest discover -s tools -p 'test_*.py'

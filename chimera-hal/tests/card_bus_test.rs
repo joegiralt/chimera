@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 use chimera_hal::Ms;
 use chimera_hal::card_bus::{CardBus, CardFault, Owner, Quiet, Taker, Took, Wake};
 use chimera_hal::units::{Millis, StreamCount};

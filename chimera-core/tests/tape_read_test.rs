@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's read (spec § 1, § 2 Reading a source): the descriptor, the
 //! 12-bit decode, and the 4-point Hermite (Niemitalo 2001's x-form).
 

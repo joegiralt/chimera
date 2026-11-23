@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! A Sound's map on the card (MIDI phase 1 spec § 6.4), bank 2's behind
 //! `MidiDoor`. `Bindings` (0x001F): a version byte, then 8 B an entry,
 //! `[tag:3 | kind:5] [number hi] [number lo] [block] [param] [min] [max]

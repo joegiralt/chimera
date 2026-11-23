@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! TAPE's glyph through the door (ADR 0173, 0175): open, `TapeGauge::of` and
 //! `paint` are bank 2's `draw::inputs` and `draw::render`; closed, ONE's
 //! still pose and no paint. The fixed slots after the door

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! FX and ORBIT targets (#512): the master FX's knobs and ORBIT's ring
 //! amounts take a binding in the Part's map. Learned on their pages,
 //! moved on the Part's channel (an FX knob ramped, a ring amount binned

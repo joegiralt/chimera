@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The sample layer and COMBINE (design note § The voice): clips we
 //! synthesise ourselves, stored at 16 kHz as 12-bit, 8-bit or a 4-bit
 //! IMA-style ADPCM, read once through by TAPE's Hermite (`read::hermite`)

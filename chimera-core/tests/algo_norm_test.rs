@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! ADR 0049: the Algo output scale is a property of the patch, read from
 //! the stored LEVELs. A matrix route into one carrier's LEVEL (VEL, an LFO)
 //! never moves another carrier.

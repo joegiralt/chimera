@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! An ENV slot of the modulator pool (spec § 1): runs its TYPE from
 //! `EnvParams` and the matrix's inputs, once per block or per sample.
 

@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! check-slots on synthetic 1 MB images.
 
 #[allow(dead_code)]

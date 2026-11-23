@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The FORMANT page and VOWEL's dimming: the Algo chain gains FRM while an
 //! operator is a formant or a noise band, and every page is kept by id
 //! through the change (formant-operators plan, Task 13).

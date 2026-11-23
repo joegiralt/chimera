@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The simulator's console over WebSocket, for the browser editor: one text
 //! message per console line, both ways. A browser can't open the console's
 //! TCP socket. One browser at a time: a new one replaces the old, as the

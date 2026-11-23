@@ -1,3 +1,6 @@
+// Copyright (C) 2026 Joe Giralt
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 //! The bench's streams: N heads, each over its own bed, every chunk
 //! checked, stream 0 played aloud.
 
