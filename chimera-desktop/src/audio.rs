@@ -62,7 +62,8 @@ struct SharedState {
 }
 
 pub struct DesktopAudio {
-    _stream: Stream,
+    /// None headless (`headless_clock` renders).
+    _stream: Option<Stream>,
     shared: Arc<SharedState>,
     /// The computer keyboard's note source.
     keys: NoteProducer<'static>,
@@ -82,19 +83,25 @@ impl DesktopAudio {
         orbit: Writer<OrbitView>,
         formant: Writer<FormantViews>,
         streams: Option<DeskStreams>,
+        headless: bool,
     ) -> Self {
-        let host = cpal::default_host();
-        let device = host.default_output_device().expect("no output device");
-        let config = stereo_48k(&device).unwrap_or_else(|| {
-            let c = device.default_output_config().expect("no output config");
-            eprintln!(
-                "no 48 kHz stereo f32 output; resampling 48 kHz to {} Hz",
-                c.sample_rate().0
-            );
-            c
+        // Headless: no device; a thread renders at the unit's rate, heard by no one.
+        let device = (!headless).then(|| {
+            let host = cpal::default_host();
+            let device = host.default_output_device().expect("no output device");
+            let config = stereo_48k(&device).unwrap_or_else(|| {
+                let c = device.default_output_config().expect("no output config");
+                eprintln!(
+                    "no 48 kHz stereo f32 output; resampling 48 kHz to {} Hz",
+                    c.sample_rate().0
+                );
+                c
+            });
+            (device, config)
         });
-        let sample_rate = config.sample_rate().0;
-        let channels = config.channels() as usize;
+        let (sample_rate, channels) = device.as_ref().map_or((SAMPLE_RATE, 2), |(_, c)| {
+            (c.sample_rate().0, c.channels() as usize)
+        });
 
         let (shared_audio, mut shared_reader) = Box::leak(Box::new(TripleBuffer::new(
             AudioShared::default(),
@@ -124,53 +131,65 @@ impl DesktopAudio {
         let mut block_pos = BLOCK_SIZE;
         let mut scope = ScopeWriter::new(scope);
 
-        let stream = device
-            .build_output_stream(
-                &config.into(),
-                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    flush_denormals();
-                    let shared = shared_reader.read();
-                    let solo = audio.solo.load(Ordering::Relaxed);
-                    // A load's waits scale with this period (ADR 0099).
-                    let frames = (data.len() / channels) as u64;
-                    let us = frames * 1_000_000 / u64::from(sample_rate);
-                    engine.sources.set_period_us(us as u32);
-                    for frame in data.chunks_mut(channels) {
-                        let (l, r) = rate.frame(|| {
-                            if block_pos >= BLOCK_SIZE {
-                                engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
-                                let inst = &*engine.inst;
-                                formant.publish(|v| inst.formant_views_into(v));
-                                block_pos = 0;
-                            }
-                            let (lr, clamped) = stereo_frame(engine.dac.out(), solo, block_pos);
-                            if clamped {
-                                audio.clamped.fetch_add(1, Ordering::Relaxed);
-                            }
-                            block_pos += 1;
-                            lr
-                        });
-                        match frame {
-                            [mono] => *mono = 0.5 * (l + r),
-                            [fl, fr, rest @ ..] => {
-                                (*fl, *fr) = (l, r);
-                                rest.fill(0.0);
-                            }
-                            [] => {}
-                        }
+        let mut render = move |data: &mut [f32]| {
+            flush_denormals();
+            let shared = shared_reader.read();
+            let solo = audio.solo.load(Ordering::Relaxed);
+            // A load's waits scale with this period (ADR 0099).
+            let frames = (data.len() / channels) as u64;
+            let us = frames * 1_000_000 / u64::from(sample_rate);
+            engine.sources.set_period_us(us as u32);
+            for frame in data.chunks_mut(channels) {
+                let (l, r) = rate.frame(|| {
+                    if block_pos >= BLOCK_SIZE {
+                        engine.block(&LOAD_LINK, &mut drain, shared, &mut scope);
+                        let inst = &*engine.inst;
+                        formant.publish(|v| inst.formant_views_into(v));
+                        block_pos = 0;
                     }
-                },
-                |err| eprintln!("audio error: {}", err),
-                None,
-            )
-            .expect("failed to build audio stream");
-
-        stream.play().expect("failed to play stream");
+                    let (lr, clamped) = stereo_frame(engine.dac.out(), solo, block_pos);
+                    if clamped {
+                        audio.clamped.fetch_add(1, Ordering::Relaxed);
+                    }
+                    block_pos += 1;
+                    lr
+                });
+                match frame {
+                    [mono] => *mono = 0.5 * (l + r),
+                    [fl, fr, rest @ ..] => {
+                        (*fl, *fr) = (l, r);
+                        rest.fill(0.0);
+                    }
+                    [] => {}
+                }
+            }
+        };
+        let stream = match device {
+            Some((device, config)) => {
+                let stream = device
+                    .build_output_stream(
+                        &config.into(),
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| render(data),
+                        |err| eprintln!("audio error: {}", err),
+                        None,
+                    )
+                    .expect("failed to build audio stream");
+                stream.play().expect("failed to play stream");
+                Some(stream)
+            }
+            None => {
+                std::thread::spawn(move || headless_clock(&mut render));
+                None
+            }
+        };
 
         Self {
             _stream: stream,
+            // Headless opens no MIDI input port; `--midi-out` still connects if asked.
             #[cfg(feature = "midi")]
-            _midi: connect_midi(producers.take(MIDI).expect("MIDI producer taken once")),
+            _midi: (!headless)
+                .then(|| connect_midi(producers.take(MIDI).expect("MIDI producer taken once")))
+                .flatten(),
             shared,
             keys,
             shared_audio,
@@ -231,6 +250,19 @@ impl DesktopAudio {
         self.shared
             .solo
             .store(pair.min(DAC_PAIRS as u8), Ordering::Relaxed);
+    }
+}
+
+/// Headless: `render` a device-sized period of stereo every period, on the wall clock.
+fn headless_clock(render: &mut impl FnMut(&mut [f32])) {
+    const FRAMES: usize = 256;
+    let period = Duration::from_micros(FRAMES as u64 * 1_000_000 / u64::from(SAMPLE_RATE));
+    let mut buf = [0.0f32; FRAMES * 2];
+    let mut next = Instant::now();
+    loop {
+        render(&mut buf);
+        next += period;
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
     }
 }
 

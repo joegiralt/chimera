@@ -12,7 +12,7 @@ use chimera_core::console::{
 use chimera_core::ui::UiState;
 use chimera_hal::Ms;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
 pub const ADDR: &str = "127.0.0.1:7341";
@@ -31,21 +31,76 @@ pub struct SocketConsole {
     client: Option<Client>,
 }
 
-/// The console on `addr`, or off (and said so) when the port is taken.
+/// A loopback socket address, or why not: the console can `rm`, `put`
+/// and `dfu`, so it is never on the LAN.
+pub fn loopback(addr: &str) -> Result<SocketAddr, String> {
+    let a: SocketAddr = addr.parse().map_err(|e| format!("{addr}: {e}"))?;
+    if a.ip().is_loopback() {
+        Ok(a)
+    } else {
+        Err(format!(
+            "{addr} is not loopback; the console can rm, put and dfu"
+        ))
+    }
+}
+
+/// The console on `addr` (loopback only), or why not.
+pub fn bind(addr: &str) -> Result<SocketConsole, String> {
+    SocketConsole::bind(loopback(addr)?).map_err(|e| format!("{addr}: {e}"))
+}
+
+/// The console on `addr`, or off, and why said.
 pub fn bind_or_off(addr: &str) -> Option<SocketConsole> {
-    SocketConsole::bind(addr)
-        .inspect_err(|_| eprintln!("console: {addr} busy, console off"))
+    bind(addr)
+        .inspect_err(|e| eprintln!("console off: {e}"))
         .ok()
 }
 
 impl SocketConsole {
-    pub fn bind(addr: &str) -> std::io::Result<Self> {
+    pub fn bind(addr: impl ToSocketAddrs) -> std::io::Result<Self> {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         Ok(SocketConsole {
             listener,
             client: None,
         })
+    }
+
+    /// Take the newest waiting client: it replaces the old one. Whether one came.
+    fn accept(&mut self) -> bool {
+        let mut came = false;
+        while let Ok((stream, _)) = self.listener.accept() {
+            // No Nagle: an answer is several small writes, and each would
+            // wait out the client's delayed ACK (40 ms a request).
+            let _ = stream.set_nodelay(true);
+            if stream.set_nonblocking(true).is_ok() {
+                self.client = Some(Client {
+                    stream,
+                    line: Console::new(),
+                });
+                came = true;
+            }
+        }
+        came
+    }
+
+    /// Headless, between laps: back when a client comes, sends or leaves,
+    /// else after `max`. Idle, the sim sleeps instead of drawing.
+    pub fn wait(&mut self, max: Duration) {
+        let end = Instant::now() + max;
+        let mut byte = [0u8; 1];
+        while Instant::now() < end {
+            if self.accept() {
+                return;
+            }
+            if let Some(c) = &self.client {
+                match c.stream.peek(&mut byte) {
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                    _ => return,
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     #[cfg(test)]
@@ -56,14 +111,7 @@ impl SocketConsole {
     /// The frame's top: take the newest waiting client (it replaces the
     /// old one), read its bytes into the line, answer at most one request.
     pub fn service(&mut self, unit: &mut impl Unit) -> Served {
-        while let Ok((stream, _)) = self.listener.accept() {
-            if stream.set_nonblocking(true).is_ok() {
-                self.client = Some(Client {
-                    stream,
-                    line: Console::new(),
-                });
-            }
-        }
+        self.accept();
         let Some(c) = self.client.as_mut() else {
             return Served::Idle;
         };
@@ -463,6 +511,54 @@ mod tests {
     fn a_taken_port_leaves_the_console_off() {
         let first = SocketConsole::bind("127.0.0.1:0").unwrap();
         assert!(bind_or_off(&first.local_addr().to_string()).is_none());
+    }
+
+    #[test]
+    fn only_a_loopback_address_takes_the_console() {
+        assert!(loopback("127.0.0.1:7341").is_ok());
+        assert!(loopback("[::1]:7341").is_ok());
+        // The console can rm, put and dfu: never on the LAN.
+        assert!(loopback("0.0.0.0:7341").is_err());
+        assert!(loopback("192.0.2.5:7341").is_err());
+        assert!(
+            loopback("localhost:7341").is_err(),
+            "a name is not an address"
+        );
+        assert!(bind_or_off("0.0.0.0:0").is_none());
+    }
+
+    #[test]
+    fn a_bind_error_says_what_went_wrong() {
+        let first = SocketConsole::bind("127.0.0.1:0").unwrap();
+        let err = bind(&first.local_addr().to_string()).err().unwrap();
+        assert!(err.contains("in use"), "{err}");
+        assert!(bind("nonsense").err().unwrap().contains("nonsense"));
+    }
+
+    #[test]
+    fn waiting_ends_at_a_request_or_the_timeout() {
+        let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
+        let t = Instant::now();
+        con.wait(Duration::from_millis(30));
+        assert!(
+            t.elapsed() >= Duration::from_millis(30),
+            "no client: the whole wait"
+        );
+        let mut c = client(&con);
+        let t = Instant::now();
+        con.wait(Duration::from_secs(5));
+        assert!(
+            t.elapsed() < Duration::from_secs(1),
+            "a new client ends the wait"
+        );
+        con.wait(Duration::from_millis(30));
+        c.write_all(b"help\n").unwrap();
+        let t = Instant::now();
+        con.wait(Duration::from_secs(5));
+        assert!(
+            t.elapsed() < Duration::from_secs(1),
+            "a request ends the wait"
+        );
     }
 
     #[test]

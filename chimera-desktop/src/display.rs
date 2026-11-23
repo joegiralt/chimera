@@ -14,7 +14,8 @@ use minifb::{Key, Window, WindowOptions};
 const SCALE: usize = 2;
 
 pub struct DesktopDisplay {
-    window: Window,
+    /// None headless: the framebuffer only, read by `shot`.
+    window: Option<Window>,
     fb: Box<[u16; FB_SIZE]>,
     window_buf: Vec<u32>,
     /// SETTINGS › PERSONALIZE › THEME: the palette swap, and BRIGHT as a
@@ -25,14 +26,16 @@ pub struct DesktopDisplay {
 }
 
 impl DesktopDisplay {
-    pub fn new() -> Self {
-        let window = Window::new(
-            "Chimera",
-            SCREEN_WIDTH as usize * SCALE,
-            SCREEN_HEIGHT as usize * SCALE,
-            WindowOptions::default(),
-        )
-        .expect("failed to create window");
+    pub fn new(headless: bool) -> Self {
+        let window = (!headless).then(|| {
+            Window::new(
+                "Chimera",
+                SCREEN_WIDTH as usize * SCALE,
+                SCREEN_HEIGHT as usize * SCALE,
+                WindowOptions::default(),
+            )
+            .expect("failed to create window")
+        });
 
         Self {
             window,
@@ -90,12 +93,13 @@ impl DesktopDisplay {
         }
     }
 
+    /// Headless, until the process is killed.
     pub fn is_open(&self) -> bool {
-        self.window.is_open()
+        self.window.as_ref().is_none_or(Window::is_open)
     }
 
     pub fn get_keys(&self) -> Vec<Key> {
-        self.window.get_keys()
+        self.window.as_ref().map_or_else(Vec::new, Window::get_keys)
     }
 }
 
@@ -127,14 +131,19 @@ impl OriginDimensions for DesktopDisplay {
 
 impl ChimeraDisplay for DesktopDisplay {
     fn flush_region(&mut self, y_start: u16, y_end: u16) {
+        // Headless: the framebuffer only.
+        let Some(mut window) = self.window.take() else {
+            return;
+        };
         self.convert_rows(y_start as usize, y_end as usize);
-        self.window
+        window
             .update_with_buffer(
                 &self.window_buf,
                 SCREEN_WIDTH as usize * SCALE,
                 SCREEN_HEIGHT as usize * SCALE,
             )
             .expect("failed to update window");
+        self.window = Some(window);
     }
 
     fn pixel_buffer(&mut self) -> &mut [u16] {

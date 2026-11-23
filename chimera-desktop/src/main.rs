@@ -90,8 +90,14 @@ fn card_model() -> (audio::DeskStreams, &'static CardBus) {
     (st, bus)
 }
 
+/// A lap of the sim's loop: near 30 Hz.
+const LAP: Duration = Duration::from_millis(33);
+
 fn main() {
-    let mut display = DesktopDisplay::new();
+    // CHIMERA_HEADLESS=1: no window, no audio device, no MIDI input; the
+    // console (`shot`) is the only way in. For the editor's end-to-end tests.
+    let headless = std::env::var("CHIMERA_HEADLESS").as_deref() == Ok("1");
+    let mut display = DesktopDisplay::new(headless);
     let mut controls = DesktopControls::new();
     let (scope_w, mut scope_r) = Box::leak(Box::new(scope_buffer())).split();
     let (orbit_w, mut orbit_r) = Box::leak(Box::new(orbit_buffer())).split();
@@ -100,7 +106,8 @@ fn main() {
         Box::leak(Box::new(TripleBuffer::new(no_views, no_views, no_views))).split();
     let (desk_streams, bus) = card_model();
     let streams = desk_streams.reg;
-    let mut audio = audio::DesktopAudio::new(scope_w, orbit_w, formant_w, Some(desk_streams));
+    let mut audio =
+        audio::DesktopAudio::new(scope_w, orbit_w, formant_w, Some(desk_streams), headless);
     #[cfg(feature = "midi")]
     if let Some(name) = midi::midi_out_arg(std::env::args().skip(1)) {
         audio::connect_midi_out(&name);
@@ -142,7 +149,13 @@ fn main() {
     // The toast's clock, read after the card work, as the firmware's is.
     let mut toast_at = Instant::now();
 
-    let mut console = console::bind_or_off(console::ADDR);
+    // CHIMERA_CONSOLE=<host:port> moves it, so a test's sim never meets yours.
+    let console_addr = std::env::var("CHIMERA_CONSOLE").unwrap_or_else(|_| console::ADDR.into());
+    let mut console = console::bind_or_off(&console_addr);
+    // Headless, the console is the only way in: without it, fail at once.
+    if headless && console.is_none() {
+        std::process::exit(1);
+    }
     let mut hands = chimera_core::console::Hands::new();
     let mut ed = chimera_core::console::EdState::new();
 
@@ -290,7 +303,12 @@ fn main() {
         }
 
         display.flush();
-        std::thread::sleep(std::time::Duration::from_millis(33));
+        // Headless, a request wakes the next lap at once; idle, it waits as a window would.
+        match console.as_mut().filter(|_| headless) {
+            Some(c) if served == Served::Idle => c.wait(LAP),
+            Some(_) => {}
+            None => std::thread::sleep(LAP),
+        }
     }
 }
 
