@@ -45,6 +45,9 @@ pub const MIDI_UI_DOOR_ADDR: u32 = DOOR_ADDR + 0x380;
 pub const ED_DOOR_ADDR: u32 = DOOR_ADDR + 0x400;
 include!("s4_tables.rs");
 const _: () = assert!(S4_TABLES_ADDR == Slot::Mixer.base() + slot::RESERVE);
+// On the chip: a host's pointers are twice as wide (the solos' table
+// holds AM's render too, #660).
+#[cfg(target_pointer_width = "32")]
 const _: () =
     assert!(size_of::<crate::dsp::va::osc::solo::SoloDoor>() <= DOOR_TABLE_STRIDE as usize);
 const _: () = assert!(size_of::<crate::part_eq::door::EqDoor>() <= DOOR_TABLE_STRIDE as usize);
