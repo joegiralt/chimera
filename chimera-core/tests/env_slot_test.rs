@@ -260,7 +260,7 @@ fn a_fast_lfo_glide_stays_within_bounds() {
         for _ in 0..((256 / chimera_hal::BLOCK_SIZE) + 1) {
             let mut g = [0.0f32; chimera_hal::BLOCK_SIZE];
             let v = if vca {
-                e.run_block(&lfo, &EnvMods::NONE, true, SR, Some((&mut g, 1.0)))
+                e.run_block(&lfo, &EnvMods::NONE, true, SR, Some((&mut g, (1.0, 1.0))))
             } else {
                 e.run_block(&lfo, &EnvMods::NONE, true, SR, None)
             };

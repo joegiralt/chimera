@@ -1286,10 +1286,14 @@ impl Voice {
             }
         }
         let key = self.held;
+        // Each VCA amount ramps from the last block's (#180); a fresh
+        // note's starts on its own.
+        let was = self.vca;
         if self.fade == 0 {
             self.vca = VcaRoutes::of(mod_state);
         }
         let vca = self.vca;
+        let was = if base_from.is_some() { was } else { vca };
         // The VCA's gain (spec § 4): 64 samples on the audio stack, only
         // with a route into VCA, from AMP's BASE (ADR 0292; 0, a stored
         // Sound's, is today's zeroed start).
@@ -1298,10 +1302,23 @@ impl Voice {
             from: base_from.map_or(to, |b| b.0),
             to,
         };
-        let mut gain = (vca.bits != 0).then_some([0.0f32; BLOCK_SIZE]);
+        // A block whose last route went (deleted, or the matrix cleared):
+        // the routes ramp out from the last block's into the engine's own
+        // pass-through (#180), never a step. Steady, no buffer, as ever.
+        let bypass_in = vca.bits == 0 && was.bits != 0;
+        let mut gain = (vca.bits != 0 || bypass_in).then_some([0.0f32; BLOCK_SIZE]);
+        // BASE ramps on into the pass-through's unity, the routes' share
+        // ramping out below
+        let base = BaseRamp {
+            to: if bypass_in { 1.0 } else { base.to },
+            ..base
+        };
         if let Some(g) = gain.as_mut().filter(|_| !base.is_zero()) {
             vca_start(g, base);
         }
+        // A route deleted or moved to another source ramps out from the
+        // last block's amount, as a turned one does.
+        let heard = |s: usize| vca.has(s) || was.has(s);
         // The last block's sources; on a retrigger, the new note's VEL and NOTE.
         let mut v = self.mod_values;
         let retrigger = core::mem::take(&mut self.retrigger);
@@ -1333,8 +1350,8 @@ impl Voice {
             let i = ModSource::of_env(*s).index();
             let feed = gain
                 .as_mut()
-                .filter(|_| vca.has(i))
-                .map(|g| (g, vca.scale(i)));
+                .filter(|_| heard(i))
+                .map(|g| (g, (was.scale(i), vca.scale(i))));
             mod_values[i] = env.run_block(
                 &src.envelopes[s.index()],
                 &self.env_mods[s.index()],
@@ -1366,14 +1383,16 @@ impl Voice {
         };
         // The other VCA sources ramp from their last block's value.
         for (s, &cur) in mod_values.iter().enumerate() {
-            if let Some(gain) = gain.as_mut().filter(|_| vca.has(s))
+            if let Some(gain) = gain.as_mut().filter(|_| heard(s))
                 && ModSource::ALL[s].env_slot().is_none()
             {
-                let a = vca.scale(s);
-                let (from, step) = (
-                    a * self.mod_values[s],
-                    a * (cur - self.mod_values[s]) / BLOCK_SIZE as f32,
-                );
+                let (a, last) = (vca.scale(s), self.mod_values[s]);
+                let (from, step) = if was.amount[s] == vca.amount[s] {
+                    (a * last, a * (cur - last) / BLOCK_SIZE as f32)
+                } else {
+                    let from = was.scale(s) * last;
+                    (from, (a * cur - from) / BLOCK_SIZE as f32)
+                };
                 for (n, g) in gain.iter_mut().enumerate() {
                     *g += from + step * n as f32;
                 }
@@ -1583,7 +1602,14 @@ impl Voice {
                 }
                 Some(gain) => {
                     let amp = |v: Velocity| 1.0 - m.out.vca_vel + m.out.vca_vel * v.unit();
-                    let (was, vel) = (amp(self.vca_velocity), amp(self.last_velocity));
+                    // into the pass-through, AMP's VEL ramps out with the
+                    // routes, to the unrouted path's OUT LEVEL alone
+                    let vel_to = if bypass_in {
+                        1.0
+                    } else {
+                        amp(self.last_velocity)
+                    };
+                    let (was, vel) = (amp(self.vca_velocity), vel_to);
                     self.vca_velocity = self.last_velocity;
                     let k = volume * vel;
                     #[allow(clippy::manual_clamp)] // max/min, not clamp: NaN clamps too

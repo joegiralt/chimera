@@ -367,3 +367,49 @@ fn a_soft_note_after_a_hard_one_starts_fresh() {
 fn a_hard_note_after_a_soft_one_starts_fresh() {
     reused_voice_starts_fresh(10, 127);
 }
+
+/// #498: VEL → ENV 2 LEVEL scales ENV 2's route into VA AMOUNT; it never
+/// stops it. At full velocity the LEVEL route changes nothing.
+#[test]
+fn a_level_route_on_env2_keeps_env2_moving_va_amount() {
+    use chimera_core::dsp::va::VaParams;
+    let mut p = ParamSnapshot::for_engine(EngineType::Va);
+    // Two unlike oscillators, so the blend is heard.
+    (p.va.wave, p.va.coarse) = ([0.0, 1.0], [0, 7]);
+    let amount = ParamAddr::new(BlockRef::Va, VaParams::AMOUNT);
+    let e2 = |amt| (ModSource::Env2, amount, amt);
+    let level = (ModSource::Vel, env(EnvSlot::Env2, EnvParams::LEVEL), 127);
+    assert_ne!(
+        render_with(&p, &[e2(127)], 100),
+        render_with(&p, &[e2(0)], 100),
+        "ENV 2 moves AMOUNT"
+    );
+    assert_eq!(
+        render_with(&p, &[e2(127), level], 127),
+        render_with(&p, &[e2(127)], 127),
+        "full velocity: peak 1"
+    );
+    assert_ne!(
+        render_with(&p, &[e2(127), level], 100),
+        render_with(&p, &[e2(0), level], 100),
+        "with the LEVEL route, ENV 2 still moves AMOUNT"
+    );
+    // BIT BLOOM's: BITS from AMOUNT 0, ENV 2 a SLOW decay to 0.
+    use chimera_core::dsp::modulator::EnvSpeed;
+    use chimera_core::dsp::va::VaMode;
+    let mut b = ParamSnapshot::for_engine(EngineType::Va);
+    (b.va.mode, b.va.amount, b.va.wave, b.va.fine) = (VaMode::Bits, 0.0, [0.0; 2], [0.0, 3.0]);
+    let e = &mut b.envelopes[1];
+    (e.attack, e.decay, e.sustain, e.speed) = (0.0, 0.5, 0.0, EnvSpeed::Slow);
+    let diff = |x: &[f32], y: &[f32]| x.iter().zip(y).map(|(a, b)| (a - b).abs()).sum::<f32>();
+    let plain = render_with(&b, &[e2(0), level], 100);
+    let moved = diff(
+        &render_with(&b, &[e2(127)], 100),
+        &render_with(&b, &[e2(0)], 100),
+    );
+    let scaled = diff(&render_with(&b, &[e2(127), level], 100), &plain);
+    assert!(
+        scaled > 0.3 * moved,
+        "BIT BLOOM: ENV 2's move {moved}, under the LEVEL route {scaled}"
+    );
+}

@@ -1004,6 +1004,16 @@ impl ModalEngine {
         let first = core::mem::take(&mut self.shape_pending);
         if first {
             self.macros = to;
+            // A route moved the pitch off the note-on's: plucked again at
+            // the routed length, before any retune (#233).
+            if self.ratio() != self.tuned {
+                let f = self.pitched(self.frequency) * sample_rate as f32;
+                match &mut self.model {
+                    ModelSlot::String(s) => s.repluck(f, sample_rate),
+                    ModelSlot::Sympathetic(v) => v.main.repluck(f, sample_rate),
+                    ModelSlot::Bank(_) | ModelSlot::Bowed(_) => {}
+                }
+            }
             // Before any retune: the pluck is the note-on's length.
             match &mut self.model {
                 ModelSlot::String(s) => s.shape(to.pos),
@@ -2457,6 +2467,14 @@ mod tests {
             assert!(want <= SYM_NOTE_ON_CLEAR_MAX);
             play(&mut e, &mut pool, &p, SECOND / 8, (1, pitch));
         }
+        // A route that moves the pitch by the first block re-plucks the
+        // main string with no second clear: the note-on's bill stands.
+        e.set_pitch(1.0);
+        let plain = pool.note_on_clear(Some(&e), v0);
+        let _ = take_cleared_bytes();
+        e.note_on(60, 100, &p, SR, &mut pool);
+        play(&mut e, &mut pool, &p, 1, (0, 2.0));
+        assert_eq!(take_cleared_bytes(), plain, "the routed re-pluck");
         // Voice 1, unplaced, plays bare: a fresh main string. Placed, it
         // is promised a slot never played: eight fresh lines.
         let v1 = VoiceIdx::ALL[1];

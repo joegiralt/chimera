@@ -1063,10 +1063,8 @@ fn out_of_range_values_clamp() {
 #[test]
 fn mode_scrolled_every_block_settles() {
     // Ten, as the duck swaps at blocks 1, 5, 9, ...: only the odd places
-    // play (an odd count would visit Sync and Fm at a swap and click
-    // 188%, SYNC's own: private issue #677,
-    // #670), so LOOPFM and SOFT SYNC sit at odd ones.
-    const SCROLL: [VaMode; 10] = [
+    // play, so LOOPFM and SOFT SYNC sit at odd ones.
+    scrolled_settles(&[
         VaMode::Mix,
         VaMode::LoopFm,
         VaMode::Ring,
@@ -1077,7 +1075,25 @@ fn mode_scrolled_every_block_settles() {
         VaMode::SoftSync,
         VaMode::Bits,
         VaMode::Am,
-    ];
+    ]);
+}
+
+/// #670: scrolls that land SYNC at a swap on a free-running slave (they
+/// read 338%, 175% and 257% of the click rule): the slave starts on the
+/// master's synced phase, so its first reset never jumps under the duck.
+#[test]
+fn mode_scrolled_into_sync_settles() {
+    use VaMode::*;
+    for scroll in [
+        &[Am, SoftSync, Sync][..],
+        &[Phase, Mix, Sync],
+        &[LoopFm, SoftSync, Phase, Mix, Sync],
+    ] {
+        scrolled_settles(scroll);
+    }
+}
+
+fn scrolled_settles(scroll: &[VaMode]) {
     let base = pair_base(VaMode::Sync, VaMode::Mix);
     let mut modes = Vec::new();
     let y = with_engine(|e| {
@@ -1086,7 +1102,7 @@ fn mode_scrolled_every_block_settles() {
         e.note_on(A4, &p, part(0), SR);
         let y = run(e, &mut p, 60, |b, p| {
             p.mode = if b < 40 {
-                SCROLL[b % SCROLL.len()]
+                scroll[b % scroll.len()]
             } else {
                 VaMode::Ring
             };
@@ -1099,7 +1115,7 @@ fn mode_scrolled_every_block_settles() {
             for b in 0..60 {
                 run(f, &mut p, 1, |_, p| {
                     p.mode = if b < 40 {
-                        SCROLL[b % SCROLL.len()]
+                        scroll[b % scroll.len()]
                     } else {
                         VaMode::Ring
                     };
@@ -1109,7 +1125,7 @@ fn mode_scrolled_every_block_settles() {
         });
         y
     });
-    let held: Vec<_> = SCROLL
+    let held: Vec<_> = scroll
         .iter()
         .map(|&m| held(A4, VaParams { mode: m, ..base }, 60))
         .collect();

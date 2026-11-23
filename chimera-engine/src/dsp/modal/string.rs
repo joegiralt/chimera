@@ -210,12 +210,49 @@ impl KsString {
     /// before the new loop's length widens its extent: the clear writes
     /// `clear_bytes`, and the old note's samples past the new loop are
     /// never read back, even by a pitch drop that lengthens it.
+    #[inline(always)]
     pub(super) fn excite(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
         self.clear();
         self.set_period(period, other, w);
         let len = self.delay;
         for i in 0..len {
             self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
+        }
+        // The oldest sample first.
+        self.write_pos = len - 1;
+    }
+
+    /// `excite` again at another period, on a line `excite` plucked and
+    /// nothing has played since (a note's first block, before any sample;
+    /// a glide's `fit` may have grown its ring): the same line as a clear
+    /// and an `excite` would leave, with no second clear. Only what the
+    /// first pluck left past the new loop (its fill's tail, a `fit`'s copy
+    /// of it, up to the old `dirty`) and the new ring's growth is zeroed,
+    /// so the writes stay within the note-on's (#233).
+    #[inline(always)]
+    pub(super) fn refill(&mut self, (period, other, w): (f32, f32, f32), amplitude: f32) {
+        // the precondition: `excite` leaves the write at its loop's last
+        // sample, and a played sample moves it
+        debug_assert_eq!(
+            self.write_pos + 1,
+            self.delay,
+            "refill on a line that played"
+        );
+        let dirty = self.dirty;
+        // `clear`'s resets but the buffer's: nothing past `dirty` was written
+        self.write_pos = 0;
+        self.delay = MIN_LINE;
+        self.ring_len = MIN_LINE + 2;
+        self.dirty = self.ring_len;
+        self.frac.reset();
+        self.set_period(period, other, w);
+        let len = self.delay;
+        for i in 0..len {
+            self.buffer[i] = xorshift_noise(&mut self.noise_state) * amplitude;
+        }
+        let end = dirty.max(self.ring_len);
+        if end > len {
+            self.buffer[len..end].fill(0.0);
         }
         // The oldest sample first.
         self.write_pos = len - 1;
@@ -696,15 +733,47 @@ pub(super) struct StringVoice {
     ens_mix: f32,
     /// COLOR's smoothing passes, latched at note-on.
     passes: u8,
-    /// A re-strike's pluck level, for `shape` to add; 0 after a fresh pluck.
-    adding: f32,
+    /// The pluck `shape` finishes: a re-strike's to add, or the fresh one's
+    /// level for `repluck`.
+    adding: Pending,
     /// Its length, samples: a glide's target line; 0, the line in use.
     adding_len: usize,
+    /// The noise state the fresh pluck drew from: `repluck` draws the
+    /// same noise again, so the RNG moves once a note (#233).
+    seed: u32,
+}
+
+/// A pluck's level waiting for `shape`, in one float, so the voice keeps
+/// its size (#233): a fresh pluck's as `−level`, a re-strike's as
+/// `+level`, none as `+0`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Pending(f32);
+
+impl Pending {
+    const NONE: Self = Self(0.0);
+
+    fn fresh(level: f32) -> Self {
+        Self(-level)
+    }
+
+    fn restrike(level: f32) -> Self {
+        Self(level)
+    }
+
+    /// A fresh pluck's level (`−0` is a fresh pluck at 0).
+    fn fresh_level(self) -> Option<f32> {
+        self.0.is_sign_negative().then_some(-self.0)
+    }
+
+    /// A re-strike's level, to add.
+    fn restrike_level(self) -> Option<f32> {
+        (self.0 > 0.0).then_some(self.0)
+    }
 }
 
 crate::in_place::field_list!(StringVoice => StringVoice {
     string, disp, stiff, structure, period, body, body_mix, ens, ens_mix, passes, adding,
-    adding_len,
+    adding_len, seed,
 });
 
 /// The longest loop: the whole line, a one-sample fraction and the chain
@@ -731,8 +800,9 @@ impl StringVoice {
             addr_of_mut!((*p).ens).write(Ensemble::default());
             addr_of_mut!((*p).ens_mix).write(0.0);
             addr_of_mut!((*p).passes).write(1);
-            addr_of_mut!((*p).adding).write(0.0);
+            addr_of_mut!((*p).adding).write(Pending::NONE);
             addr_of_mut!((*p).adding_len).write(0);
+            addr_of_mut!((*p).seed).write(NOISE_SEED);
             slot.assume_init_mut()
         }
     }
@@ -761,6 +831,7 @@ impl StringVoice {
     /// A note-on: plucks `freq`, at `structure` if stiff (STRING) or with
     /// no chain (`None`, SYMP's main string); BODY, the ensemble at its
     /// MIX, and COLOR's passes, latched.
+    #[inline(never)]
     pub(super) fn pluck(
         &mut self,
         (freq, sample_rate): (f32, u32),
@@ -772,6 +843,7 @@ impl StringVoice {
         self.stiff = structure.is_some();
         self.structure = structure.unwrap_or(0.0);
         let l = self.dispersed(freq, sample_rate);
+        self.seed = self.string.noise_state;
         self.string.excite(l, amplitude);
         self.disp.reset();
         self.body.reset();
@@ -779,7 +851,18 @@ impl StringVoice {
         self.ens = ens;
         self.ens_mix = ens_mix;
         self.passes = color_passes(color) as u8;
-        (self.adding, self.adding_len) = (0.0, 0);
+        (self.adding, self.adding_len) = (Pending::fresh(amplitude), 0);
+    }
+
+    /// The fresh pluck again at `freq`, before `shape`: a note's first
+    /// block found its pitch routed off the note-on's (#233).
+    #[inline(always)]
+    pub(super) fn repluck(&mut self, freq: f32, sample_rate: u32) {
+        if let Some(level) = self.adding.fresh_level() {
+            let l = self.dispersed(freq, sample_rate);
+            self.string.noise_state = self.seed;
+            self.string.refill(l, level);
+        }
     }
 
     /// A re-strike of the sounding note, or a glide's strike of a new one
@@ -788,7 +871,7 @@ impl StringVoice {
     /// chain and the ensemble run on.
     pub(super) fn restrike(&mut self, amplitude: f32, color: f32, line: Option<usize>) {
         self.passes = color_passes(color) as u8;
-        self.adding = amplitude;
+        self.adding = Pending::restrike(amplitude);
         self.adding_len = line.unwrap_or(0);
     }
 
@@ -808,12 +891,12 @@ impl StringVoice {
     /// (`KsString::shape`), or adds a re-strike's (`KsString::add_pluck`).
     pub(super) fn shape(&mut self, pos: f32) {
         let beta = super::params::beta(pos, super::params::END);
-        let amplitude = core::mem::take(&mut self.adding);
+        let pending = core::mem::replace(&mut self.adding, Pending::NONE);
         let len = match core::mem::take(&mut self.adding_len) {
             0 => self.string.delay,
             n => n,
         };
-        if amplitude > 0.0 {
+        if let Some(amplitude) = pending.restrike_level() {
             self.string
                 .add_pluck(beta, self.passes.into(), amplitude, len);
         } else {
@@ -1057,6 +1140,42 @@ mod tests {
             // A whole-sample comb: C7's middle is 5/18, not 1/4.
             let null = if len > 18 { 0.02 } else { 0.3 };
             assert!(last < null, "{len}: the middle's 2nd over 1st {last}");
+        }
+    }
+
+    /// #233: a re-pluck on a just-plucked line leaves the line, its ring
+    /// and its noise as one clear and pluck at the new period would, up or
+    /// down from the first.
+    #[test]
+    fn a_refill_is_a_clear_and_a_pluck() {
+        // and after a glide's `fit` grew the ring first (ORBIT's re-snap,
+        // `ModalEngine::glide_to`, before the note's first block)
+        let cases = [(60u8, 72u8), (60, 36), (31, 96), (96, 31)];
+        for ((first, second), fit) in cases
+            .into_iter()
+            .flat_map(|c| [(c, None), (c, Some(2000.0))])
+        {
+            let ens = Ensemble::new(0.0, 3.0, 48_000);
+            let pluck = |v: &mut StringVoice, note: u8| {
+                let f = (note_to_freq(note), 48_000);
+                v.pluck(f, None, 0.7, (0.0, (0.0, ens)), 0.3);
+            };
+            let mut a = voice();
+            pluck(&mut a, first);
+            if let Some(p) = fit {
+                a.string.fit(p);
+            }
+            a.repluck(note_to_freq(second), 48_000);
+            let mut b = voice();
+            pluck(&mut b, second);
+            let (la, lb) = (a.string.line(), b.string.line());
+            assert_eq!(la.1, lb.1, "{first} → {second} {fit:?}: the dirty extent");
+            assert!(la.0[..] == lb.0[..], "{first} → {second} {fit:?}: the line");
+            assert_eq!(a.string.noise_state, b.string.noise_state);
+            assert_eq!(
+                (a.string.delay, a.string.ring_len, a.string.write_pos),
+                (b.string.delay, b.string.ring_len, b.string.write_pos)
+            );
         }
     }
 

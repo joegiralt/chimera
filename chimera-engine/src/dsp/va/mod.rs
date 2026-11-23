@@ -1191,6 +1191,17 @@ impl VaEngine {
                 for o in &mut self.osc {
                     o.settle();
                 }
+                // SYNC's slave starts where the master's sync would have
+                // put it, under the duck's silence: its first reset never
+                // jumps on the way up (#670)
+                if self.playing == VaMode::Sync {
+                    let end = |r: &Ramps| r.inc.0 + r.inc.1 * BLOCK_SIZE as f32;
+                    let (m, s) = (end(&l.osc[0]), end(&l.osc[1]));
+                    if m > 0.0 {
+                        let at = self.osc[0].phase() * s / m;
+                        self.osc[1].set_phase(at);
+                    }
+                }
                 Duck::Up(0)
             }
             Duck::Up(0) => Duck::Up(1),
@@ -1891,6 +1902,8 @@ mod tests {
     /// Every MODE's output bits, hashed (FNV-1a): two notes, STABILITY's
     /// jitter, SUB, a SHAPE and a MODE change under way. The constant is
     /// main's before NOISE (ADR 0197): LEVEL 0 must leave every bit as it was.
+    /// Re-pinned when SYNC's slave started on the master's phase at the
+    /// swap (#670): the change into SYNC moved, nothing else.
     #[test]
     fn noise_off_is_bit_identical() {
         let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -1924,6 +1937,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(h, 0xefdb_13e5_776a_536c, "hash {h:#018x}");
+        assert_eq!(h, 0x7933_7a4b_3220_7143, "hash {h:#018x}");
     }
 }

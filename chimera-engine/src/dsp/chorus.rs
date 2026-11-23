@@ -275,11 +275,17 @@ impl BbdLine {
         self.lfo_phase = self.lfo_phase.wrapping_add(inc.wrapping_mul(n as u32));
     }
 
-    /// The (normal, inverted) taps at the LFO's phase.
+    /// The (normal, inverted) taps at the LFO's phase. The centre moves
+    /// out past `depth` when the swing would reach the line's 1-sample
+    /// floor (II above DEPTH 0.71, #62), so neither tap ever flattens.
     #[inline(always)]
     fn taps(&self, base: f32, depth: f32) -> (f32, f32) {
         let tri = tri(self.lfo_phase);
-        (self.read(base + tri * depth), self.read(base - tri * depth))
+        let centre = base.max(depth + 1.0);
+        (
+            self.read(centre + tri * depth),
+            self.read(centre - tri * depth),
+        )
     }
 
     #[inline(always)]
@@ -657,6 +663,33 @@ mod kern {
             let (l, r) = tick(x);
             out.l[i] = l * mix;
             out.r[i] = r * mix;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #62: II's swing at DEPTH 1 (2.3 ms × 2) passes the 3.6 ms centre,
+    /// so the inverted tap must not flatten against the line's 1-sample
+    /// floor: the two taps stay mirror images, their delays' sum fixed.
+    #[test]
+    fn mode_ii_at_full_depth_never_clamps_its_inverted_tap() {
+        let (sr, ms) = (48_000.0f32, 48.0f32);
+        let (base, depth) = (3.6 * ms, 2.3 * 2.0 * ms);
+        let inc = (0.863 * 2.0 / sr * 4_294_967_296.0) as u32;
+        let mut line = BbdLine::new();
+        let mut sum = None;
+        for n in 0..30_000u32 {
+            let (l, r) = line.tick(n as f32, base, depth, inc);
+            if n < MAX_CHORUS_DELAY as u32 {
+                continue;
+            }
+            let delay = |v: f32| (n + 1) as f32 - v;
+            let s = delay(l) + delay(r);
+            let s0 = *sum.get_or_insert(s);
+            assert!((s - s0).abs() < 0.05, "sample {n}: taps' sum {s} vs {s0}");
         }
     }
 }
