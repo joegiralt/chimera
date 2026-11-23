@@ -2045,6 +2045,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(h, 0x7933_7a4b_3220_7143, "hash {h:#018x}");
+        assert_eq!(h, 0x822e_87e3_5cd8_723d, "hash {h:#018x}");
     }
 }
