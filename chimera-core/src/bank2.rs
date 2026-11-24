@@ -100,7 +100,7 @@ impl Bank2Status {
         matches!(self, Self::Open { .. })
     }
 
-    /// What ABOUT shows: no bank jargon (owner decision 8).
+    /// What ABOUT shows: no bank jargon (design decision 8).
     pub fn label(&self) -> &'static str {
         match self {
             Self::Open { .. } => "OK",

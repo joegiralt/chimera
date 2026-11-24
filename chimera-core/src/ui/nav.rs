@@ -1083,7 +1083,7 @@ impl Location {
 }
 
 /// PLUS and MINUS in Part `p`'s mixer: PART, SENDS, then its FX, clamped;
-/// other Parts' by MIX+B*n* (owner, 2026-10-02).
+/// other Parts' by MIX+B*n* (decided 2026-10-02).
 fn mix_walk(p: PartId, m: MixPage, d: i8) -> Loc {
     match (m, d > 0) {
         (MixPage::Part | MixPage::Voices | MixPage::Eq, true) => Loc::Part(p, MixPage::Sends),

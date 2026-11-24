@@ -208,7 +208,7 @@ fn the_page_names_the_file_and_describes_it() {
 }
 
 /// A file copied with a long name walks by it, plays, and the page holds
-/// the name it shows (#907 owner decision, ADR 0259).
+/// the name it shows (#907, ADR 0259).
 #[test]
 fn long_names_walk_in_their_order_and_play() {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());

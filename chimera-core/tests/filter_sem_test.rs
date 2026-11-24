@@ -258,7 +258,7 @@ fn level_drives_and_lights_the_led() {
 /// A sweep of MODE, FREQ or RES across blocks is smooth: each block ramps
 /// from the last, so a held sine under a full sweep in one second leaves
 /// nothing above 6 kHz but its own harmonics, which the SEM keeps under
-/// −70 dB (no zipper, owner rule).
+/// −70 dB (no zipper, a design rule).
 #[test]
 fn sweeps_never_zipper() {
     let n = 48_000;

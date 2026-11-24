@@ -578,7 +578,7 @@ fn a_cutoff_row_on_cc_74_yields_to_slide_on_an_mpe_master() {
     assert_eq!(r.stored(P1, CUTOFF), cutoff);
 }
 
-/// What you hear is what you see and save (owner): the cell shows the
+/// What you hear is what you see and save (a design rule): the cell shows the
 /// shifted value, a save stores it, a reload sounds the same, and the
 /// save is the new 64.
 #[test]

@@ -300,7 +300,7 @@ level = "by ear -17.3: set low so a 4-note chord with its reverb stays at or und
 trim = "-7.3"
 
 
-# FM + formant hybrids (S9100047-52, owner 2026-10-13): an original 4-op FM
+# FM + formant hybrids (S9100047-52, 2026-10-13): an original 4-op FM
 # patch on ops 1-4, ops 5-6 FRMT (ADR 0131). As carriers (T algorithms)
 # op 5 is a vowel layer and op 6 a light FRMT into it, the one linked
 # FRMT (390 + 200 = 590 of 659); as modulators (A13, A16) both are

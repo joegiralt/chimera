@@ -141,29 +141,29 @@ fn dump_tinz() {
 
 /// The factory build of TINZ's recipe is the saved file, param for param.
 #[test]
-fn factory_tinz_is_the_owners() {
+fn factory_tinz_is_the_saved_file() {
     use chimera_desktop::factory_tapes::{audio, originals, read_recipes, source, tape_sound};
     let r = read_recipes().unwrap();
     let s = r.sounds.iter().find(|s| s.name.as_str() == "TINZ").unwrap();
     let src = r.sources.iter().find(|x| x.name == s.source).unwrap();
     let built = source(src, audio(src, &originals()).unwrap().unwrap()).unwrap();
-    let (built, mut owner) = (tape_sound(s, &built.head), load(TINZ));
+    let (built, mut saved) = (tape_sound(s, &built.head), load(TINZ));
     // ADR 0278: the recipe re-voices the file's sends for the send taper,
     // the grid level whose gain is the one the unit stored.
     let revoiced = |l: SendLevel| SendLevel::from_gain(Gain::new(l.get()));
-    owner.params.out.sends = owner.params.out.sends.map(revoiced);
-    assert_eq!(sound_crc(&built), sound_crc(&owner), "the files' records");
-    let (ours, theirs) = (dump(&built), dump(&owner));
+    saved.params.out.sends = saved.params.out.sends.map(revoiced);
+    assert_eq!(sound_crc(&built), sound_crc(&saved), "the files' records");
+    let (ours, theirs) = (dump(&built), dump(&saved));
     if ours != theirs {
         for (a, b) in ours.lines().zip(theirs.lines()).filter(|(a, b)| a != b) {
-            eprintln!("built {a}\nowner {b}");
+            eprintln!("built {a}\nsaved {b}");
         }
         eprintln!(
-            "lines built {} owner {}",
+            "lines built {} saved {}",
             ours.lines().count(),
             theirs.lines().count()
         );
-        panic!("TINZ differs from the owner's file");
+        panic!("TINZ differs from the saved file");
     }
 }
 

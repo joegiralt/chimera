@@ -52,7 +52,7 @@ pub const PROVENANCE: &[Provenance] = &[
                additive synthesis\", DAFx-26 paper 49, CC-BY 4.0 (mirrored sync, definition only)",
     },
     Provenance::Original {
-        author: "AI-assisted, owner-directed and reviewed",
+        author: "AI-assisted, directed and reviewed by the maintainer",
     },
 ];
 
@@ -825,7 +825,7 @@ pub const PULSE_ANCHOR: Unit = Wave::Pulse.anchor();
 pub const ANCHORS: [Unit; 4] = [SINE_ANCHOR, TRI_ANCHOR, SAW_ANCHOR, PULSE_ANCHOR];
 
 /// How far a block's WAVE ramp may go from `from` toward `to`: across one
-/// segment edge at most (owner, 2026-10-11; ADR 0118). Past a second edge it
+/// segment edge at most (ADR 0118). Past a second edge it
 /// stops just short of it, and the rest is the next block's: WAVE never
 /// snaps, a jump end to end lands in two blocks, and an oscillator crosses
 /// one edge a block at most.

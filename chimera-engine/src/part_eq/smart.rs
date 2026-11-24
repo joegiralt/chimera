@@ -95,7 +95,7 @@ pub const ROLE_NAMES: [&str; Role::ALL.len()] =
     [Role::Front.ident(), Role::Mid.ident(), Role::Back.ident()];
 
 /// What a Part plays, as SMART EQ keys from it: a DRUM Part's LOW band
-/// keys the kick's fast dip (owner, 2026-11-19); any other Part's is
+/// keys the kick's fast dip (decided 2026-11-19); any other Part's is
 /// heard slowly, as every band is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartKind {
@@ -637,7 +637,7 @@ pub enum Returned {
     Rests,
 }
 
-/// The reverb's return as a member of SMART EQ (owner, 2026-11-19: "we
+/// The reverb's return as a member of SMART EQ (decided 2026-11-19: "we
 /// should give the reverb its role of its own"): it yields as a Part of
 /// its role would, the kick's dip with it, and makes nothing yield. Its
 /// bands cut left and right alike (`cuts.mid` the left's memory,

@@ -398,7 +398,7 @@ const _: () = assert!(size_of::<Option<Memo>>() == 16);
 
 /// Per-source memory (ADR 0093): turning SOURCE away from a source keeps
 /// the Part's START, END, PITCH and FINE on it; turning back restores
-/// them. RAM only (owner, 2026-10-05): a saved Sound keeps its own
+/// them. RAM only (decided 2026-10-05): a saved Sound keeps its own
 /// source's values, and nothing new reaches the card. Oldest first; full,
 /// the oldest goes.
 #[derive(Clone, Copy, Debug)]

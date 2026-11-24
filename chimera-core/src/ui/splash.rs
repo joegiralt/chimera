@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Boot splash: the Yellow Sign, ground-black on yellow.
+//! The sign is Christian Knutsson's design for Pelgrane Press, public domain since 2020 (THIRD_PARTY.md).
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
@@ -12,7 +13,7 @@ use super::theme;
 const SIZE: usize = 192;
 
 /// Row-major run lengths, ground first, then ink, alternating; a run
-/// over 255 is split by a 0 of the other. ponytail: baked from the
+/// over 255 is split by a 0 of the other. Baked from the
 /// owner's Elektronauts avatar (144 px JPEG, Lanczos to 192, luma < 128) as
 /// 1 bit per pixel, then run-length coded (4.6 KB to 1 KB); re-bake from a
 /// vector source if it ever needs to be sharper.

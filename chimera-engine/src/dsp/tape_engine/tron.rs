@@ -3,7 +3,7 @@
 
 //! TRON (spec § 2 Machines): the Mellotron M400 (Streetly Electronics),
 //! about 8 s of tape a key. Every key gets SIZE's length of sound at every
-//! pitch (owner, 2026-10-05): the tape runs out in output time, and the
+//! pitch (decided 2026-10-05): the tape runs out in output time, and the
 //! head's travel scales with the pitch, so END may end a high note first.
 //! Key up lifts the pressure pad: the tape fades through FADE's one-pole.
 

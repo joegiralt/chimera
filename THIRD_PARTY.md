@@ -33,6 +33,28 @@ into any closed or dual-licensed product.
 - `chimera-utils/src/stim.rs` and `src/sig.rs` (host only; the A/B tool's stimuli and signal helpers): ported from NumPy (`SeedSequence`, `random_standard_normal`, `next_double`, `random_interval`, `Generator.shuffle`; BSD-3-Clause, Copyright (c) 2005-2024 NumPy Developers, Copyright (c) 2019 Kevin Sheppard), PCG64 (Apache-2.0 or MIT, Copyright 2014 Melissa O'Neill) and SciPy (`resample_poly`, `butter`, `sosfilt`, `welch`; BSD-3-Clause, Copyright (c) 2001-2002 Enthought, Inc., 2003 SciPy Developers); each notice is in the file (`chimera-utils/README.md` § Third-party notices).
 - `chimera-hal/src/panel.rs` (the ILI9341 panel's init list): martnak/STM32-ILI9341 (MIT, Copyright (c) 2017 martnak, https://github.com/martnak/STM32-ILI9341) via PreenFM3, whose `lib/Src/ili9341.c` (`ILI9341_Init`) says its list is based on it; the MIT notice is in the file.
 
+- The screen's fonts (`chimera-core/src/ui/theme.rs`), linked into the firmware through the `u8g2-fonts` crate (MIT OR Apache-2.0). The font data is not under the crate's licence: each font keeps its U8g2 font licence (https://github.com/olikraus/u8g2/blob/master/LICENSE, https://github.com/olikraus/u8g2/wiki/fntgrp).
+  - `helvR08`, `helvR10`, `helvB08`, `helvB10`, `helvB14` (U8g2's X11 group, from the X11 `HELV*.BDF` files; https://github.com/olikraus/u8g2/wiki/fntgrpx11). Their notice:
+
+    > Copyright 1984-1989, 1994 Adobe Systems Incorporated.
+    > Copyright 1988, 1994 Digital Equipment Corporation.
+    >
+    > Adobe is a trademark of Adobe Systems Incorporated which may be registered in certain jurisdictions. Permission to use these trademarks is hereby granted only in association with the images described in this file.
+    >
+    > Permission to use, copy, modify, distribute and sell this software and its documentation for any purpose and without fee is hereby granted, provided that the above copyright notices appear in all copies and that both those copyright notices and this permission notice appear in supporting documentation, and that the names of Adobe Systems and Digital Equipment Corporation not be used in advertising or publicity pertaining to distribution of the software without specific, written prior permission. Adobe Systems and Digital Equipment Corporation make no representations about the suitability of this software for any purpose. It is provided "as is" without express or implied warranty.
+
+  - `logisoso20`, `logisoso42` (U8g2's Logisoso group; https://github.com/olikraus/u8g2/wiki/fntgrplogisoso): "Created by Mathieu Gabiot with FontForge 2.0 (http://fontforge.sf.net) - Brussels - 2009". openfontlibrary.org lists it under the SIL Open Font License; the COPYING.TXT in its archive reads:
+
+    > Copyright (C) 2011 Mathieu-g (Mathieu Gabiot).
+    >
+    > This Font Software is an open font and is released under the GPL v2 with font exception; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation.
+    >
+    > This Font Software is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+    >
+    > As a special exception, if you create a document which uses this font, and embed this font or unaltered portions of this font into the document, this font does not by itself cause the resulting document to be covered by the GNU General Public License. This exception does not however invalidate any other reasons why the document might be covered by the GNU General Public License. If you modify this font, you may extend this exception to your version of the font, but you are not obligated to do so. If you do not wish to do so, delete this exception statement from your version.
+
+- `chimera-core/src/ui/yellow_sign.rle` (the boot splash, `chimera-core/src/ui/splash.rs`): the Yellow Sign designed by Christian Knutsson for Pelgrane Press, which released it into the public domain in 2020 ("Use it personally or commercially"): https://pelgranepress.com/2020/02/06/our-yellow-sign-is-your-yellow-sign/. Attribution is not required; it is credited here with thanks.
+
 ## Not third party
 
 - `chimera-engine/src/dsp/modal/string.rs` (the Karplus-Strong string): the author's own code from his Carcosa firmware for the Ambika (`voicecard/karplus.h`), brought in by its author. The original Ambika firmware has no Karplus-Strong engine and none of its GPL code was copied (#56, ADR 0032).

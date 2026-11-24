@@ -918,7 +918,7 @@ fn notch2_q_raises_the_peaks_but_not_the_loudness() {
     }
 }
 
-/// NOTCH2 never self-oscillates (owner: as the Cascadia's PHZR): at RES 1
+/// NOTCH2 never self-oscillates (as the Cascadia's PHZR): at RES 1
 /// an impulse dies 80 dB within 0.5 s at every FREQ of the bound grid. A
 /// loop that runs away overflows, and the NaN reset would silence it, so
 /// every sample is held finite and the peak to the impulse's own 1. RES 1.5

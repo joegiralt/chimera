@@ -299,7 +299,7 @@ fn kick_over_bass() -> Result<(), String> {
     Ok(())
 }
 
-/// The kick's band (owner, 2026-11-19): where the kick's dip acts.
+/// The kick's band (decided 2026-11-19): where the kick's dip acts.
 const KICK_LO: f64 = 40.0;
 const KICK_HI: f64 = 120.0;
 /// The window after each kick's onset that is its transient, samples.

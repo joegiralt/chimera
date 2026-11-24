@@ -91,12 +91,11 @@ second time, flashing nothing; the first trip cleared the marker:
 dfu-util -a0 -d 0483:df11 -s 0x8020000:leave
 ```
 
-Without the jumper this never happens
-(private issue #305).
+Without the jumper this never happens (#305 in the private tracker).
 
 ## No console after a cold power-on
 
-Known issue: private issue #331. From a cold
+Known issue (#331 in the private tracker). From a cold
 power-on the USB console doesn't come up: the OTG core's reset never
 completes, and about a second after PART 1 the screen toasts
 `USB OFF: csrst`. The synth plays normally. Once the unit has been

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! VOX (0.4 prototype, second cut, owner to judge by ear): beatboxed
+//! VOX (0.4 prototype, second cut, to judge by ear): beatboxed
 //! drums built consonant first. A beatboxed drum is a pressure event and
 //! a noise event, a few milliseconds of each, with at most a breath of
 //! vowel after; so each machine models the mouth's action, not a voice:

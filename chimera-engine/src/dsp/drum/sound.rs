@@ -879,11 +879,11 @@ impl RouteOffsets {
 }
 
 /// A pad's AMP envelope running, OPEN, with no route.
-// ponytail: placeholder bill until the unit bench (#951)
+// Placeholder bill until the unit bench (#951)
 pub const PAD_AMP_COST: Cost = Cost(20);
 
 /// A pad's routes running: AMP, mod envelope, LFO and the ramps.
-// ponytail: placeholder bill until the unit bench (#951)
+// Placeholder bill until the unit bench (#951)
 pub const PAD_ROUTED_COST: Cost = Cost(55);
 
 /// A filter as billed: its KIND, and for the 2040 its VOICE. Six of them.

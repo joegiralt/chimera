@@ -5,7 +5,7 @@
 //! them, FADE fades the last, TRON marks its tape's end; quantised inputs,
 //! no frame term. `GLYPH_OUT=dir cargo test -p chimera-core --features
 //! walk-styles --test tape_walk_glyph_test -- --ignored` writes the
-//! owner's variants as BMPs at 1× and 4× (each style, each pose;
+//! variants as BMPs at 1× and 4× (each style, each pose;
 //! `GLYPH_STYLES=straight,prints` picks styles).
 
 use chimera_core::dsp::tape_engine::Direction;

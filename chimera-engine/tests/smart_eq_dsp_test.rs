@@ -327,7 +327,7 @@ fn a_nan_on_a_bus_rests_only_that_parts_filters() {
 fn a_ringing_tail_keeps_its_mud_cut_and_lets_go_smoothly() {
     // A MID chord struck every 4 s and left to ring (τ 1.5 s, as MODAL's
     // long tails) under a steady FRONT bass: while it rings within 12 dB
-    // of the bass it keeps its LOW cut whole (owner, 2026-11-19: tails
+    // of the bass it keeps its LOW cut whole (by ear, 2026-11-19: tails
     // muddy the mix); it lets go only as the ring falls far under.
     let bass = sine(100.0, 0.3);
     let ring = sine(110.0, 0.25);
@@ -1196,7 +1196,7 @@ fn wobble(gap_ms: f32, vary_db: f32, amount: u8) -> f32 {
 
 #[test]
 fn dense_kicks_wobble_the_dip_as_a_plain_follower_does() {
-    // No hold (owner 2026-11-20): kicks closer than the release wobble
+    // No hold (decided 2026-11-20): kicks closer than the release wobble
     // the dip at their own rate. At DEEP (a 10 dB dip), measured: 16ths
     // at 170 BPM (88 ms) and 32nds at 120 BPM (62.5 ms).
     let (sixteenths, thirty_seconds) = (wobble(88.2, 0.0, 95), wobble(62.5, 0.0, 95));
@@ -1269,7 +1269,7 @@ fn no_gap_between_kicks_is_a_cliff() {
 #[test]
 fn a_long_tail_holds_the_dip_and_a_snare_presses_by_its_low_end() {
     // An 808 two seconds long (50 Hz, falling 6 dB over its length) on
-    // the FRONT kit: the bass's LOW stays dipped for its length (owner
+    // the FRONT kit: the bass's LOW stays dipped for its length (by ear
     // 2026-11-20: the tail counts), then lets go.
     let long = |t: f32| {
         let u = t % 4.0;

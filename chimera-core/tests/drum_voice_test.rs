@@ -259,7 +259,7 @@ fn amp_gated_short_gate_plays_attack_hold() {
 }
 
 // ---------------------------------------------------------------------------
-// VEL: the pad's own amp (ADR 0269, owner ruling 2026-11-14)
+// VEL: the pad's own amp (ADR 0269, design ruling 2026-11-14)
 // ---------------------------------------------------------------------------
 
 /// DRUM INIT's kit with pad 1 (TONE KICK) on VEL `vel`, its CLICK (E)
@@ -343,7 +343,7 @@ fn a_soft_hit_drives_the_ladder_less() {
 }
 
 // ---------------------------------------------------------------------------
-// #963 (owner 2026-11-22): DRUM plays the pad's VEL alone. The Sound's
+// #963 (decided 2026-11-22): DRUM plays the pad's VEL alone. The Sound's
 // AMP VEL (hidden on DRUM) no longer scales a hit under a Part VCA route,
 // and a pad's STRIKE hits as hard as its level, not its raw velocity.
 // ---------------------------------------------------------------------------
@@ -400,7 +400,7 @@ fn strike_hits_as_hard_as_the_pad_level() {
     assert!(peak(&hit_bus(&k, 32, &none)) < peak(&hit_bus(&k, 127, &none)));
 }
 
-/// One velocity law (owner, #963): under STRIKE a hit at VEL 0.5 comes out
+/// One velocity law (#963): under STRIKE a hit at VEL 0.5 comes out
 /// as much softer as its kernel level says, the law applied once, not
 /// once at the kernel and again at the strike's height.
 #[test]

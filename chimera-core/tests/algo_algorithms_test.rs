@@ -11,7 +11,7 @@ use chimera_core::dsp::algo::plan::OPS;
 /// (modulator, target) links and carriers.
 type Routing = (&'static [(u8, u8)], &'static [u8]);
 
-/// The TX81Z's eight algorithms on operators 1–4 (owner's manual; ADR 0018
+/// The TX81Z's eight algorithms on operators 1–4 (the TX81Z manual; ADR 0018
 /// for 4).
 const TX81Z: [Routing; 8] = [
     (&[(4, 3), (3, 2), (2, 1)], &[1]),

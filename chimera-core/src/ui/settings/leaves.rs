@@ -92,7 +92,7 @@ pub static OUTPUTS: BlockDef = BlockDef {
 };
 
 /// PART > LIVE SNAP: the active Part's SNAP and HELD (spec § 5.2,
-/// owner Q6), bound as the mixer's PART page binds its cells.
+/// design question 6), bound as the mixer's PART page binds its cells.
 pub static LIVE_SNAP: BlockDef = BlockDef {
     id: 85,
     name: "Live Snap",

@@ -15,7 +15,7 @@ pub const MAX_PARTS: usize = 6;
 pub const DAC_PAIRS: usize = 3;
 /// Voices the heaviest Sound must still allow (ADR 0026).
 pub const FLOOR_VOICES: u32 = 4;
-/// Voices a Sound with a formant operator must still allow (owner,
+/// Voices a Sound with a formant operator must still allow (decided
 /// 2026-10-12).
 pub const FLOOR_VOICES_FORMANT: u32 = 3;
 

@@ -11,7 +11,7 @@
 # (ADR 0163, 0174) and the bench itself play from it, and Gate 3 found
 # bank 2 never slower (ADR 0142). A bench run needs its build's .bk2
 # installed. `bench-stress,orbit` is out: it fails the stack check
-# (private issue #656).
+# (#656).
 bench_sets := "fault-inject bench-algo bench-algo,master-tape bench-routing bench-memory bench-stress bench-orbit bench-tape filter-probes"
 bench_all := "bench-algo,bench-routing,bench-memory,bench-stress,bench-orbit"
 # Where cargo builds: the checks read the ELF from there, not a fixed
@@ -490,7 +490,7 @@ check-slots elf bk2:
 # chart for scripts, #983); writes
 # SHA256SUMS and the notes from docs/alpha/RELEASE-NOTES.md.tmpl; asserts
 # the assets are exactly those five and none is a private file's bytes. A
-# draft only: the owner publishes. --dry-run does everything but `gh release create`.
+# draft only: the maintainer publishes. --dry-run does everything but `gh release create`.
 release version *flags:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -505,7 +505,7 @@ release version *flags:
     just release-bin
     out="$PWD/target/release-assets/v$V"
     rm -rf "$out"; mkdir -p "$out"
-    # One firmware ships: the ORBIT build, which does everything the plain build does (owner, 2026-10-14),
+    # One firmware ships: the ORBIT build, which does everything the plain build does (decided 2026-10-14),
     # with its bank 2 beside it, one build: the seal must match.
     cp target/release-bin/chimera-orbit.bin "$out/CHIMERA.BIN"
     cp target/release-bin/chimera-orbit.bk2 "$out/CHIMERA.BK2"
@@ -601,7 +601,24 @@ build:
 # Its firmware is stamped clean (CHIMERA_STAMP_CLEAN): a dirty tree's flag
 # folds into code, and bank 1 is measured as the commit would build (#874).
 check $CHIMERA_STAMP_CLEAN="1":
+    just check-tools
+    just check-host
+    just check-firmware
+    just check-bench
+    just clippy
+    just loom
+    cargo fmt --all -- --check
+    just check-release
+
+# `check`, a part at a time, as CI runs it in jobs of its own; each sets
+# CHIMERA_STAMP_CLEAN itself. The Python tools' tests (headers and the
+# export's scan among them), against a fake unit.
+check-tools $CHIMERA_STAMP_CLEAN="1":
     python3 -m unittest discover -s tools -p 'test_*.py'
+
+# The host tests: every crate's, each feature set's, the doors', the
+# dosfstools cross-checks, the desktop and the fuzz crates compiled.
+check-host $CHIMERA_STAMP_CLEAN="1":
     cargo test -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit
     cargo test -p chimera-core -p chimera-engine --features master-tape
     # The editor's glyph renderer against the console's `ed` and the sim's frame.
@@ -628,11 +645,17 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo check --manifest-path chimera-core/fuzz/Cargo.toml --bins
     cargo check --manifest-path chimera-desktop/fuzz/Cargo.toml --bins
     cargo check --manifest-path chimera-midi/fuzz/Cargo.toml --bins
+    # Every host crate at once, features unified as a workspace build sees
+    # them (bank 2's proxies in); the firmware crates build only for the target.
+    cargo check --workspace --exclude chimera-stm32 --exclude chimera-board --exclude chimera-bootloader
+
+# The shipping firmware sets in release, each held to its bank budgets,
+# ITCM and door placement; the jump stub and chimera-theory on the target.
+check-firmware $CHIMERA_STAMP_CLEAN="1":
     # The default build in release too: with TAPE its dev build passes FLASH (#303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     # Every other feature set in release: a build check, not a debug flash;
-    # their dev builds sit at or past FLASH
-    # (private issue #303).
+    # their dev builds sit at or past FLASH (#303).
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release
     just check-bank1 default
     just check-bank2 default
@@ -654,6 +677,14 @@ check $CHIMERA_STAMP_CLEAN="1":
     # 0256); `release-bin` checks the default and ORBIT builds'.
     {{utils}} door-check {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
     just check-door-placed {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32
+    # The bootloader links cortex-m-rt's script itself: without it lld warns
+    # and links an ELF with no vector table.
+    out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
+    rust-objdump -h {{target_dir}}/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
+    cargo build -p chimera-theory --target thumbv7em-none-eabihf
+
+# Every bench area and the SD probe in release (the slowest builds).
+check-bench $CHIMERA_STAMP_CLEAN="1":
     # The bench, an area a build: all of it no longer fits FLASH. Each is
     # door-checked, as bank2-split checks the builds it splits, and held to
     # its bank-1 budget (ADR 0198).
@@ -661,14 +692,10 @@ check $CHIMERA_STAMP_CLEAN="1":
     cargo build -p chimera-stm32 --target thumbv7em-none-eabihf --release --no-default-features --features sd-probe
     # Its split as `flash-sd-probe` makes it (the seal, check-itcm with ITCM empty).
     just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe
-    # The bootloader links cortex-m-rt's script itself: without it lld warns
-    # and links an ELF with no vector table.
-    out=$(cargo build -p chimera-bootloader --target thumbv7em-none-eabihf 2>&1) || { echo "$out"; exit 1; }; echo "$out"; if echo "$out" | grep -q "cannot find entry symbol"; then exit 1; fi
-    rust-objdump -h {{target_dir}}/thumbv7em-none-eabihf/debug/chimera-bootloader | grep -q '[.]vector_table' || { echo "chimera-bootloader: no .vector_table" >&2; exit 1; }
-    cargo build -p chimera-theory --target thumbv7em-none-eabihf
-    just clippy
-    just loom
-    cargo fmt --all -- --check
+
+# The release binaries, the single-cut sweep over the ORBIT .bk2 and the
+# stack check over every set.
+check-release $CHIMERA_STAMP_CLEAN="1":
     just release-bin
     # The single-cut sweep over the linked ORBIT .bk2 (ADR 0272), release.
     CHIMERA_BK2={{justfile_directory()}}/target/release-bin/chimera-orbit.bk2 cargo test --release -p chimera-image --test install_test -- --ignored single_cuts_through_the_linked_image
@@ -774,7 +801,10 @@ test-fat-tools:
     cargo test -p chimera-fat --features chimera-hal/testkit --test dosfstools_test --test console_put_test --test stock_files_test -- --ignored
 
 # Clippy on every target and feature set `check` builds, test targets included
-clippy:
+clippy: clippy-main clippy-bench
+
+# Clippy on the host crates and the shipping firmware sets
+clippy-main:
     cargo clippy -p chimera-core -p chimera-engine -p chimera-image -p chimera-midi -p chimera-hal -p chimera-desktop -p chimera-waves -p chimera-fat -p chimera-theory -p chimera-utils -p chimera-circuits --features chimera-hal/testkit --all-targets -- -D warnings
     cargo clippy -p chimera-core -p chimera-engine --features master-tape --all-targets -- -D warnings
     cargo clippy -p chimera-screen --all-targets -- -D warnings
@@ -789,6 +819,9 @@ clippy:
     cargo clippy -p chimera-core --features bank2,test-support --all-targets -- -D warnings
     cargo clippy -p chimera-engine --features bank2,test-support --all-targets -- -D warnings
     cargo clippy -p chimera-core --features walk-styles --test tape_walk_glyph_test -- -D warnings
+
+# Clippy on every bench area, the SD probe, usb-console alone and the jump stub
+clippy-bench:
     for f in {{bench_sets}}; do cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features "$f" -- -D warnings || exit 1; done
     # Every bench area at once: too big to link, but no area's code is dead.
     cargo clippy -p chimera-stm32 -p chimera-board --target thumbv7em-none-eabihf --no-default-features --features {{bench_all}} -- -D warnings

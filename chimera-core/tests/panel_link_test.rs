@@ -7,7 +7,7 @@
 //! order (`lib.rs`: a full flush at start, then `render_dirty`'s regions,
 //! then the panel's health check).
 //!
-//! The owner's editor session (2026-11-22): the glass showed TAPE and VA
+//! An editor session on a real unit (2026-11-22): the glass showed TAPE and VA
 //! fragments over a tinted ground and stayed there, while `shot` read a
 //! clean SETTINGS. The first test drives that session through `ed part` and
 //! `ed set` and finds the stream keeps the glass equal to the framebuffer:
@@ -188,7 +188,7 @@ impl Panel {
         match c {
             0x0A => 0x80 | u8::from(self.awake) << 4 | 0x08 | u8::from(self.on) << 2,
             0x0B => self.madctl,
-            // As the owner's panel answers (2026-11-23): DBI only, DPI 0.
+            // As a real panel answers (2026-11-23): DBI only, DPI 0.
             0x0C => self.colmod & 0x07,
             _ => 0,
         }
@@ -348,7 +348,7 @@ fn first_param(f: &mut Fake, e: &str) -> String {
         .to_string()
 }
 
-/// Parts 1–3 VA, TAPE, ALGO, as the owner's; the editor's session on
+/// Parts 1–3 VA, TAPE, ALGO, as on that unit; the editor's session on
 /// them: `ed part` between the three, `ed set`s as a knob drags, then MENU
 /// on the box. `check` runs after every frame.
 fn session(f: &mut Fake, d: &mut Unit, mut check: impl FnMut(&Fake, &Unit, &str)) {
@@ -562,7 +562,7 @@ fn a_fault_that_survives_init_backs_off() {
     assert!(!h.due(Ms(t.0 + 499)) && h.due(Ms(t.0 + 500)));
 }
 
-/// The owner's panel (2026-11-23, `panel_read 9c 48 05`): RDDCOLMOD
+/// A real panel (ILI9341, 2026-11-23, `panel_read 9c 48 05`): RDDCOLMOD
 /// answers 0x05, the DBI field alone, for the 0x55 sent. It must arm.
 #[test]
 fn the_real_panels_answer_arms() {

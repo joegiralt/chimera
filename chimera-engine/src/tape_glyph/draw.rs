@@ -5,8 +5,8 @@
 //! `Canvas`. With `bank2` this module is bank 2's (`bank2.x`), reached
 //! only through the door (`super::paint`).
 //!
-//! The drawings and their primitives follow the approved mockup
-//! (`.superpowers/ledgers/tape-glyphs/`): rows, Bresenham lines, discs of
+//! The drawings and their primitives follow the approved mockup:
+//! rows, Bresenham lines, discs of
 //! `r² + r`, then the wear passes.
 
 use super::{

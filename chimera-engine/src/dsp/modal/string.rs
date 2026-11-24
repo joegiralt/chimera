@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The Karplus-Strong string, the project owner's own code from their
+//! The Karplus-Strong string, its author's own code from their
 //! Carcosa firmware for the Ambika, brought in by its author (ADR 0032).
 
 use crate::dsp::clampf;

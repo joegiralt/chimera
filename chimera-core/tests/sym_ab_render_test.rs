@@ -18,7 +18,7 @@ use common::orbit::write_wav;
 use common::{Rig, SR, init_params};
 
 #[test]
-#[ignore = "renders the owner's A/B; needs SYM_AB_OUT and SYM_AB_NAME"]
+#[ignore = "renders an A/B for listening; needs SYM_AB_OUT and SYM_AB_NAME"]
 fn render_sym_sweep() {
     let (Some(dir), Some(name)) = (
         std::env::var_os("SYM_AB_OUT"),

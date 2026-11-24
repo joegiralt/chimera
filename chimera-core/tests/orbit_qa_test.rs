@@ -42,7 +42,7 @@ const BAR: usize = 1500;
 
 /// The level reference: a C4 triad held 2 s on TX EPIANO, NEW's Part 2,
 /// the scene's loudest voice. The scene sits on factory Sounds since the
-/// owner's pick at UAT, so INIT Algo's chord, 6.7 dB over it, no longer
+/// pick at UAT, so INIT Algo's chord, 6.7 dB over it, no longer
 /// says how loud a factory Sound plays.
 const C4_CHORD: [u8; 3] = [60, 64, 67];
 const REFERENCE: Patch = Patch::Factory(NEW_PARTS[1].index() as u8);

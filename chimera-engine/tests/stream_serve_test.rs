@@ -165,7 +165,7 @@ fn a_slot_cancelled_mid_read_lands_nowhere() {
     assert!(turn.ready(V1, SlotIdx::C, again).is_some());
 }
 
-/// Owner rule (#569): any want beats a waiting UI: `Idle`, the bus going
+/// Design rule (#569): any want beats a waiting UI: `Idle`, the bus going
 /// back, only once no want is left to read.
 #[test]
 fn the_ui_is_last() {

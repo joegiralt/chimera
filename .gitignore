@@ -17,3 +17,5 @@ __pycache__/
 /target-wasm
 /tools/binaryen/
 /.claude/projects/
+*.bk2
+*.elf

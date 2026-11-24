@@ -29,7 +29,7 @@ use crate::out_ring::{OutPorts, OutRing, Tee};
 use crate::project::{Loads, PartId, Project};
 
 /// After a binding hears, its own echo waits this long (spec § 9, the
-/// owner's call): a ramp, at most 120 ms, lands first.
+/// a design call): a ramp, at most 120 ms, lands first.
 pub const QUIET_MS: u32 = 250;
 
 /// The longest echo: an NRPN with its fine value, status included.

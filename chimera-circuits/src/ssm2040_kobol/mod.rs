@@ -56,7 +56,7 @@ pub fn models() -> Vec<Entry> {
     vec![
         Entry {
             name: "ssm2040_kobol/exp_c",
-            about: "EXP-C: the Kobol's 2040 + CA3080 loop in the firmware's structure, the owner's unit's offsets (f32, 1x): the A/B's",
+            about: "EXP-C: the Kobol's 2040 + CA3080 loop in the firmware's structure, the reference unit's offsets (f32, 1x): the A/B's",
             make: || Box::new(ExpC(Offsets::UNIT)),
         },
         Entry {

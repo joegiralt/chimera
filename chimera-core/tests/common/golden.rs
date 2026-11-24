@@ -7,7 +7,7 @@
 //! with `GOLDEN_RECORD=1 cargo test -p chimera-core --test <harness> --
 //! --nocapture`, which prints the whole table, in case order, to paste over
 //! `GOLDENS`. Goldens that no longer reflect intended behaviour stay locked
-//! and are listed with their issue URL (`known_broken`).
+//! and are listed with their issue number (`known_broken`).
 
 use std::fmt::Debug;
 
@@ -75,15 +75,15 @@ pub fn mismatches<V: Golden>(table: &[(&str, V)], got: &[(&str, V)]) -> Vec<Stri
     failures
 }
 
-/// Every known-broken golden names a case and a GitHub issue URL.
+/// Every known-broken golden names a case and its issue (`#123`).
 pub fn known_broken(list: &[(&str, &str)], cases: &[&str]) {
-    const TRACKER: &str = "https://github.com/joegiralt/chimera/issues/";
+    const TRACKER: &str = "#";
     for (case, issue) in list {
         assert!(cases.contains(case), "unknown case {case}");
         let num = issue.strip_prefix(TRACKER);
         assert!(
             num.is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
-            "{case}: {issue} is not a GitHub issue URL"
+            "{case}: {issue} is not an issue number (#123)"
         );
     }
 }

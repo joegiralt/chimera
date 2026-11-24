@@ -238,7 +238,7 @@ synth = "rain"
 secs = "1.0"
 rate = "12k"
 
-# ponytail: KIT 16 and its KIT Sound are out of the factory set until SLICE
+# KIT 16 and its KIT Sound are out of the factory set until SLICE
 # returns (#779).
 # [[source]]
 # name = "KIT 16"
@@ -531,7 +531,7 @@ model = "SCRUB"
 # SCRUB's own defaults (ADR 0205), re-trimmed for the 70 ms loop.
 trim = "+5.5"
 
-# ponytail: see KIT 16 above (#779).
+# See KIT 16 above (#779).
 # [[sound]]
 # name = "KIT"
 # source = "KIT 16"
@@ -584,7 +584,7 @@ trim = "-3.5"
 
 [[sound]]
 name = "TINZ"
-# The owner's, saved on the unit (build 14fecc46): SCRUB on WAVE MORPH's
+# Saved on the unit (build 14fecc46): SCRUB on WAVE MORPH's
 # frames, a resonant SEM low-pass under the LPG, an octave down with GLIDE;
 # LFO 1 walks POSITION once the mod wheel opens its DEPTH (CC1, at 0).
 # Its values as the unit stored them, its own filter STAB 0.5 among them;
@@ -622,4 +622,4 @@ mod.ENV1 = "FILTER.CUTOFF +33"
 mod.LFO1 = "FILTER.CUTOFF +9, TAPE_ENG.POSITION +62"
 mod.NOTE = "FILTER.CUTOFF +122"
 trim = "-6.2"
-level = "by ear -1.7: the owner's level, set on the unit"
+level = "by ear -1.7: its level, set on the unit"

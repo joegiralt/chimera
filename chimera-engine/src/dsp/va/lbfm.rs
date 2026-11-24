@@ -19,7 +19,7 @@ pub const PROVENANCE: &[Provenance] = &[
                (1 + b0 e^(jw0 nT)) (eq. 25); b0 set directly by our own curve; our own Rust",
     },
     Provenance::Original {
-        author: "AI-assisted, owner-directed and reviewed",
+        author: "AI-assisted, directed and reviewed by the maintainer",
     },
 ];
 

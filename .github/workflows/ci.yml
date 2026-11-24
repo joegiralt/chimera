@@ -1,0 +1,164 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# CI for the public repo (ADR 0339): `just check`, a part a job. Pushes and
+# pull requests run the tools' tests and scans, fmt, the host tests, loom,
+# clippy and the shipping firmware with its bank budgets; the bench builds,
+# their clippy, the release binaries and the stack check run nightly and on
+# demand. No secrets: it builds and tests only. rust-cache keeps the
+# registry and the dependencies' builds, not the workspace's own, and only
+# from main; the nightly jobs restore but never save, so the cache stays
+# inside GitHub's 10 GB. The source lives in the
+# private repo at tools/oss-root/.github/workflows/ci.yml; `just oss-export`
+# puts it here.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The toolchain is rust-toolchain.toml's, pinned there once.
+  CARGO_TERM_COLOR: always
+  # Dev and test builds without debuginfo, std's stripped too: with
+  # Cargo.toml's line tables the host tests' target measured 25 GB, past a
+  # runner's disk; stripped, each test binary is about a quarter the size.
+  # Code generation is unchanged.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  CARGO_INCREMENTAL: "0"
+  CHIMERA_STAMP_CLEAN: "1"
+
+jobs:
+  tools:
+    name: Tools, headers, export scan, fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust
+        run: rustup toolchain install  # rust-toolchain.toml: the pinned nightly, its components and target
+      - uses: taiki-e/install-action@645d1ab48b3cb8591684a8b730b2ccf4cb3f9568 # v2.87.33
+        with:
+          tool: just@1.51.0
+      - name: The tools' tests
+        run: just check-tools
+      - name: Headers
+        run: python3 -I tools/headers.py --check
+      - name: Export and scan
+        run: python3 -I tools/oss_export.py export "$RUNNER_TEMP/oss-export" --no-deny
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+  host:
+    name: Host tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Disk room
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config dosfstools
+      - name: Rust
+        run: rustup toolchain install  # rust-toolchain.toml: the pinned nightly, its components and target
+      - uses: taiki-e/install-action@645d1ab48b3cb8591684a8b730b2ccf4cb3f9568 # v2.87.33
+        with:
+          tool: just@1.51.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: just check-host
+
+  loom:
+    name: Loom
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Disk room
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Rust
+        run: rustup toolchain install  # rust-toolchain.toml: the pinned nightly, its components and target
+      - uses: taiki-e/install-action@645d1ab48b3cb8591684a8b730b2ccf4cb3f9568 # v2.87.33
+        with:
+          tool: just@1.51.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: just loom
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Disk room
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+      - name: Rust
+        run: rustup toolchain install  # rust-toolchain.toml: the pinned nightly, its components and target
+      - uses: taiki-e/install-action@645d1ab48b3cb8591684a8b730b2ccf4cb3f9568 # v2.87.33
+        with:
+          tool: just@1.51.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: just clippy-main
+
+  firmware:
+    name: Firmware and bank budgets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Disk room
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Rust
+        run: rustup toolchain install  # rust-toolchain.toml: the pinned nightly, its components and target
+      - uses: taiki-e/install-action@645d1ab48b3cb8591684a8b730b2ccf4cb3f9568 # v2.87.33
+        with:
+          tool: just@1.51.0,cargo-binutils@0.4.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: just check-firmware
+
+  # The slow sets: nightly and on demand only.
+  heavy:
+    name: Nightly ${{ matrix.part }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [check-bench, clippy-bench, check-release]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Disk room
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Rust
+        run: rustup toolchain install  # rust-toolchain.toml: the pinned nightly, its components and target
+      - uses: taiki-e/install-action@645d1ab48b3cb8591684a8b730b2ccf4cb3f9568 # v2.87.33
+        with:
+          tool: just@1.51.0,cargo-binutils@0.4.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.part }}
+          save-if: false
+      - run: just ${{ matrix.part }}

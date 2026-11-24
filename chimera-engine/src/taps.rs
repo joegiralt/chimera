@@ -174,7 +174,7 @@ const fn choice(choices: &[Jack], j: Jack) -> u8 {
 }
 
 impl JackPair {
-    /// FM3 IN on LFO 1, QM IN on ENV 3 (owner answer 6).
+    /// FM3 IN on LFO 1, QM IN on ENV 3 (design answer 6).
     pub const DEFAULT: JackPair = JackPair(
         choice(&Jack::FM3_CHOICES, Jack::Mod(ModSource::Lfo1)) << 4
             | choice(&Jack::QM_CHOICES, Jack::Mod(ModSource::Env3)),

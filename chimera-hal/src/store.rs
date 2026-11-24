@@ -583,7 +583,7 @@ pub enum Mark {
 }
 
 /// Doubting boots in a row after which the boot stops sweeping and warns
-/// (owner ruling 2026-10-08). A settled sweep, the console's included,
+/// (design ruling 2026-10-08). A settled sweep, the console's included,
 /// clears the mark; a boot that runs without a doubt ends the streak.
 pub const DOUBT_HALT: u8 = 3;
 

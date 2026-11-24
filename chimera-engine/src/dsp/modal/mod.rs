@@ -30,7 +30,7 @@
 // chord table (`dsp/part.cc`, Copyright 2015 Emilie Gillet), under the
 // same notice.
 //
-// The Karplus-Strong string (`string.rs`) is the project owner's own code,
+// The Karplus-Strong string (`string.rs`) is its author's own code,
 // from their Carcosa firmware for the Ambika, brought in by its author
 // (ADR 0032).
 
@@ -948,7 +948,7 @@ impl ModalEngine {
     }
 
     /// Note-off stops the exciter; the resonator rings on DAMP (the
-    /// owner's UAT, 2026-09-30): a string and SYMP's halo ring until their
+    /// UAT, 2026-09-30): a string and SYMP's halo ring until their
     /// T60 or a steal. Bowed's bow lifts, its loop ramping to DAMP's ring.
     /// Nothing scales a buffer (#51).
     pub fn note_off(&mut self, _pool: &mut SymPool) {

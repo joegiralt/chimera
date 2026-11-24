@@ -242,7 +242,7 @@ fn choke_and_retrig_cells_round_trip() {
     }
 }
 
-/// A pad's MACHINE cell (owner rule: full words when they fit): the full
+/// A pad's MACHINE cell (design rule: full words when they fit): the full
 /// name, else its last word (the instrument), else the machine's short
 /// name; never wider than the column, so COWBELL can't run into LEVEL.
 #[test]

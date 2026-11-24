@@ -11,7 +11,7 @@ use crate::dsp::provenance::{PatentLine, Provenance};
 
 pub const PROVENANCE: &[Provenance] = &[
     Provenance::Original {
-        author: "AI-assisted, owner-directed and reviewed",
+        author: "AI-assisted, directed and reviewed by the maintainer",
     },
     Provenance::CircuitModel {
         circuit: "VCO core reset time; exponential-converter scale",

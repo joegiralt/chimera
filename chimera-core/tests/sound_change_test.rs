@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! #14 (owner 2026-11-22): a Part's new Sound (a program change, a
+//! #14 (decided 2026-11-22): a Part's new Sound (a program change, a
 //! library load: its `loads` move) fades the voices still playing the old
 //! one out through the voice's FADE, as CC 120 does. None restarts on the
 //! new Sound, and none plays on under it; notes after the load play it.

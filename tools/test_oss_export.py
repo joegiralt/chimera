@@ -164,10 +164,93 @@ class Head(unittest.TestCase):
         self.assertFalse(oss.dropped("chimera-editor/x", ["editor/"]))
 
     def test_public_edits(self):
-        got = oss.rewrite(b"in the GitHub issue tracker (joegiralt/chimera), not", "CLAUDE.md")
-        self.assertEqual(got, b"in the GitHub issue tracker (joegiralt/chimera-releases), not")
+        (old, new), = oss.EDITS["CLAUDE.md"]
+        got = oss.rewrite(f"go in the {old}; by URL".encode(), "CLAUDE.md")
+        self.assertEqual(got, f"go in the {new}; by URL".encode())
+        self.assertIn(b"joegiralt/chimera-private", got)
+        # The public repo exports itself: the edit is already made.
+        self.assertEqual(oss.rewrite(got, "CLAUDE.md"), got)
         with self.assertRaises(SystemExit):
             oss.rewrite(b"nothing to edit", "CLAUDE.md")
+
+    def test_tracker_links_become_plain_text(self):
+        # Built at run time, so the export leaves this file's input alone.
+        gh = "https://github.com/joegiralt/" + "chimera"
+        got = oss.rewrite(
+            f"{gh}/issues/303 and {gh}/pull/1113, [#345]({gh}/issues/345), [the bug]({gh}/issues/9), "
+            f"<{gh}/issues/710>, joegiralt/" f"chimera#565, joegiralt/chimera-releases#6, {gh}/tree/preenfm3-v0.4.0".encode()
+        )
+        self.assertEqual(
+            got.decode(),
+            "private issue #303 and private PR #1113, private issue #345, the bug (private issue #9), "
+            f"private issue #710, private issue #565, joegiralt/chimera-releases#6, {gh}/tree/preenfm3-v0.4.0",
+        )
+        self.assertEqual(oss.rewrite(got), got)
+
+    def test_docs_lose_private_pages_and_paths(self):
+        page = "https://claude.ai/" + "artifact/B1ydzBo2"
+        home = "~" + "/dev"
+        ledgers = ".superpowers/" + "ledgers"
+        doc = (
+            f"mocked at 240x320\n({page}): A refined\nA/B: {page}; spike\nmockup ({page}, the panel)\n"
+            f"Design: `{home}/designs/key.md`; run `{home}/build-slot.sh just check`, see {ledgers}/kobol/a.txt. Step ({ledgers}/r.md) and (`{home}/x`).\n"
+            f"Its comment ({home}/x/y.md S1, S2); demo (`{home}/c/{ledgers}/fb/`, branch `x`); KOBOL_DIR=…/{ledgers}/kobol cargo test.\n"
+            f"Path: `{home}/c/{ledgers}/f/<s>/r<R>_<a|b>.wav`.\n"
+        )
+        want = (
+            "mocked at 240x320: A refined\nA/B: an unpublished page; spike\nmockup (the panel)\n"
+            "Design: (private notes); run `just check`, see (private notes). Step (private notes) and (private notes).\n"
+            "Its comment (private notes S1, S2); demo (private notes, branch `x`); KOBOL_DIR=<dir> cargo test.\n"
+            "Path: (private notes).\n"
+        )
+        self.assertEqual(oss.rewrite(doc.encode(), "docs/x.md").decode(), want)
+        # Code keeps its own words: only docs are rewritten.
+        self.assertEqual(oss.rewrite(doc.encode(), "x.rs").decode(), doc)
+
+    def test_plans_lose_the_agent_banner_and_attribution_rule(self):
+        plan = (
+            "# A plan\n\n> **For agentic workers:** REQUIRED SUB-SKILL: Use one.\n\n**Goal:** x.\n"
+            "- Commits: terse, no type prefix, no Claude" " attribution. Stage by path.\n"
+            "- Terse comments. No type prefixes in commits, no Claude" " attribution, and never stage `chimera.bin`.\n"
+            "- Commit messages are terse. **No attribution" " or `Co-Authored-By` lines.**\n"
+            "- coefficients copied with attribution.\n"
+        )
+        want = (
+            "# A plan\n\n**Goal:** x.\n"
+            "- Commits: terse, no type prefix. Stage by path.\n"
+            "- Terse comments. No type prefixes in commits, never stage `chimera.bin`.\n"
+            "- Commit messages are terse.\n"
+            "- coefficients copied with attribution.\n"
+        )
+        self.assertEqual(oss.rewrite(plan.encode(), "docs/superpowers/plans/p.md").decode(), want)
+        self.assertEqual(oss.rewrite(plan.encode(), "docs/superpowers/specs/p.md").decode(), plan)
+
+    def test_mit_history_edits_match(self):
+        for path, edits in oss.EDITS.items():
+            text = (ROOT / path).read_text(encoding="utf-8")
+            for old, new in edits:
+                self.assertTrue(old in text or new in text, (path, old))
+
+    def test_the_root_overlay_lands_at_the_root(self):
+        self.assertEqual(oss.public_path("tools/oss-root/.github/workflows/ci.yml"), ".github/workflows/ci.yml")
+        self.assertEqual(oss.public_path("tools/oss_export.py"), "tools/oss_export.py")
+
+    def test_head_exports_the_public_repo_files(self):
+        if not (ROOT / ".git").exists():
+            self.skipTest("not a git checkout")
+        with tempfile.TemporaryDirectory() as d:
+            files = oss.export(ROOT, pathlib.Path(d) / "out")
+            for f in ("README.md", "CONTRIBUTING.md", "LICENSE", "THIRD_PARTY.md", ".github/workflows/ci.yml"):
+                self.assertIn(f, files)
+            self.assertFalse([f for f in files if f.startswith(oss.ROOT_OVERLAY)])
+            text = "\n".join(
+                (pathlib.Path(d) / "out" / f).read_text(encoding="utf-8") for f in files if f.endswith((".md", ".rs"))
+            )
+            self.assertNotRegex(text, r"github\.com/joegiralt/chimera/(?:issues|pull)/\d")
+            docs = "\n".join((pathlib.Path(d) / "out" / f).read_text(encoding="utf-8") for f in files if f.endswith(".md"))
+            self.assertNotIn("claude.ai/" "artifact", docs)
+            self.assertNotIn("~" "/dev/", docs)
+            self.assertNotIn(".superpowers/" "ledgers", docs)
 
     def test_drop_leaves_a_prefix_out(self):
         if not (ROOT / ".git").exists():

@@ -875,7 +875,7 @@ fn tape_goldens_match() {
 /// code (`drum_kit_codec_test::write_slice1_fixture`), pads 1, 2, 8, 9 and
 /// 10 struck at once-a-block steps, 2 s through the `Instrument`. Every
 /// later task keeps it bit-identical, but for one deliberate change: a
-/// pad's VEL law is its kernel's level (owner ruling 2026-11-14, ADR
+/// pad's VEL law is its kernel's level (design ruling 2026-11-14, ADR
 /// 0269), and the fixture's pads are on VEL 0.6. At VEL 1 it is slice 1's
 /// own render, bit for bit (`drum_slice1_vel_test`). Re-recorded for #963
 /// (ADR 0316): a pad's STRIKE hits at its level, so VEL 0.6's.

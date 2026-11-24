@@ -181,7 +181,7 @@ fn modes_respond_as_derived() {
     }
 }
 
-/// The Moog's bass loss, uncompensated (owner's ruling): LP4 at 100 Hz
+/// The Moog's bass loss, uncompensated (a design ruling): LP4 at 100 Hz
 /// with FREQ 2 kHz follows `−20·log₁₀(1 + k)` within 0.5 dB at small
 /// signal, RES 0 to 1 in tenths, falling monotonically.
 #[test]

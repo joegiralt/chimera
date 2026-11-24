@@ -665,7 +665,7 @@ fn voices_end_when_the_gate_shuts() {
 
 /// Each knob swept from 0 to 1 over a second on a held VA INIT note never
 /// steps: no edge in the output's second difference over the sweep's
-/// steady neighbours (owner rule), and turning the gate on from 0 is no
+/// steady neighbours (a design rule), and turning the gate on from 0 is no
 /// click.
 #[test]
 fn the_knobs_never_zipper() {
@@ -699,7 +699,7 @@ fn the_knobs_never_zipper() {
 
 /// Each knob swept a block at a time over a second on a 110 Hz sine, with
 /// the routes' level at ½ and a strike: no energy in the fourth difference
-/// beyond the sine's own (owner rule: never steppy).
+/// beyond the sine's own (design rule: never steppy).
 #[test]
 fn the_gate_sweeps_smoothly() {
     let n = 48_000;

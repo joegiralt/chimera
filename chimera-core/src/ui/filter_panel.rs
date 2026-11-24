@@ -40,7 +40,7 @@ impl JackSlot {
         }
     }
 
-    /// LFO 1 and ENV 3 (owner answer 6); also what a tap acts as off ALGO.
+    /// LFO 1 and ENV 3 (design answer 6); also what a tap acts as off ALGO.
     pub const fn default(self) -> Jack {
         match self {
             JackSlot::Fm3 => Jack::Mod(ModSource::Lfo1),

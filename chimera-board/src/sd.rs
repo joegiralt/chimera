@@ -152,7 +152,7 @@ impl SdSpi {
         self.per_ms = if self.counting {
             u64::from(self.cpu.per_ms().map_or(0, NonZeroU32::get))
         } else {
-            // ponytail: coarse. Each transaction counts as its shortest (one
+            // Coarse. Each transaction counts as its shortest (one
             // byte at SCK), so this never times out early but runs long by
             // the per-transaction overhead; the DWT path is exact.
             u64::from(self.hz.raw() / MIN_TRANSACTION_SCK / 1_000)

@@ -390,7 +390,7 @@ fn the_chunk_after_a_short_last_chunk_is_due_sooner() {
 
 #[test]
 fn a_waiting_ui_never_holds_back_the_spare_slot() {
-    // Owner: streams always beat the UI. A UI on the bus the whole run
+    // Design rule: streams always beat the UI. A UI on the bus the whole run
     // still leaves every want served, so the stall is covered.
     let per = blocks_per_chunk(38_400);
     for from in (0..per).step_by(5) {

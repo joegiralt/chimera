@@ -1730,7 +1730,7 @@ const PAD_MACHINE: ParamAddr =
 /// The widest value a cell draws before it runs into the next column's.
 pub const CELL_VALUE_W: i32 = theme::CELL_COL_W - 4;
 
-/// A pad's MACHINE in its cell (owner rule: full words when they fit):
+/// A pad's MACHINE in its cell (design rule: full words when they fit):
 /// the name, else its last word, the instrument (`SNARE`, not `TONE
 /// SNARE`), else the machine's short name (`BELL`: `COWBELL` ran into
 /// LEVEL). The focus band reads it whole.

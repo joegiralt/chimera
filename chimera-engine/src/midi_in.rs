@@ -1317,7 +1317,7 @@ pub static PROGRAM_PENDING: AtomicU16 = AtomicU16::new(0);
 
 /// Events a hold keeps.
 pub const HOLD_LEN: usize = 16;
-/// Blocks a program change holds its channel at most: 40 ms (owner
+/// Blocks a program change holds its channel at most: 40 ms (decided
 /// decision 7, #515).
 pub const HOLD_BLOCKS: u32 = (40 * crate::hw::SAMPLE_RATE / 1000) / crate::hw::BLOCK_SIZE as u32;
 

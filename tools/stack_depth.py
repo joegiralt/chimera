@@ -108,7 +108,7 @@ DOOR_ONLY = {
 # (bug batch F's merge). Out of the address-taken set by name prefix (the
 # generic instance's full name follows). Grep the code before adding one:
 # its address must never be taken.
-# ponytail: a name list is the ceiling: each link may collide anew. The
+# A name list is the ceiling: each link may collide anew. The
 # real fix counts only words in relocated function-pointer tables or
 # sections, not any data word that happens to match (#1088).
 DIRECT_ONLY = ("chimera_board::bank2::boot_install::<",)

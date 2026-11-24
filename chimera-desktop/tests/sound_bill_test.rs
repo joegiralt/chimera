@@ -3,7 +3,7 @@
 
 //! Every factory Sound's bill is an upper bound of what the unit read it
 //! costs (#448, #883, ADR 0249): `Voice::cost` at or over a model built
-//! only from the worst-block readings (`~/dev/unit-bench-883b/`,
+//! only from the worst-block readings (the unit bench's notes,
 //! rev V at 480 MHz, 2026-11-11, 280c8c2e), term by term, each the worst
 //! row that holds it. Run with `--nocapture` for the census: bill, model
 //! and voices on rev V per Sound.

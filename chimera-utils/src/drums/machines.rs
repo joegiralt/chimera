@@ -66,7 +66,7 @@ pub struct Spec {
     pub knobs: [&'static str; 8],
     /// MORE's two at their defaults (0..127).
     pub more: [u8; 2],
-    /// On the 0.4 ship list (owner by ear, 2026-11-10, and the added
+    /// On the 0.4 ship list (by ear, 2026-11-10, and the added
     /// scope); TONE RIM is cut but kept as model work.
     pub ships: bool,
 }

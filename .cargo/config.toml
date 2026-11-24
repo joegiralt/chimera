@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Joe Giralt
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 [target.thumbv7em-none-eabihf]
 # link.x comes from chimera-stm32/build.rs, after bank2.x. The panic handler
 # reads nothing of its info, so panics carry no file, line or column.

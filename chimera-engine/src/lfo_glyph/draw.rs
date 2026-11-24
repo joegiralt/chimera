@@ -6,8 +6,8 @@
 //! `bank2` this module is bank 2's (`bank2.x`), reached only through the
 //! door (`super::paint`, `super::curve`).
 //!
-//! The drawings follow the approved mockup (`.superpowers/ledgers/
-//! lfo-glyphs/`, the recommended pick of each): rows, Bresenham lines,
+//! The drawings follow the approved mockup (the recommended pick of
+//! each): rows, Bresenham lines,
 //! discs of `r² + r`, the curves the LFO's own arithmetic.
 
 use super::{COLS, Canvas, Glyph, H, Ink, LfoGauge, SCOPE_AMP, W, Wave};

@@ -325,7 +325,7 @@ fn bn_lands_on_the_engine_home_modal() {
 }
 
 /// PLUS stays in the Part's mixer: PART, SENDS, then its FX, clamped at
-/// both ends (owner, 2026-10-02).
+/// both ends (decided 2026-10-02).
 #[test]
 fn mixer_walk_reaches_the_fx() {
     let cx = cx();

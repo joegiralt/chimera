@@ -7,7 +7,7 @@
 //! filter-alone render beside it; and the measures the unit's recordings
 //! get. Levels are raw: nothing is matched before the level and low-band
 //! columns, so a flat gain between voicings shows. The method:
-//! `.superpowers/ledgers/filters-last/ab-method.md` (ADR 0196).
+//! ADR 0196.
 //!
 //! `unitab/events.json` holds the scripts the unit's takes played (acid,
 //! bass, sweep, orbit) and `unitab/PULSE_KEYS.A` the Sound of the

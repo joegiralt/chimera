@@ -420,8 +420,8 @@ fn factory_sounds_save_as_loaded() {
         // TRON on; each renders as before (`tape_legacy_test`). ADR 0204: the
         // STRETCH Sounds turn to GRAIN, with ONE's ENV 1, re-trimmed.
         // Re-pinned on the integration's merged tree. #761's review (M3):
-        // KIT is out of the set until SLICE returns (#779). TINZ, the
-        // owner's SCRUB on WAVE MORPH, makes 32 Sounds.
+        // KIT is out of the set until SLICE returns (#779). TINZ, a
+        // SCRUB on WAVE MORPH saved on the unit, makes 32 Sounds.
         // Re-pinned for the 0x001F map record (34 B a default map): only the map
         // record differs; the old layout still hashes to 0xEF0F_4F49.
         // ADR 0278: TINZ's sends re-voiced for the send taper.
@@ -496,8 +496,8 @@ fn tinz_plays_as_on_0_4() {
 }
 
 /// TINZ with the wheel up: its LFO 1 SINE walks POSITION on the folded
-/// table, up to 4.6e-4 (about −67 dB) off 0.4's, the one difference the
-/// owner accepted (2026-11-22, ADR 0325). Pinned at the new value.
+/// table, up to 4.6e-4 (about −67 dB) off 0.4's, the one difference
+/// accepted (2026-11-22, ADR 0325). Pinned at the new value.
 #[test]
 fn tinz_with_the_wheel_up_plays_the_folded_sine() {
     let h = tinz(1.0);

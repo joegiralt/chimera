@@ -142,9 +142,7 @@ fn expc_probe(o: Offsets, f0: f64, amp_v: f64, fc: f64, k: f64, secs: f64) -> Ve
 fn takes_dir() -> Option<PathBuf> {
     let d = takes::session();
     if d.is_none() {
-        eprintln!(
-            "skipped: KOBOL_DIR unset or missing (the owner's .superpowers/ledgers/kobol-session)"
-        );
+        eprintln!("skipped: KOBOL_DIR unset or missing (an external dir of recorded takes)");
     }
     d
 }
@@ -527,7 +525,7 @@ fn exp_c_swing_fits_the_cell_s_dc_curve() {
 // ------------------------------------------------------------ the takes
 
 #[test]
-#[ignore = "needs the owner's takes: KOBOL_DIR=…/kobol-session cargo test -p chimera-circuits --release -- --ignored"]
+#[ignore = "needs the recorded takes: KOBOL_DIR=<takes dir> cargo test -p chimera-circuits --release -- --ignored"]
 fn the_kobol_rings_as_the_lab_read_it() {
     // ab.md, track2: 15 notes, level spread 0.7 dB, H2 −39.3 dBc, H3 −43.6.
     let Some(d) = takes_dir() else { return };
@@ -539,7 +537,7 @@ fn the_kobol_rings_as_the_lab_read_it() {
 }
 
 #[test]
-#[ignore = "needs the owner's takes: KOBOL_DIR=…/kobol-session cargo test -p chimera-circuits --release -- --ignored"]
+#[ignore = "needs the recorded takes: KOBOL_DIR=<takes dir> cargo test -p chimera-circuits --release -- --ignored"]
 fn exp_c_on_track2_rings_as_in_the_ab() {
     // ab.md, track2 through EXP-C (unit offsets, each note tuned to the
     // Kobol's pitch): 15 notes, spread 1.9 dB, H2 −37.7, H3 −54.2, pitch
@@ -577,7 +575,7 @@ fn exp_c_on_track2_rings_as_in_the_ab() {
 }
 
 #[test]
-#[ignore = "needs the owner's takes: KOBOL_DIR=…/kobol-session cargo test -p chimera-circuits --release -- --ignored"]
+#[ignore = "needs the recorded takes: KOBOL_DIR=<takes dir> cargo test -p chimera-circuits --release -- --ignored"]
 fn the_kobol_and_exp_c_stay_linear_on_the_drive_takes() {
     // compare-drive.md / ab.md: the Kobol ¼→½ +7.25 dB, ¼→full +17.27,
     // worst shape change 0.15 / 0.37 dB; EXP-C on the A/B's jobs 0.01 /
@@ -632,7 +630,7 @@ fn the_kobol_and_exp_c_stay_linear_on_the_drive_takes() {
 }
 
 #[test]
-#[ignore = "needs the owner's takes: KOBOL_DIR=…/kobol-session cargo test -p chimera-circuits --release -- --ignored"]
+#[ignore = "needs the recorded takes: KOBOL_DIR=<takes dir> cargo test -p chimera-circuits --release -- --ignored"]
 fn the_sweeps_bass_step_is_flat_and_exp_c_keeps_the_circuit_s() {
     // notes.md: sweep_res5 and sweep_res10 sit −3.27 / −6.81 dB under
     // sweep1, flat ±0.1 dB from H1 to H31 (a gain change, not a filter);
@@ -688,7 +686,7 @@ fn the_sweeps_bass_step_is_flat_and_exp_c_keeps_the_circuit_s() {
 }
 
 #[test]
-#[ignore = "needs the owner's takes: KOBOL_DIR=…/kobol-session cargo test -p chimera-circuits --release -- --ignored"]
+#[ignore = "needs the recorded takes: KOBOL_DIR=<takes dir> cargo test -p chimera-circuits --release -- --ignored"]
 fn exp_c_on_the_phrases_misses_the_kobol_as_much_as_the_rest() {
     // ab.md, phrases: spectral-centroid error vs the Kobol (octaves rms),
     // EXP-C 0.37 / 0.39 / 1.89 / 0.42, the firmware's EXP 0.38 / 0.39 /

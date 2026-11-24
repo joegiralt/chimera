@@ -995,7 +995,7 @@ fn modal_models_match_the_loudness_reference() {
 /// under the ceiling, losing at most `MAX_CHORD_LIMITED_DB` to the limiter.
 #[test]
 fn formant_sounds_meet_the_loudness_reference() {
-    // Ruling 9, resolved (owner, 2026-10-13): the demos may ship ~4 dB under
+    // Ruling 9, resolved (2026-10-13): the demos may ship ~4 dB under
     // REFERENCE_LUFS at VOL max (CHOIR −3.0, BREATH −3.3 dB).
     const MEASURED: [f32; 4] = [-14.00, -10.90, -14.26, -11.70];
     for (i, want) in (8..12u8).zip(MEASURED) {

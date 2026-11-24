@@ -149,7 +149,7 @@ impl Mode {
 
     /// `UP`, or `UP` with RDDPM's 0xDE, which stock PreenFM3 also reads as
     /// healthy (`TftDisplay::tic`). RDDCOLMOD is judged on its DBI field
-    /// alone (bits 2:0, 16 bits = 0b101): the owner's panel answers 0x05
+    /// alone (bits 2:0, 16 bits = 0b101): a real panel answers 0x05
     /// for the 0x55 sent, its DPI bits reading 0 (`panel_read 9c 48 05`,
     /// 2026-11-23, ADR 0332).
     pub fn healthy(self) -> bool {

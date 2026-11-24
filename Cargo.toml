@@ -35,6 +35,12 @@ version = "0.3.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+# Line numbers only in dev and test builds: full debuginfo grows a target
+# past a CI runner's disk (and to 60-110 GB a worktree here). Backtraces
+# keep their files and lines.
+[profile.dev]
+debug = "line-tables-only"
+
 # Optimize all firmware dependencies in dev builds
 [profile.dev.package.chimera-stm32]
 opt-level = 2

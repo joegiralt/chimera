@@ -292,8 +292,8 @@ where
         let mut ans = [0u8; 1];
         // The command with DC low; the answer clocked in with DC high, as
         // a data read (the panel samples D/CX on each byte's 8th bit: low,
-        // our dummy 0xFF would be taken as a command). Measured on the
-        // owner's unit 2026-11-23: `9c 48 05`, no dummy bit (datasheet
+        // our dummy 0xFF would be taken as a command). Measured on a
+        // real unit 2026-11-23: `9c 48 05`, no dummy bit (datasheet
         // V1.11 p. 38, 8-bit read; ADR 0332).
         let mut ok = exchange(&[c], &mut cmd);
         if ok {

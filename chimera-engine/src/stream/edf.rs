@@ -32,7 +32,7 @@ pub fn wants(rings: &Rings) -> impl Iterator<Item = Want> + '_ {
 /// The least `now.until(deadline)` wins (overdue is negative, so most
 /// urgent), ties to the lower voice.
 ///
-/// Owner rule: streams always beat the UI; a slower UI while playing is
+/// Design rule: streams always beat the UI; a slower UI while playing is
 /// acceptable. Any want beats a waiting UI: the UI gets the bus only when
 /// no stream wants a fill (`Idle`), so it waits at most until every ring
 /// is full.

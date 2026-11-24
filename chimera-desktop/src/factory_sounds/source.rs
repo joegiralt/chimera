@@ -171,7 +171,7 @@ pub struct PortFrom {
     pub voice: u8,
 }
 
-/// A category a port's `edits` names (spec § 3; formant by owner
+/// A category a port's `edits` names (spec § 3; formant by design
 /// direction 2026-10-13: ops 5-6 as a formant layer).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Edit {

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! DRUM's world batch (owner, 2026-11-11: "lets do all the modal/lpg
+//! DRUM's world batch (2026-11-11: "lets do all the modal/lpg
 //! filter ones"), host prototypes for the audition page: five BODY
 //! machines on a mode bank whose pitch moves a sample at a time (BAR, PAN,
 //! GONG, TABLA) or on MODAL's dispersion stage (SPRING), and two of a new

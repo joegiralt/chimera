@@ -44,7 +44,7 @@ pub const LOG_BELOW: f32 = 16_000.0;
 /// STRETCH's B over which the (harmonic) tail has faded out.
 const TAIL_B_FADE: f32 = 2e-5;
 
-/// The brightness options (owner's feedback: "darker than Loom").
+/// The brightness options (listening feedback: "darker than Loom").
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bright {
     /// The brighter map (`map::FORMULAS_BRIGHT`), and the taper flat to

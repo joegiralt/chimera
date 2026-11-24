@@ -42,7 +42,7 @@ pub const fn version(s: &str) -> [U7; 4] {
     [u7(out[0]), u7(out[1]), u7(out[2]), U7::ZERO]
 }
 
-/// Chimera on the PreenFM3: maker 7D (owner, spec § 13: swap for a bought
+/// Chimera on the PreenFM3: maker 7D (spec § 13: swap for a bought
 /// MMA ID before anything is sold), family "CH", member 1 (the Blackbox
 /// port takes 2). A named static, so its bytes are bank 2's.
 pub(super) static ID: Identity = Identity {

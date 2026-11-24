@@ -595,7 +595,7 @@ fn fm_cap(inc: f32) -> f32 {
     (MAX_INC / inc - 1.0).max(0.0)
 }
 
-/// SYNC's master pitch ceiling, A8 − 10 cents (owner, 2026-10-11; ADR 0118
+/// SYNC's master pitch ceiling, A8 − 10 cents (ADR 0118
 /// point 12): it bounds the slave's resets at 7 kHz.
 pub const SYNC_MASTER_HZ: f32 = 7_000.0;
 

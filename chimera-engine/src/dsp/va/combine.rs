@@ -27,7 +27,7 @@ pub const PROVENANCE: &[Provenance] = &[
                (MAX: polyBLAMP on the kinks of |a - b|, first principles)",
     },
     Provenance::Original {
-        author: "AI-assisted, owner-directed and reviewed",
+        author: "AI-assisted, directed and reviewed by the maintainer",
     },
 ];
 

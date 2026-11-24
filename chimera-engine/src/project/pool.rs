@@ -188,7 +188,7 @@ impl Pool {
             addr_of_mut!((*p).clock).write(None);
             addr_of_mut!((*p).new_skipped).write(0);
             addr_of_mut!((*p).arena).write(arena);
-            // ponytail: built by value, left to the optimiser to write in
+            // Built by value, left to the optimiser to write in
             // place (`neutral_params` returns its snapshot whole);
             // stack-check guards the frame.
             addr_of_mut!((*p).scratch).write(Sound::neutral(EngineType::Algo));

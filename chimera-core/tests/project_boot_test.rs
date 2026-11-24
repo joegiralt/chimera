@@ -1126,7 +1126,7 @@ fn the_last_project_is_no_theme_change() {
         &mut s,
         &mut b.settings,
     );
-    assert_eq!(system_on(&mut s), owner, "the owner's card is untouched");
+    assert_eq!(system_on(&mut s), owner, "the user's card is untouched");
     assert_eq!(b.ui.theme(), owner.theme, "and its theme applies");
 }
 

@@ -785,7 +785,7 @@ static MODAL_PLUCK_BLOCKS: [ChainBlock; 5] = [
     },
 ];
 
-/// Modal's home is RES (owner, 2026-10-01: ADR 0066).
+/// Modal's home is RES (ADR 0066).
 pub static MODAL_PLUCK_CHAIN: ChainDef2 =
     ChainDef2::new("Modal Pluck", &MODAL_PLUCK_BLOCKS, &PART_MOD_SOURCES).with_home_def(&MODAL_1);
 

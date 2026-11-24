@@ -175,7 +175,7 @@ impl Parked {
     }
 }
 
-/// The next read: EDF over the readable wants (owner rule: any want
+/// The next read: EDF over the readable wants (design rule: any want
 /// before a waiting UI, `edf::pick`, so the UI gets the bus only at
 /// `Idle`). A want whose chunk its file can't read (past its runs, or
 /// `rot` passes it over) is `parked`, left Wanted and counted

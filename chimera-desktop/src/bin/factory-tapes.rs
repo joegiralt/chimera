@@ -192,7 +192,7 @@ type Demo = (
 
 const DEMOS: [Demo; 13] = [
     ("TX BASS HIT", None, &[0, 0], None),
-    // ponytail: KIT is out of the factory set until SLICE returns (#779).
+    // KIT is out of the factory set until SLICE returns (#779).
     // ("KIT", None, &[0, 2, 6, 7], None),
     ("SINE LOOP", None, &[0, 12], None),
     ("PAD LOOP", None, &[0, 5], None),

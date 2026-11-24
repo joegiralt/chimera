@@ -6,7 +6,7 @@
 //! phrase, a chord stab and a percussive loop, through the real
 //! `Instrument` (the Part's DELAY send, the bus, the master and limiter),
 //! raw: 32-bit float, no gain, nothing matched (the A/B method,
-//! `.superpowers/ledgers/filters-last/ab-method.md`). Each GRAIN take's
+//! ADR 0196). Each GRAIN take's
 //! level against TAPE's on the same phrase goes to `levels.json`.
 
 use chimera_core::dsp::SendLevel;

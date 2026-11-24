@@ -49,9 +49,9 @@ const KEY_FALL_S: f32 = 0.02;
 /// The kick's dip deepens with this time constant, seconds: two blocks,
 /// inside the kick's first cycle at 50 Hz.
 const KICK_ATTACK_S: f32 = 0.003;
-/// ...and lets go with this one (owner's range 60–150 ms) once the key
+/// ...and lets go with this one (a range of 60–150 ms by ear) once the key
 /// has fallen: over a kick's body, gone before the next kick of a bar in
-/// four. A plain sidechain follower (owner 2026-11-20): no hold, so
+/// four. A plain sidechain follower (decided 2026-11-20): no hold, so
 /// kicks closer than the release wobble the dip at their own rate.
 const KICK_RELEASE_S: f32 = 0.1;
 /// How hard a kit presses falls with its key: whole at its recent peak
@@ -60,7 +60,7 @@ const KICK_RELEASE_S: f32 = 0.1;
 /// 150 ms 808 falls 6 dB in about 100 ms); a quieter hit presses by how
 /// near the peak its LOW comes. A kit's LOW that stays up (a held sub, an
 /// 808 two seconds long) presses for as long as it holds: the tail counts
-/// (owner 2026-11-20).
+/// (decided 2026-11-20).
 const HIT_SPAN: Db = Db::new(6.0);
 /// A cut deepens with this time constant, seconds.
 const ATTACK_S: f32 = 0.5;
@@ -75,7 +75,7 @@ const ACTIVE_SPAN: Db = Db::new(24.0);
 /// masks only near the higher one's level.
 const CLEAR_THREAT: Threat = Threat::new(Db::new(12.0), Db::new(0.0));
 /// In LOW and LOW MID a quiet ringing tail still clouds a louder Part
-/// (owner, 2026-11-19: "muddy", MODAL's tails the worst): it yields fully
+/// (by ear, 2026-11-19: "muddy", MODAL's tails the worst): it yields fully
 /// up to 12 dB under, and some to 30 dB under.
 const MUD_THREAT: Threat = Threat::new(Db::new(30.0), Db::new(12.0));
 
@@ -97,7 +97,7 @@ impl Threat {
         }
     }
 }
-/// AMOUNT's curve (owner, 2026-11-19: "Deep is like 75 % of the slider",
+/// AMOUNT's curve (by ear, 2026-11-19: "Deep is like 75 % of the slider",
 /// and the top keeps going past good, so there is always more to reach
 /// for): how deep BACK yields under FRONT at four AMOUNTs, one rank apart
 /// 2/3 of each. 64 is polite (4 dB one rank, 6 two, everywhere); 95 is
@@ -911,7 +911,7 @@ impl PartSmart {
     }
 }
 
-/// The kick's rule (ADR 0296 § 4, owner 2026-11-19): each member's fast
+/// The kick's rule (ADR 0296 § 4): each member's fast
 /// LOW dip target, the deepest any higher-role DRUM Part's kick asks.
 /// With no kit pressing, none: a plain sidechain's target, the dip
 /// following it 3 ms in and 100 ms out (`PartSmart::step`).

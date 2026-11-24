@@ -1545,8 +1545,8 @@ fn ledger_never_tmp() {
     let tmp = std::env::temp_dir();
     for bad in [
         "/tmp/showcase".into(),
-        // An agent scratchpad, spelled in two so the export scan passes.
-        concat!("/tmp/claude", "-1000/x/scratchpad/ledger").into(),
+        // A session scratch dir under /tmp, however deep.
+        "/tmp/scratch/session/ledger".into(),
         tmp.join("ledger"),
         "/srv/../tmp/x".into(),
         "relative/ledger".into(),

@@ -486,7 +486,7 @@ fn a_cut_making_the_mark_owes_a_sweep() {
     }
 }
 
-// Doubting boots (owner ruling 2026-10-08): the third in a row stops the
+// Doubting boots (design ruling 2026-10-08): the third in a row stops the
 // automatic sweep until a settled one.
 
 /// `clean_card`, its mark dirty, and a cross-link in the root (`TWIN`

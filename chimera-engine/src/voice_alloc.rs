@@ -182,7 +182,7 @@ impl Strike {
 
     /// Its slot frees when its voice goes quiet, its key down or not: a
     /// released note, or a DRUM hit, which ends with its voice (the
-    /// owner's ruling, 2026-11-18). A held note's voice keeps its slot.
+    /// a design ruling, 2026-11-18). A held note's voice keeps its slot.
     pub const fn ends_with_voice(self) -> bool {
         match self {
             Strike::Note(k) => matches!(k, Key::Up),

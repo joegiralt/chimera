@@ -65,7 +65,7 @@ tuning = ["chimera-board/tuning"]
 # loop, its interrupt never unmasked unless `midi-usb` moves it there.
 usb-console = ["chimera-board/usb-console"]
 # The console's `ls` and `put` (ADR 0092): files onto the card over USB;
-# TAPE sources too, in checked chunks, sealed (ADR 0106). The owner took
+# TAPE sources too, in checked chunks, sealed (ADR 0106). The project took
 # #360's risk for sources (2026-10-07): a cut mid-put can lose clusters.
 # Bench builds answer `ls` and `put` "not in this build": FLASH is full.
 card-put = ["usb-console", "chimera-board/card-put", "chimera-core/source-writer"]

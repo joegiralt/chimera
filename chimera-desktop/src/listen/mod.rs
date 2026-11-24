@@ -18,7 +18,7 @@ use chimera_core::dsp::tape_engine::read::{
 };
 use chimera_core::dsp::tape_engine::stretch::HALF_SPEED;
 use chimera_core::dsp::tape_engine::{
-    Direction, FADE_HOLD, StretchType, TapeEngine, TapeEngineParams as P, TapeMachine, TapeModel,
+    Direction, FADE_HOLD, StretchType, TapeDeck, TapeEngineParams as P, TapeMachine, TapeModel,
     Tron, Wow,
 };
 use chimera_core::dsp::va::VaMode;
@@ -595,7 +595,7 @@ pub fn render(base: P, held: &[u8], pitch: Pitch, note: u8, s: &Script) -> Vec<f
     }
     s.apply(&mut p, 0.0);
     let mut slot = MaybeUninit::uninit();
-    let e = TapeEngine::init_in_place(&mut slot);
+    let e = TapeDeck::init_in_place(&mut slot);
     e.hold();
     e.note_on(key(0), &p, &v, SAMPLE_RATE);
     let mut take = 0;
@@ -656,7 +656,7 @@ pub const CLICK_RATIO: f32 = 3.0;
 /// they are. VA's RING multiplies two edged waves, and where their edges
 /// meet the product pulses: two saws read 17× at a note's onset (#488).
 /// The ideal additive-saw reference pulses the same, so it is RING's
-/// character, not a fault (owner, 2026-10-13); its DSP is unchanged. Only
+/// character, not a fault (judged 2026-10-13); its DSP is unchanged. Only
 /// RING: XOR and BITS are exempt from the alias gate (ADR 0118 point 3),
 /// not from this one.
 pub fn click_exempt(snd: &Sound) -> Option<&'static str> {

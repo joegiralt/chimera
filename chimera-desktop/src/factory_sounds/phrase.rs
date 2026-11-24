@@ -387,7 +387,7 @@ pub const ACID_PHRASE: [PhraseNote; 48] = [
 pub const SWEEP_STEPS: u8 = 192;
 /// The slowest swell `sweeps` takes: an ENV's rise, s.
 pub const SWEEP_MIN_RISE_S: f32 = 1.0;
-/// The fastest LFO a `sweep` Sound may swell with (owner: a very slow
+/// The fastest LFO a `sweep` Sound may swell with (by ear: a very slow
 /// sweep, 0.05 to 0.1 Hz).
 pub const SWEEP_MAX_HZ: f32 = 0.1;
 /// The least route depth that is heard as a swell (±16 ≈ 1.3 octaves).

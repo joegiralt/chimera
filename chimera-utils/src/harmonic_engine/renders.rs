@@ -531,7 +531,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     // 9: brighter
     add(
         "9-brighter",
-        "Brighter (owner: \"darker than Loom\"): each sketch as an A/B, _dark the first prototype (regenerated identically to group 8) and _bright the new defaults (brighter map and taper, aligned phases, BRIGHT TAIL; LOG off). Then single-feature A/Bs on a buzzy BRASS C1 bass and a bright ORGAN C3 held: dark, map only (brighter map + taper), phase only (aligned), tail only, log only (log-spaced partials), and all (every option; at C1 and C3 LOG covers the top, so the tail rests). Same fixed gain; LEVEL holds a voice's RMS, the tail inside it, so bright is not louder by design: compare peaks and RMS in the files' rows.",
+        "Brighter (by ear: \"darker than Loom\"): each sketch as an A/B, _dark the first prototype (regenerated identically to group 8) and _bright the new defaults (brighter map and taper, aligned phases, BRIGHT TAIL; LOG off). Then single-feature A/Bs on a buzzy BRASS C1 bass and a bright ORGAN C3 held: dark, map only (brighter map + taper), phase only (aligned), tail only, log only (log-spaced partials), and all (every option; at C1 and C3 LOG covers the top, so the tail rests). Same fixed gain; LEVEL holds a voice's RMS, the tail inside it, so bright is not louder by design: compare peaks and RMS in the files' rows.",
     );
     let mut g = G {
         out: g.out,
@@ -601,7 +601,7 @@ pub fn all(out: &mut Out) -> Result<Value, String> {
     // 10: C3-up
     add(
         "10-c3-up",
-        "C3-up (owner: \"bright from C3 up\"): 160 exact partials, the whole audio range from C3 up; below C3 the same 160 top out lower (darker, no cutoff). Brighter map and taper, aligned phases; no tail, no LOG. SUB is VA's band-limited oscillator (SINE, TRIANGLE or SQUARE, -1 or -2 octaves, LEVEL) in place of the 1/2 and 1/4 partials. The six sketches with a SUB set per sketch; a melody from C1 to C7 (hear the darkening below C3); each SUB wave at -1 and -2 under a held C3 and a bass line. Same fixed gain.",
+        "C3-up (by ear: \"bright from C3 up\"): 160 exact partials, the whole audio range from C3 up; below C3 the same 160 top out lower (darker, no cutoff). Brighter map and taper, aligned phases; no tail, no LOG. SUB is VA's band-limited oscillator (SINE, TRIANGLE or SQUARE, -1 or -2 octaves, LEVEL) in place of the 1/2 and 1/4 partials. The six sketches with a SUB set per sketch; a melody from C1 to C7 (hear the darkening below C3); each SUB wave at -1 and -2 under a held C3 and a bass line. Same fixed gain.",
     );
     let mut g = G {
         out: g.out,

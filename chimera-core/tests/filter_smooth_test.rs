@@ -1,14 +1,14 @@
 // Copyright (C) 2026 Joe Giralt
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The filter is smooth, never steppy (owner, 2026-10-07; ADR 0107).
+//! The filter is smooth, never steppy (ADR 0107).
 //!
 //! Turns go through the real path: the panel's acceleration
 //! (`chimera_hal::encoder_accel`), then `Block::nudge` or the matrix
 //! amount's `+ delta`, a publish, and the Instrument. What is measured is
 //! the cutoff each block hands the filter, routes applied, on every TYPE.
 //! The detent timings are the root-cause report's
-//! (`.superpowers/ledgers/filter-steppy-rootcause.md`).
+//! (in the development notes).
 
 mod common;
 

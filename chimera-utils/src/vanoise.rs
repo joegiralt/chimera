@@ -79,19 +79,19 @@ pub fn engine(snd: &Sound, sc: &Script, tweak: &dyn Fn(f64, &mut Sound) -> bool)
     out
 }
 
-fn sounds(owner: &str) -> Result<[(&'static str, Sound); 2], String> {
+fn sounds(patch: &str) -> Result<[(&'static str, Sound); 2], String> {
     Ok([
-        ("owner", load_sound(Path::new(owner))?),
+        ("patch", load_sound(Path::new(patch))?),
         ("init", Sound::init(EngineType::Va)),
     ])
 }
 
-/// `vanoise hash OWNER.A EVENTS`: every MODE × script × Sound, NOISE untouched.
+/// `vanoise hash PATCH.A EVENTS`: every MODE × script × Sound, NOISE untouched.
 pub fn hash(args: &[String]) -> Result<(), String> {
-    let [owner, events] = args else {
-        return Err("vanoise hash OWNER.A EVENTS".into());
+    let [patch, events] = args else {
+        return Err("vanoise hash PATCH.A EVENTS".into());
     };
-    for (name, snd) in sounds(owner)? {
+    for (name, snd) in sounds(patch)? {
         for s in SCRIPTS {
             let sc = script(Path::new(events), s)?;
             for m in VaMode::ALL {
@@ -206,7 +206,7 @@ pub fn jobs() -> Vec<Job> {
         } else {
             kind_tag(kind)
         };
-        let name = format!("{}_{f}_{script}_{k}_{tag}", ["owner", "init"][snd]);
+        let name = format!("{}_{f}_{script}_{k}_{tag}", ["patch", "init"][snd]);
         v.push(Job {
             snd,
             open,
@@ -255,13 +255,13 @@ fn apply(j: &Job, s: &mut Sound) {
     }
 }
 
-/// `vanoise render OWNER.A EVENTS OUTDIR`: the page's set, 32-bit float,
+/// `vanoise render PATCH.A EVENTS OUTDIR`: the page's set, 32-bit float,
 /// unscaled; then `levels.tsv`.
 pub fn render(args: &[String]) -> Result<(), String> {
-    let [owner, events, dir] = args else {
-        return Err("vanoise render OWNER.A EVENTS OUTDIR".into());
+    let [patch, events, dir] = args else {
+        return Err("vanoise render PATCH.A EVENTS OUTDIR".into());
     };
-    let snds = sounds(owner)?;
+    let snds = sounds(patch)?;
     let dir = Path::new(dir);
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let jobs = jobs();

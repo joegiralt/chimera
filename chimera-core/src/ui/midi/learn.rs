@@ -103,7 +103,7 @@ fn first_input(k: Control) -> Option<Input> {
 
 /// The input and echo `seen` says the control `was` reads is (pure). Echo
 /// is on for a relative or IncDec guess, a 14-bit pair, and an NRPN that
-/// sent a fine value; off for the rest (owner, spec § 6.2).
+/// sent a fine value; off for the rest (spec § 6.2).
 pub fn sensed_input(was: Input, seen: &Seen) -> (Input, Feedback) {
     use Feedback::{Off, Value};
     const JUMP: Takeover = Takeover::Jump;

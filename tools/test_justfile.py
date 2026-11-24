@@ -26,6 +26,21 @@ def recipes():
     return out
 
 
+def check_body():
+    """`check`'s lines with each `just check-<part>` it runs expanded in
+    place, as it runs them."""
+    r = recipes()
+
+    def expand(name):
+        out = []
+        for l in r[name]:
+            m = re.fullmatch(r"\s*just (check-[a-z]+)", l)
+            out += expand(m.group(1)) if m else [l]
+        return out
+
+    return expand("check")
+
+
 class Bank2Gate(unittest.TestCase):
     def test_release_bin_runs_the_guard(self):
         body = recipes()["release-bin"]
@@ -88,7 +103,7 @@ class Bank2Split(unittest.TestCase):
         self.assertLess(body.index("bank2-seal {{elf}}"), body.index("just check-slots"))
 
     def test_check_runs_check_bank2_for_each_budgeted_set(self):
-        body = recipes()["check"]
+        body = check_body()
         for s in ("default", "orbit", "bank2-gate"):
             b1 = [i for i, l in enumerate(body) if l.strip() == f"just check-bank1 {s}"]
             b2 = [i for i, l in enumerate(body) if l.strip() == f"just check-bank2 {s}"]
@@ -127,7 +142,7 @@ class Bank2Code(unittest.TestCase):
         self.assertRegex(split, r"else\n\s+echo .*no bank 2.*exit 1", "an empty .bank2 must fail the split")
 
     def test_check_runs_the_proxies_with_their_door(self):
-        body = "\n".join(recipes()["check"])
+        body = "\n".join(check_body())
         self.assertRegex(body, r"--features bank2,test-support --test tape_proxy_test --test reverb_proxy_test --test va_proxy_test")
 
     def test_split_checks_the_va_door_is_in_bank_2(self):
@@ -188,7 +203,7 @@ class Itcm(unittest.TestCase):
         # runs in `check`, so check-itcm can't break `flash-sd-probe` unseen.
         split = "just bank2-split {{target_dir}}/thumbv7em-none-eabihf/release/chimera-stm32 target/chimera-sd-probe"
         self.assertIn(split, "\n".join(recipes()["flash-sd-probe"]))
-        body = recipes()["check"]
+        body = check_body()
         i = next(n for n, l in enumerate(body) if "--features sd-probe" in l)
         self.assertIn(split, "\n".join(body[i + 1 : i + 3]))
 
@@ -216,6 +231,6 @@ class TargetDir(unittest.TestCase):
 class Fuzz(unittest.TestCase):
     def test_check_compiles_every_fuzz_crate(self):
         # #505: a target that no longer compiles fails `check`, not the next fuzz run.
-        body = "\n".join(recipes()["check"])
+        body = "\n".join(check_body())
         for crate in sorted(p.parent.relative_to(ROOT) for p in ROOT.glob("*/fuzz/Cargo.toml")):
             self.assertIn("cargo check --manifest-path %s/Cargo.toml --bins" % crate, body)
