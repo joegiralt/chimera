@@ -10,7 +10,7 @@
 
 use core::fmt::{self, Write};
 
-use super::lit::{QUOTE, QUOTE_SHUT, UNQUOTE, lit, uint};
+use super::lit::{QUOTE, QUOTE_SHUT, UNQUOTE, lit, text, uint};
 use crate::project::{Line, PartId, PartStatus, ProjectStatus};
 use crate::storage::{FileError, Generation};
 use crate::ui::UiState;
@@ -118,10 +118,10 @@ pub(super) fn leaf_of(def: &BlockDef) -> Option<&'static Leaf> {
 #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.settings.crumb"))]
 pub(super) fn crumb(l: &Leaf, w: &mut dyn Write) -> fmt::Result {
     w.write_str(CRUMB.get())?;
-    w.write_str(l.list)?;
+    text(w, l.list)?;
     w.write_str(QUOTE_SHUT.get())?;
     w.write_char('"')?;
-    w.write_str(l.row)?;
+    text(w, l.row)?;
     w.write_str(UNQUOTE.get())
 }
 
@@ -141,7 +141,7 @@ lit!(
 pub(super) fn project_line(ui: &UiState, status: ProjectStatus, w: &mut dyn Write) -> fmt::Result {
     let meta = ui.project().meta();
     w.write_str(PROJECT.get())?;
-    w.write_str(meta.name().as_str())?;
+    text(w, meta.name().as_str())?;
     w.write_str(QUOTE_SHUT.get())?;
     match meta.id() {
         Some(id) => uint(w, id.get())?,
@@ -194,7 +194,7 @@ pub(super) fn sound_line(
     w.write_str(SOUND.get())?;
     uint(w, u32::from(p.number()))?;
     w.write_str(QUOTE.get())?;
-    w.write_str(part.sound.name.as_str())?;
+    text(w, part.sound.name.as_str())?;
     w.write_str(QUOTE_SHUT.get())?;
     w.write_str(match status {
         PartStatus::Clean => CLEAN.get(),
@@ -226,9 +226,9 @@ pub(super) fn engine_line(ui: &UiState, p: PartId, w: &mut dyn Write) -> fmt::Re
     target_os = "none",
     unsafe(link_section = ".bank2_ed.settings.toast_line")
 )]
-pub(super) fn toast_line(text: &Line, w: &mut dyn Write) -> fmt::Result {
+pub(super) fn toast_line(t: &Line, w: &mut dyn Write) -> fmt::Result {
     w.write_str(TOAST.get())?;
-    w.write_str(text.as_str())?;
+    text(w, t.as_str())?;
     w.write_str(UNQUOTE.get())
 }
 
@@ -252,7 +252,7 @@ pub(super) fn listing(l: &Listing, w: &mut dyn Write) -> fmt::Result {
         uint(w, e.id.get())?;
         w.write_str(QUOTE.get())?;
         if let Some(n) = e.name {
-            w.write_str(n.as_str())?;
+            text(w, n.as_str())?;
         }
         w.write_str(QUOTE_SHUT.get())?;
         w.write_str(match e.err {

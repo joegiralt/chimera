@@ -405,3 +405,77 @@ fn a_refusal_ends_part_before_routes() {
     let m2: u32 = lines.last().unwrap()[3..].parse().unwrap();
     assert!(!ask(&mut f, &format!("ed since {m2}\n")).contains("refused"));
 }
+
+/// A route the box drops at its turn (the registry full) is said, as a
+/// refused set is, at the end of PART, once: the first drop's
+/// `refused <DEST> "MATRIX FULL"`, then `refused more <n>` for the rest
+/// (ADR 0337).
+#[test]
+fn a_route_dropped_on_a_full_registry_is_refused_in_since() {
+    let mut f = fake(EngineType::Algo);
+    let a = ask(&mut f, "ed since 0\n");
+    let mut n: u32 = a.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+    let dests = reg_dests(&mut f);
+    assert!(dests.len() >= 18);
+    for d in dests.iter().take(18) {
+        route(&mut f, &format!("ENV1:{d}"), "5");
+        settle(&mut f);
+    }
+    assert_eq!(f.ui.project().part(P1).sound.dest_registry.len(), 16);
+    let d = ask(&mut f, &format!("ed since {n}\n"));
+    n = d.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+    let refused: Vec<&str> = d.lines().filter(|l| l.starts_with("refused ")).collect();
+    let want = [
+        format!("refused {} \"MATRIX FULL\"", dests[16]),
+        "refused more 1".to_string(),
+    ];
+    assert_eq!(refused, want, "{d}");
+    let again = ask(&mut f, &format!("ed since {n}\n"));
+    assert!(!again.contains("refused "), "said once: {again}");
+}
+
+/// The e2e's case: 24 routes, 16 kept. The 8 drops are one line and a
+/// count, so four slots never hide one; the set refusals keep theirs.
+#[test]
+fn eight_dropped_routes_are_one_line_and_a_count() {
+    let mut f = fake(EngineType::Algo);
+    let a = ask(&mut f, "ed since 0\n");
+    let n: u32 = a.trim_end().rsplit(' ').next().unwrap().parse().unwrap();
+    let dests = reg_dests(&mut f);
+    assert!(dests.len() >= 24);
+    for d in dests.iter().take(24) {
+        route(&mut f, &format!("ENV1:{d}"), "5");
+        settle(&mut f);
+    }
+    // A drop again at the destination said: no slot and no count.
+    route(&mut f, &format!("LFO1:{}", dests[16]), "5");
+    settle(&mut f);
+    assert_eq!(f.ui.project().part(P1).sound.dest_registry.len(), 16);
+    let d = ask(&mut f, &format!("ed since {n}\n"));
+    let refused: Vec<&str> = d.lines().filter(|l| l.starts_with("refused ")).collect();
+    let first = format!("refused {} \"MATRIX FULL\"", dests[16]);
+    assert_eq!(refused, [first.as_str(), "refused more 7"], "{d}");
+}
+
+/// Another client's `since` (a stranger's number, 0 here) never clears the
+/// refusals the editor is owed: only an answer to the number the unit last
+/// issued, a diff, says and clears them (ADR 0337).
+#[test]
+fn another_clients_since_leaves_the_editors_refusals() {
+    let mut f = fake(EngineType::Algo);
+    let num = |a: &str| -> u32 { a.trim_end().rsplit(' ').next().unwrap().parse().unwrap() };
+    let n = num(&ask(&mut f, "ed since 0\n"));
+    let dests = reg_dests(&mut f);
+    for d in dests.iter().take(17) {
+        route(&mut f, &format!("ENV1:{d}"), "5");
+        settle(&mut f);
+    }
+    // A second client: its own whole answer.
+    let other = ask(&mut f, "ed since 0\n");
+    assert!(!other.contains("refused "), "{other}");
+    // The editor: its number is stale now, so a whole answer, then a diff.
+    let m = num(&ask(&mut f, &format!("ed since {n}\n")));
+    let d = ask(&mut f, &format!("ed since {m}\n"));
+    let want = format!("refused {} \"MATRIX FULL\"", dests[16]);
+    assert!(d.lines().any(|l| l == want), "{d}");
+}

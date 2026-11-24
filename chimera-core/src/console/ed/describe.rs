@@ -31,14 +31,17 @@
 use core::fmt::{self, Write};
 
 use super::EdAddr;
-use super::lit::{PANEL, QUOTE, QUOTE_SHUT, SOURCE, UNQUOTE, lit, quoted, uint};
+use super::addr::{EdBlock, PadBlock};
+use super::lit::{PANEL, QUOTE, QUOTE_SHUT, SOURCE, UNQUOTE, lit, quoted, text, uint};
 use super::schema::{Round, Schema};
 use crate::addr::{BlockRef, Op, ParamAddr};
 use crate::block::{Block, ParamKind, ParamSpec, Scale, ValFmt};
 use crate::dsp::algo::kinds::OpKind;
 use crate::dsp::algo::waves::WaveId;
 use crate::dsp::delay::DelaySync;
+use crate::dsp::drum::params::KitParams;
 use crate::dsp::drum::sound::RouteId;
+use crate::dsp::drum::types::Kit;
 use crate::dsp::drum::types::{PadId, PadMachine};
 use crate::dsp::filter::{FilterKind, KIND_NAMES};
 use crate::dsp::modal::ResonatorMode;
@@ -47,6 +50,7 @@ use crate::dsp::reverb::ReverbType;
 use crate::dsp::tape_engine::params::{TapeEngineParams, TapeMachine};
 use crate::dsp::voice_fx::params::FxType;
 use crate::params::{EngineType, FilterParams};
+use crate::preset::Sound;
 use crate::ui::block_def::{BlockDef, SlotBinding};
 use crate::ui::reverb_panel;
 use crate::ui::view::{self, EnvKind, LfoKind, SlotCtx, View};
@@ -328,12 +332,12 @@ fn scale_word(s: Scale) -> &'static str {
 
 impl Cell {
     #[cfg_attr(target_os = "none", unsafe(link_section = ".bank2_ed.describe.write"))]
-    fn write(&self, ctx: &SlotCtx, w: &mut dyn Write) -> fmt::Result {
+    fn write(&self, ctx: &SlotCtx, init: Option<&Sound>, w: &mut dyn Write) -> fmt::Result {
         let (addr, label, fmt) = match *self {
             Cell::Route(label, r) => return super::route::knob_line(label, r, w),
             Cell::Source(label) => {
                 w.write_str(SOURCE.get())?;
-                w.write_str(label)?;
+                text(w, label)?;
                 return w.write_str(UNQUOTE.get());
             }
             Cell::Act(c) => return super::orbit::act_line(c, w),
@@ -345,12 +349,17 @@ impl Cell {
         w.write_str(PARAM.get())?;
         addr.write(w)?;
         w.write_str(QUOTE.get())?;
-        w.write_str(label)?;
+        text(w, label)?;
         w.write_str(QUOTE_SHUT.get())?;
         w.write_str(kind_word(fmt, spec.kind))?;
         w.write_char(' ')?;
         w.write_str(scale_word(spec.scale))?;
-        for v in [spec.min, spec.max, spec.step, spec.default] {
+        // The default is INIT's value where an engine's page lists it
+        // (ADR 0337): the editor's double-click lands where INIT is.
+        let default = init
+            .and_then(|s| init_value(s, addr))
+            .unwrap_or(spec.default);
+        for v in [spec.min, spec.max, spec.step, default] {
             w.write_char(' ')?;
             num(w, v)?;
         }
@@ -845,7 +854,8 @@ pub(super) fn describe(s: Schema, page: u8, w: &mut dyn Write) -> Option<fmt::Re
         return (page < schema_pages(s)).then(|| map_page(w));
     }
     let (def, round) = page_at(s, usize::from(page))?;
-    Some(write_page(s, def, round, page, w))
+    let init = init_of(s);
+    Some(write_page(s, def, round, page, init.as_ref(), w))
 }
 
 /// Every page of `s`, in order, into `w`: what `ed schema` hashes, so the
@@ -864,10 +874,74 @@ pub(super) fn describe_all(s: Schema, w: &mut dyn Write) -> fmt::Result {
             _ => map_page(w),
         };
     }
+    let init = init_of(s);
     for (n, (def, round)) in Pages::all(s).enumerate() {
-        write_page(s, def, round, u8::try_from(n).map_err(|_| fmt::Error)?, w)?;
+        let n = u8::try_from(n).map_err(|_| fmt::Error)?;
+        write_page(s, def, round, n, init.as_ref(), w)?;
     }
     Ok(())
+}
+
+/// An engine's INIT Sound, what its pages' defaults read; none for the
+/// shared schemas, whose defaults are their specs'.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.init_of")
+)]
+fn init_of(s: Schema) -> Option<Sound> {
+    match s {
+        Schema::Engine(e) => Some(Sound::init(e)),
+        _ => None,
+    }
+}
+
+/// What INIT stores at `a`: the Sound's block, or a pad's of the INIT kit
+/// (`Kit::default_pad`, each pad its own); `None` off both.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.init_value")
+)]
+fn init_value(init: &Sound, a: EdAddr) -> Option<f32> {
+    let id = a.id();
+    match a.at() {
+        EdBlock::Sound(b) => match b.get() {
+            BlockRef::Kit => kit_value(None, PadBlock::Pad, id),
+            b => init.params.block(b).map(|v| v.get(id)),
+        },
+        EdBlock::Pad(n, part) => kit_value(Some(n), part, id),
+        _ => None,
+    }
+}
+
+/// INIT kit's value: pad `n`'s block `part`, or the kit's own with no pad.
+/// Out of line, so the pad is never on the Sound's frame.
+#[inline(never)]
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.describe.kit_value")
+)]
+fn kit_value(n: Option<PadId>, part: PadBlock, id: crate::block::ParamId) -> Option<f32> {
+    let Some(n) = n else {
+        // The kit's own: TONAL alone, read off `DEFAULT` at compile time,
+        // no `Kit` built (`Kit::init` is bank 1's, and 964 B of frame).
+        const TONAL: u8 = Kit::DEFAULT.tonal().code();
+        return Some(if id == KitParams::TONAL {
+            f32::from(TONAL)
+        } else {
+            0.0
+        });
+    };
+    let pad = Kit::default_pad(n);
+    let s = pad.sound();
+    let b: &dyn Block = match part {
+        PadBlock::Pad => &pad,
+        PadBlock::Filter => s.filter(),
+        PadBlock::Amp => s.amp(),
+        PadBlock::Env => s.env(),
+        PadBlock::Lfo => s.lfo(),
+        PadBlock::Route(r) => s.routes().route(r),
+    };
+    Some(b.get(id))
 }
 
 /// MIDI MAP's page: the map's own, without `midi-map` never asked.
@@ -894,6 +968,7 @@ fn write_page(
     def: &'static BlockDef,
     round: Round,
     page: u8,
+    init: Option<&Sound>,
     w: &mut dyn Write,
 ) -> fmt::Result {
     w.write_str(PAGE.get())?;
@@ -929,7 +1004,7 @@ fn write_page(
         let ctx = group.ctx(base);
         for i in 0..def.params.len() {
             if let Some(c) = group.cell(def, i, &ctx, round) {
-                c.write(&ctx, w)?;
+                c.write(&ctx, init, w)?;
             }
         }
     }

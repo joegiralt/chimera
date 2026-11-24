@@ -167,13 +167,29 @@ struct Refused {
 }
 
 /// The turns refused since `ed since` last said them, oldest first: the
-/// newest `REFUSED`. Uninit past `len`, so `EdState::new`, built in bank 1
-/// (`take_ed`), writes one byte for them; shifted by hand, as core's rotate
-/// would link into bank 1.
+/// newest `REFUSED`, one an address (a second refusal there only takes its
+/// words), and one a Part's full matrix (the drops after its first only
+/// counted). The count of refusals no line says, those and the oldest
+/// dropped, is `len`'s top bits (`MORE_MAX` at most): `Refusals` keeps its
+/// size, so `EdState`'s layout, which bank 1 builds, never moves. Uninit
+/// past the items' count, so `EdState::new`, built in bank 1 (`take_ed`),
+/// writes one byte for them; shifted by hand, as core's rotate would link
+/// into bank 1.
 pub(super) struct Refusals {
     items: [MaybeUninit<Refused>; REFUSED],
+    /// The items' count (`COUNT`'s bits), and `more` above them.
     len: u8,
 }
+
+/// `len`'s bits for the items' count, `REFUSED` at most.
+const COUNT: u8 = 0b111;
+/// The unlisted count's most: 31, said as at least that many.
+pub const MORE_MAX: u8 = u8::MAX >> 3;
+
+// The count fits `COUNT`'s bits, and `Refusals` keeps 0.4's 217 B: a byte
+// more moves `EdState`'s fields, which bank 1 builds in place.
+const _: () = assert!(REFUSED <= COUNT as usize);
+const _: () = assert!(core::mem::size_of::<Refusals>() == 217);
 
 impl Refusals {
     #[cfg_attr(
@@ -187,14 +203,56 @@ impl Refusals {
         }
     }
 
-    /// `addr` on `part` refused for `why`: the oldest dropped when full.
+    /// The items listed.
+    #[inline(always)]
+    fn count(&self) -> usize {
+        usize::from(self.len & COUNT)
+    }
+
+    /// The refusals no line says.
+    #[inline(always)]
+    fn more(&self) -> u8 {
+        self.len >> 3
+    }
+
+    /// One more unsaid, `MORE_MAX` at most.
+    #[inline(always)]
+    fn add_more(&mut self) {
+        if self.more() < MORE_MAX {
+            self.len += 1 << 3;
+        }
+    }
+
+    /// `addr` on `part` refused for `why` (`route`: a full matrix's): an
+    /// address already listed takes the words; a full matrix after the
+    /// Part's first is counted; else listed, the oldest dropped (and
+    /// counted) when full. Built for speed: from minsize code the machine
+    /// outliner shares the address compare with bank 1's `Option<ParamAddr>`
+    /// compares, an outline in bank 1 (ADR 0175).
+    #[optimize(speed)]
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.refusals_push")
     )]
-    fn push(&mut self, part: PartId, addr: EdAddr, why: Line) {
-        let mut at = usize::from(self.len);
+    fn push(&mut self, part: PartId, addr: EdAddr, why: Line, route: bool) {
+        let mut i = 0;
+        while i < self.count() {
+            // SAFETY: `push` writes every item below the count before
+            // raising it.
+            let r = unsafe { self.items[i].assume_init_mut() };
+            if r.part == part && r.addr == addr {
+                r.why = why;
+                return;
+            }
+            if route && r.part == part && r.why.as_str() == MATRIX_FULL.get() {
+                self.add_more();
+                return;
+            }
+            i += 1;
+        }
+        let mut at = self.count();
         if at == REFUSED {
+            self.add_more();
             let mut i = 1;
             while i < REFUSED {
                 self.items[i - 1] = self.items[i];
@@ -203,20 +261,22 @@ impl Refusals {
             at = REFUSED - 1;
         }
         self.items[at] = MaybeUninit::new(Refused { part, addr, why });
-        self.len = (at + 1) as u8;
+        self.len = self.len & !COUNT | (at + 1) as u8;
     }
 
     /// `refused <ADDR> "<why>"`, one line each of `part`'s: an address
-    /// names no Part, so another's would read as this one's.
+    /// names no Part, so another's would read as this one's. Then, if any
+    /// went unlisted, `refused more <n>`: the answer says the Part followed,
+    /// and every answer to the number last issued clears them all.
     #[cfg_attr(
         target_os = "none",
         unsafe(link_section = ".bank2_ed.edits.refusals_write")
     )]
     pub(super) fn write(&self, part: PartId, w: &mut dyn Write) -> fmt::Result {
         let mut i = 0;
-        while i < usize::from(self.len) {
-            // SAFETY: `push` writes every item below `len` before raising
-            // it, and `len` never passes `REFUSED`.
+        while i < self.count() {
+            // SAFETY: `push` writes every item below the count before
+            // raising it, and the count never passes `REFUSED`.
             let r = unsafe { self.items[i].assume_init_ref() };
             if r.part == part {
                 w.write_str(REFUSED_HEAD.get())?;
@@ -224,6 +284,11 @@ impl Refusals {
                 quoted(w, r.why.as_str())?;
             }
             i += 1;
+        }
+        if self.more() > 0 {
+            w.write_str(REFUSED_MORE.get())?;
+            super::lit::uint(w, u32::from(self.more()))?;
+            w.write_char('\n')?;
         }
         Ok(())
     }
@@ -405,7 +470,25 @@ impl EdState {
                     mark,
                 } => match taken.lands(ui) {
                     Some(p) if p == ui.active_part && ed_cue::load_mark(ui, p) == mark => {
-                        ed_cue::route(ui, at, to)
+                        // `route` sets the band's status only when the
+                        // registry refuses: said as a refused set is, at
+                        // its destination. Else the band keeps its own.
+                        let was = ui.take_prime_status();
+                        let pass = ed_cue::route(ui, at, to);
+                        match ui.take_prime_status() {
+                            Some(why) => {
+                                ui.put_prime_status(Some(why));
+                                if let RouteAt::Reg(_, a) = at
+                                    && let Some(addr) = EdAddr::sound(a)
+                                {
+                                    let full = matches!(why, crate::ui::PrimeStatus::Full);
+                                    self.refused
+                                        .push(p, addr, Line::new(route_words(why)), full);
+                                }
+                            }
+                            None => ui.put_prime_status(was),
+                        }
+                        pass
                     }
                     Some(_) | None => Pass::Done,
                 },
@@ -442,7 +525,7 @@ impl EdState {
                 && let Some(at) = p.taken.lands(ui)
                 && let Some(why) = turn(ui, at, p)
             {
-                self.refused.push(at, p.addr, why);
+                self.refused.push(at, p.addr, why, false);
             }
             i += 1;
         }
@@ -870,6 +953,36 @@ lit!(
     /// A refused set's line's head.
     REFUSED_HEAD = "refused "
 );
+lit!(
+    /// The unlisted refusals' line's head, before their count.
+    REFUSED_MORE = "refused more "
+);
+lit!(MATRIX_FULL = "MATRIX FULL");
+lit!(NOT_MODULATABLE = "NOT MODULATABLE");
+lit!(ALREADY_ROUTED = "ALREADY ROUTED");
+
+/// A dropped route's words, the focus band's (`PrimeStatus::label`), kept
+/// here: the band's copy would split out of bank 1 for this call.
+#[cfg_attr(
+    target_os = "none",
+    unsafe(link_section = ".bank2_ed.edits.route_words")
+)]
+fn route_words(why: crate::ui::PrimeStatus) -> &'static str {
+    use crate::ui::PrimeStatus;
+    // Every status, so a new one names its words here. The registry
+    // refuses only the first three (`From<RegistryError>`).
+    match why {
+        PrimeStatus::Full => MATRIX_FULL.get(),
+        PrimeStatus::NotModulatable => NOT_MODULATABLE.get(),
+        PrimeStatus::AlreadyRouted => ALREADY_ROUTED.get(),
+        PrimeStatus::Added => ADDED.get(),
+        PrimeStatus::SourceInUse => SOURCE_IN_USE.get(),
+        #[cfg(feature = "midi-map")]
+        PrimeStatus::Learn(_) => "",
+    }
+}
+lit!(ADDED = "ADDED");
+lit!(SOURCE_IN_USE = "SOURCE IN USE");
 lit!(NO_SUCH_OPTION = "has no such option");
 lit!(
     /// A set of a dimmed cell's tail: BPM while a MIDI clock leads.
@@ -897,3 +1010,100 @@ lit!(
     /// A set or route taken, for the UI pass.
     QUEUED = "OK queued\n"
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    extern crate std;
+    use crate::addr::{BlockRef, Op, ParamAddr};
+    use crate::dsp::algo::params::AlgoOpParams;
+    use std::string::String;
+
+    fn wave(o: usize) -> EdAddr {
+        EdAddr::sound(ParamAddr::new(
+            BlockRef::AlgoOp(Op::ALL[o]),
+            AlgoOpParams::WAVE,
+        ))
+        .unwrap()
+    }
+
+    fn said(r: &Refusals, p: PartId) -> String {
+        let mut s = String::new();
+        r.write(p, &mut s).unwrap();
+        s
+    }
+
+    const P1: PartId = PartId::ALL[0];
+    const P2: PartId = PartId::ALL[1];
+
+    /// One line an address: a second refusal there takes its words, no slot.
+    #[test]
+    fn an_address_refused_twice_is_one_line() {
+        let mut r = Refusals::new();
+        r.push(P1, wave(0), Line::new("A"), false);
+        r.push(P1, wave(1), Line::new("B"), false);
+        r.push(P1, wave(0), Line::new("C"), false);
+        assert_eq!(
+            said(&r, P1),
+            "refused OP_A.WAVE \"C\"\nrefused OP_B.WAVE \"B\"\n"
+        );
+    }
+
+    /// A full matrix is one line a Part, its first destination; the drops
+    /// after it are `refused more <n>`, a repeat of the listed one not. Another
+    /// Part's full matrix is its own line.
+    #[test]
+    fn a_full_matrix_is_its_first_drop_and_a_count() {
+        let mut r = Refusals::new();
+        for o in 0..6 {
+            r.push(P1, wave(o), Line::new("MATRIX FULL"), true);
+        }
+        r.push(P1, wave(0), Line::new("MATRIX FULL"), true);
+        r.push(P2, wave(3), Line::new("MATRIX FULL"), true);
+        r.push(P1, wave(4), Line::new("SET"), false);
+        assert_eq!(
+            said(&r, P1),
+            "refused OP_A.WAVE \"MATRIX FULL\"\nrefused OP_E.WAVE \"SET\"\nrefused more 5\n"
+        );
+        assert!(said(&r, P2).starts_with("refused OP_D.WAVE \"MATRIX FULL\"\n"));
+    }
+
+    /// Past four, the oldest goes and is counted; a full matrix's bit goes
+    /// with its item. A clear takes the count too.
+    #[test]
+    fn a_dropped_refusal_is_counted() {
+        let mut r = Refusals::new();
+        r.push(P1, wave(5), Line::new("MATRIX FULL"), true);
+        for o in 0..4 {
+            r.push(P1, wave(o), Line::new("X"), false);
+        }
+        // The full matrix's item is gone: a new drop is listed again.
+        r.push(P1, wave(4), Line::new("MATRIX FULL"), true);
+        let s = said(&r, P1);
+        assert!(s.starts_with("refused OP_B.WAVE"), "{s}");
+        assert!(
+            s.ends_with("refused OP_E.WAVE \"MATRIX FULL\"\nrefused more 2\n"),
+            "{s}"
+        );
+        r.clear();
+        assert_eq!(said(&r, P1), "");
+        r.push(P1, wave(0), Line::new("X"), false);
+        assert_eq!(said(&r, P1), "refused OP_A.WAVE \"X\"\n");
+    }
+
+    /// The count stops at `MORE_MAX`, and the items keep theirs.
+    #[test]
+    fn the_unsaid_count_stops_at_its_most() {
+        let mut r = Refusals::new();
+        for _ in 0..40 {
+            for o in 0..6 {
+                r.push(P1, wave(o), Line::new("MATRIX FULL"), true);
+            }
+        }
+        assert_eq!(
+            said(&r, P1),
+            std::format!("refused OP_A.WAVE \"MATRIX FULL\"\nrefused more {MORE_MAX}\n")
+        );
+        assert_eq!(r.count(), 1);
+    }
+}

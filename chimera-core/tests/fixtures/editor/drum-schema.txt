@@ -191,7 +191,7 @@ param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
 param ENV3.SUS "SUSTAIN" cont lin 0 1 0.0078125 0.7 m
 param ENV3.REL "RELEASE" cont lin 0 1 0.0078125 0.559 m
 param ENV3.H "HOLD" cont lin 0 1 0.0078125 0 m
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 A-MED
@@ -200,7 +200,7 @@ param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
 param ENV3.SUS "SUSTAIN" cont lin 0 1 0.0078125 0.7 m
 param ENV3.REL "RELEASE" cont lin 0 1 0.0078125 0.559 m
 param ENV3.H "HOLD" cont lin 0 1 0.0078125 0 m
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 A-SLOW
@@ -209,7 +209,7 @@ param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
 param ENV3.SUS "SUSTAIN" cont lin 0 1 0.0078125 0.7 m
 param ENV3.REL "RELEASE" cont lin 0 1 0.0078125 0.559 m
 param ENV3.H "HOLD" cont lin 0 1 0.0078125 0 m
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-ENV
@@ -224,7 +224,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "AD"
 opt ENV3.FORM 1 "AHR"
 opt ENV3.FORM 2 "CYCLE"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-LFO
@@ -239,7 +239,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "FREE"
 opt ENV3.FORM 1 "SYNC"
 opt ENV3.FORM 2 "LFV"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-LFV
@@ -254,7 +254,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "FREE"
 opt ENV3.FORM 1 "SYNC"
 opt ENV3.FORM 2 "LFV"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-BURST
@@ -269,7 +269,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "AD"
 opt ENV3.FORM 1 "AHR"
 opt ENV3.FORM 2 "CYCLE"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 OK
@@ -313,7 +313,7 @@ param LFO1.SYNC "SYNC" choice lin 0 1 1 0 m
 opt LFO1.SYNC 0 "FREE"
 opt LFO1.SYNC 1 "RETRIG"
 param LFO1.PHASE "PHASE" cont lin 0 1 0.0078125 0 m
-param LFO1.DEPTH "DEPTH" cont lin 0 1 0.0078125 1 md
+param LFO1.DEPTH "DEPTH" cont lin 0 1 0.0078125 0 md
 param LFO1.TYPE "TYPE" choice lin 0 1 1 0 m
 opt LFO1.TYPE 0 "CLASSIC"
 opt LFO1.TYPE 1 "FUNC"
@@ -467,81 +467,81 @@ opt PAD1.RETRIG 1 "CUT"
 OK
 page 11 PAD1_MCH of 165
 panel PAD1_MCH TONE-KICK
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "CLICK" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "DRIVE" stepped lin 0 127 1 10 -
 panel PAD1_MCH TONE-SNARE
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "BUMP" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SNAP" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "SNAP DECAY" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "TONE" stepped lin 0 127 1 10 -
 panel PAD1_MCH TONE-TOM
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "NOISE" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "DAMP" stepped lin 0 127 1 10 -
 panel PAD1_MCH TONE-CLAP
-param PAD1.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "TONE" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "CLAPS" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "TAIL" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "RING" stepped lin 0 127 1 10 -
 panel PAD1_MCH TONE-COWBELL
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "INTERVAL" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "DRIVE" stepped lin 0 127 1 10 -
 panel PAD1_MCH TONE-CYMBAL
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "TONE" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "SHIMMER" stepped lin 0 127 1 10 -
 panel PAD1_MCH METAL-HAT
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "TONE" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "NOISE" stepped lin 0 127 1 10 -
 panel PAD1_MCH METAL-JINGLE
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "JINGLES" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SHAKE" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "TONE" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "RING" stepped lin 0 127 1 10 -
 panel PAD1_MCH BODY-SHAKER
-param PAD1.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD1.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "GRAINS" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD1.KNOB_E "SHAKE" stepped lin 0 127 1 20 -
+param PAD1.KNOB_F "RING" stepped lin 0 127 1 10 -
 panel PAD1_MCH PLAIN-SINE
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD1_MCH PLAIN-NOISE
-param PAD1.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "DECAY" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "TONE" stepped lin 0 127 1 80 -
 panel PAD1_MCH PLAIN-IMPULSE
-param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD1.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD1.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD1.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD1.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD1_MCH NONE
 OK
 page 12 PAD1_MORE of 165
@@ -619,34 +619,34 @@ opt PAD1_FLT.MODE 4 "BP4"
 opt PAD1_FLT.MODE 5 "HP4"
 opt PAD1_FLT.MODE 6 "NOTCH1"
 opt PAD1_FLT.MODE 7 "NOTCH2"
-param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD1_FLT 2040
 param PAD1_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD1_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD1_FLT.VOICE 0 "REV2"
 opt PAD1_FLT.VOICE 1 "EXPNDR"
-param PAD1_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD1_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD1_FLT DIRTY
 param PAD1_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD1_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD1_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD1_FLT.MODE 0 "LP2"
 opt PAD1_FLT.MODE 1 "BP2"
 opt PAD1_FLT.MODE 2 "HP2"
 opt PAD1_FLT.MODE 3 "NOTCH1"
-param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD1_FLT LADDER
 param PAD1_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD1_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD1_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD1_FLT.MODE 0 "LP2"
 opt PAD1_FLT.MODE 1 "LP4"
 opt PAD1_FLT.MODE 2 "BP2"
 opt PAD1_FLT.MODE 3 "BP4"
 opt PAD1_FLT.MODE 4 "HP4"
-param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD1_FLT SEM
 param PAD1_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD1_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD1_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 14 PAD1_FMD of 165
 panel PAD1_FLT CLEAN
@@ -679,7 +679,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD1_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD1_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD1_FLT.MODE 0 "MODE"
 opt PAD1_FLT.MODE 1 "BP"
 OK
@@ -689,12 +689,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD1_FLT CLEAN
 panel PAD1_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD1_FLT DIRTY
 panel PAD1_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD1_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -926,7 +926,7 @@ param PAD1_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 22 PAD2_KIT of 165
 panel PAD2_KIT -
-param PAD2.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD2.MACHINE "MACHINE" choice lin 0 12 1 1 -
 opt PAD2.MACHINE 0 "TONE KICK"
 opt PAD2.MACHINE 1 "TONE SNARE"
 opt PAD2.MACHINE 2 "TONE TOM"
@@ -971,86 +971,86 @@ opt PAD2.RETRIG 1 "CUT"
 OK
 page 24 PAD2_MCH of 165
 panel PAD2_MCH TONE-KICK
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "CLICK" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "DRIVE" stepped lin 0 127 1 70 -
 panel PAD2_MCH TONE-SNARE
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "BUMP" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SNAP" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "SNAP DECAY" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "TONE" stepped lin 0 127 1 70 -
 panel PAD2_MCH TONE-TOM
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "NOISE" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "DAMP" stepped lin 0 127 1 70 -
 panel PAD2_MCH TONE-CLAP
-param PAD2.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "TONE" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "CLAPS" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SPREAD" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "TAIL" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "RING" stepped lin 0 127 1 70 -
 panel PAD2_MCH TONE-COWBELL
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "INTERVAL" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "TONE" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "RING" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "DRIVE" stepped lin 0 127 1 70 -
 panel PAD2_MCH TONE-CYMBAL
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "TONE" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SPREAD" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "RING" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "SHIMMER" stepped lin 0 127 1 70 -
 panel PAD2_MCH METAL-HAT
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "TONE" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SPREAD" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "RING" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "NOISE" stepped lin 0 127 1 70 -
 panel PAD2_MCH METAL-JINGLE
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "JINGLES" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SHAKE" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "TONE" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "RING" stepped lin 0 127 1 70 -
 panel PAD2_MCH BODY-SHAKER
-param PAD2.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD2.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "GRAINS" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "TONE" stepped lin 0 127 1 80 -
+param PAD2.KNOB_E "SHAKE" stepped lin 0 127 1 50 -
+param PAD2.KNOB_F "RING" stepped lin 0 127 1 70 -
 panel PAD2_MCH PLAIN-SINE
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
 panel PAD2_MCH PLAIN-NOISE
-param PAD2.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "DECAY" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "TONE" stepped lin 0 127 1 40 -
 panel PAD2_MCH PLAIN-IMPULSE
-param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD2.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD2.KNOB_B "DECAY" stepped lin 0 127 1 40 -
+param PAD2.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD2.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
 panel PAD2_MCH NONE
 OK
 page 25 PAD2_MORE of 165
 panel PAD2_MORE -
-param PAD2.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD2.MACHINE "MACHINE" choice lin 0 12 1 1 -
 opt PAD2.MACHINE 0 "TONE KICK"
 opt PAD2.MACHINE 1 "TONE SNARE"
 opt PAD2.MACHINE 2 "TONE TOM"
@@ -1065,35 +1065,35 @@ opt PAD2.MACHINE 10 "PLAIN NOISE"
 opt PAD2.MACHINE 11 "PLAIN IMPULSE"
 opt PAD2.MACHINE 12 "NONE"
 panel PAD2_MCH TONE-KICK
-param PAD2.KNOB_G "START" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "START" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
 panel PAD2_MCH TONE-SNARE
-param PAD2.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "INTERVAL" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
 panel PAD2_MCH TONE-TOM
-param PAD2.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "DRIVE" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
 panel PAD2_MCH TONE-CLAP
-param PAD2.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "HARDNESS" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
 panel PAD2_MCH TONE-COWBELL
-param PAD2.KNOB_G "DAMP" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "DAMP" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "BUMP" stepped lin 0 127 1 0 -
 panel PAD2_MCH TONE-CYMBAL
-param PAD2.KNOB_G "TOP" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "TOP" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
 panel PAD2_MCH METAL-HAT
-param PAD2.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "HIGH PASS" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
 panel PAD2_MCH METAL-JINGLE
-param PAD2.KNOB_G "HEAD" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "HEAD" stepped lin 0 127 1 60 -
 param PAD2.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
 panel PAD2_MCH BODY-SHAKER
-param PAD2.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "HARDNESS" stepped lin 0 127 1 60 -
 panel PAD2_MCH PLAIN-SINE
 panel PAD2_MCH PLAIN-NOISE
 panel PAD2_MCH PLAIN-IMPULSE
-param PAD2.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD2.KNOB_G "WIDTH" stepped lin 0 127 1 60 -
 panel PAD2_MCH NONE
 OK
 page 26 PAD2_FLT of 165
@@ -1123,34 +1123,34 @@ opt PAD2_FLT.MODE 4 "BP4"
 opt PAD2_FLT.MODE 5 "HP4"
 opt PAD2_FLT.MODE 6 "NOTCH1"
 opt PAD2_FLT.MODE 7 "NOTCH2"
-param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD2_FLT 2040
 param PAD2_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD2_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD2_FLT.VOICE 0 "REV2"
 opt PAD2_FLT.VOICE 1 "EXPNDR"
-param PAD2_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD2_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD2_FLT DIRTY
 param PAD2_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD2_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD2_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD2_FLT.MODE 0 "LP2"
 opt PAD2_FLT.MODE 1 "BP2"
 opt PAD2_FLT.MODE 2 "HP2"
 opt PAD2_FLT.MODE 3 "NOTCH1"
-param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD2_FLT LADDER
 param PAD2_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD2_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD2_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD2_FLT.MODE 0 "LP2"
 opt PAD2_FLT.MODE 1 "LP4"
 opt PAD2_FLT.MODE 2 "BP2"
 opt PAD2_FLT.MODE 3 "BP4"
 opt PAD2_FLT.MODE 4 "HP4"
-param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD2_FLT SEM
 param PAD2_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD2_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD2_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 27 PAD2_FMD of 165
 panel PAD2_FLT CLEAN
@@ -1183,7 +1183,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD2_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD2_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD2_FLT.MODE 0 "MODE"
 opt PAD2_FLT.MODE 1 "BP"
 OK
@@ -1193,12 +1193,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD2_FLT CLEAN
 panel PAD2_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD2_FLT DIRTY
 panel PAD2_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD2_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -1430,7 +1430,7 @@ param PAD2_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 35 PAD3_KIT of 165
 panel PAD3_KIT -
-param PAD3.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD3.MACHINE "MACHINE" choice lin 0 12 1 11 -
 opt PAD3.MACHINE 0 "TONE KICK"
 opt PAD3.MACHINE 1 "TONE SNARE"
 opt PAD3.MACHINE 2 "TONE TOM"
@@ -1463,7 +1463,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 36 PAD3_KEYS of 165
 panel PAD3_KEYS -
-param PAD3.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD3.CHOKE "CHOKE" choice lin 0 4 1 1 -
 opt PAD3.CHOKE 0 "OFF"
 opt PAD3.CHOKE 1 "A"
 opt PAD3.CHOKE 2 "B"
@@ -1475,86 +1475,86 @@ opt PAD3.RETRIG 1 "CUT"
 OK
 page 37 PAD3_MCH of 165
 panel PAD3_MCH TONE-KICK
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "CLICK" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-SNARE
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "BUMP" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SNAP" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "TONE" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-TOM
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "NOISE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "DAMP" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-CLAP
-param PAD3.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "TONE" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "TAIL" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "RING" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-COWBELL
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "TONE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "RING" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-CYMBAL
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "TONE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "RING" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
 panel PAD3_MCH METAL-HAT
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "TONE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "RING" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "NOISE" stepped lin 0 127 1 0 -
 panel PAD3_MCH METAL-JINGLE
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "TONE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "RING" stepped lin 0 127 1 0 -
 panel PAD3_MCH BODY-SHAKER
-param PAD3.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "GRAINS" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "TONE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
 param PAD3.KNOB_F "RING" stepped lin 0 127 1 0 -
 panel PAD3_MCH PLAIN-SINE
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 panel PAD3_MCH PLAIN-NOISE
-param PAD3.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "DECAY" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "TONE" stepped lin 0 127 1 30 -
 panel PAD3_MCH PLAIN-IMPULSE
-param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 0 -
+param PAD3.KNOB_A "PITCH" stepped lin 0 127 1 40 -
+param PAD3.KNOB_B "DECAY" stepped lin 0 127 1 30 -
 param PAD3.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
 param PAD3.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 panel PAD3_MCH NONE
 OK
 page 38 PAD3_MORE of 165
 panel PAD3_MORE -
-param PAD3.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD3.MACHINE "MACHINE" choice lin 0 12 1 11 -
 opt PAD3.MACHINE 0 "TONE KICK"
 opt PAD3.MACHINE 1 "TONE SNARE"
 opt PAD3.MACHINE 2 "TONE TOM"
@@ -1569,35 +1569,35 @@ opt PAD3.MACHINE 10 "PLAIN NOISE"
 opt PAD3.MACHINE 11 "PLAIN IMPULSE"
 opt PAD3.MACHINE 12 "NONE"
 panel PAD3_MCH TONE-KICK
-param PAD3.KNOB_G "START" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "START" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-SNARE
-param PAD3.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "INTERVAL" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-TOM
-param PAD3.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "DRIVE" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-CLAP
-param PAD3.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "HARDNESS" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-COWBELL
-param PAD3.KNOB_G "DAMP" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "DAMP" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "BUMP" stepped lin 0 127 1 0 -
 panel PAD3_MCH TONE-CYMBAL
-param PAD3.KNOB_G "TOP" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "TOP" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
 panel PAD3_MCH METAL-HAT
-param PAD3.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "HIGH PASS" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
 panel PAD3_MCH METAL-JINGLE
-param PAD3.KNOB_G "HEAD" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "HEAD" stepped lin 0 127 1 117 -
 param PAD3.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
 panel PAD3_MCH BODY-SHAKER
-param PAD3.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "HARDNESS" stepped lin 0 127 1 117 -
 panel PAD3_MCH PLAIN-SINE
 panel PAD3_MCH PLAIN-NOISE
 panel PAD3_MCH PLAIN-IMPULSE
-param PAD3.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD3.KNOB_G "WIDTH" stepped lin 0 127 1 117 -
 panel PAD3_MCH NONE
 OK
 page 39 PAD3_FLT of 165
@@ -1627,34 +1627,34 @@ opt PAD3_FLT.MODE 4 "BP4"
 opt PAD3_FLT.MODE 5 "HP4"
 opt PAD3_FLT.MODE 6 "NOTCH1"
 opt PAD3_FLT.MODE 7 "NOTCH2"
-param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD3_FLT 2040
 param PAD3_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD3_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD3_FLT.VOICE 0 "REV2"
 opt PAD3_FLT.VOICE 1 "EXPNDR"
-param PAD3_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD3_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD3_FLT DIRTY
 param PAD3_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD3_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD3_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD3_FLT.MODE 0 "LP2"
 opt PAD3_FLT.MODE 1 "BP2"
 opt PAD3_FLT.MODE 2 "HP2"
 opt PAD3_FLT.MODE 3 "NOTCH1"
-param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD3_FLT LADDER
 param PAD3_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD3_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD3_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD3_FLT.MODE 0 "LP2"
 opt PAD3_FLT.MODE 1 "LP4"
 opt PAD3_FLT.MODE 2 "BP2"
 opt PAD3_FLT.MODE 3 "BP4"
 opt PAD3_FLT.MODE 4 "HP4"
-param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD3_FLT SEM
 param PAD3_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD3_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD3_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 40 PAD3_FMD of 165
 panel PAD3_FLT CLEAN
@@ -1687,7 +1687,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD3_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD3_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD3_FLT.MODE 0 "MODE"
 opt PAD3_FLT.MODE 1 "BP"
 OK
@@ -1697,12 +1697,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD3_FLT CLEAN
 panel PAD3_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD3_FLT DIRTY
 panel PAD3_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD3_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -1934,7 +1934,7 @@ param PAD3_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 48 PAD4_KIT of 165
 panel PAD4_KIT -
-param PAD4.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD4.MACHINE "MACHINE" choice lin 0 12 1 3 -
 opt PAD4.MACHINE 0 "TONE KICK"
 opt PAD4.MACHINE 1 "TONE SNARE"
 opt PAD4.MACHINE 2 "TONE TOM"
@@ -1967,7 +1967,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 49 PAD4_KEYS of 165
 panel PAD4_KEYS -
-param PAD4.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD4.CHOKE "CHOKE" choice lin 0 4 1 1 -
 opt PAD4.CHOKE 0 "OFF"
 opt PAD4.CHOKE 1 "A"
 opt PAD4.CHOKE 2 "B"
@@ -1979,86 +1979,86 @@ opt PAD4.RETRIG 1 "CUT"
 OK
 page 50 PAD4_MCH of 165
 panel PAD4_MCH TONE-KICK
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "CLICK" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "DRIVE" stepped lin 0 127 1 30 -
 panel PAD4_MCH TONE-SNARE
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "BUMP" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SNAP" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "SNAP DECAY" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "TONE" stepped lin 0 127 1 30 -
 panel PAD4_MCH TONE-TOM
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "NOISE" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "DAMP" stepped lin 0 127 1 30 -
 panel PAD4_MCH TONE-CLAP
-param PAD4.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "TONE" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "CLAPS" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SPREAD" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "TAIL" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD4_MCH TONE-COWBELL
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "INTERVAL" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "TONE" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "RING" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "DRIVE" stepped lin 0 127 1 30 -
 panel PAD4_MCH TONE-CYMBAL
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "TONE" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SPREAD" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "RING" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "SHIMMER" stepped lin 0 127 1 30 -
 panel PAD4_MCH METAL-HAT
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "TONE" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SPREAD" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "RING" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "NOISE" stepped lin 0 127 1 30 -
 panel PAD4_MCH METAL-JINGLE
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "JINGLES" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SHAKE" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "TONE" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD4_MCH BODY-SHAKER
-param PAD4.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "GRAINS" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "TONE" stepped lin 0 127 1 50 -
+param PAD4.KNOB_E "SHAKE" stepped lin 0 127 1 90 -
+param PAD4.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD4_MCH PLAIN-SINE
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 50 -
 panel PAD4_MCH PLAIN-NOISE
-param PAD4.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "DECAY" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "TONE" stepped lin 0 127 1 50 -
 panel PAD4_MCH PLAIN-IMPULSE
-param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD4.KNOB_A "PITCH" stepped lin 0 127 1 60 -
+param PAD4.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD4.KNOB_C "SWEEP" stepped lin 0 127 1 54 -
+param PAD4.KNOB_D "SWEEP TIME" stepped lin 0 127 1 50 -
 panel PAD4_MCH NONE
 OK
 page 51 PAD4_MORE of 165
 panel PAD4_MORE -
-param PAD4.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD4.MACHINE "MACHINE" choice lin 0 12 1 3 -
 opt PAD4.MACHINE 0 "TONE KICK"
 opt PAD4.MACHINE 1 "TONE SNARE"
 opt PAD4.MACHINE 2 "TONE TOM"
@@ -2073,35 +2073,35 @@ opt PAD4.MACHINE 10 "PLAIN NOISE"
 opt PAD4.MACHINE 11 "PLAIN IMPULSE"
 opt PAD4.MACHINE 12 "NONE"
 panel PAD4_MCH TONE-KICK
-param PAD4.KNOB_G "START" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "START" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "HARMONICS" stepped lin 0 127 1 127 -
 panel PAD4_MCH TONE-SNARE
-param PAD4.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "INTERVAL" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "DRIVE" stepped lin 0 127 1 127 -
 panel PAD4_MCH TONE-TOM
-param PAD4.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "DRIVE" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 127 -
 panel PAD4_MCH TONE-CLAP
-param PAD4.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "ROOM TONE" stepped lin 0 127 1 127 -
 panel PAD4_MCH TONE-COWBELL
-param PAD4.KNOB_G "DAMP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "BUMP" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "DAMP" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "BUMP" stepped lin 0 127 1 127 -
 panel PAD4_MCH TONE-CYMBAL
-param PAD4.KNOB_G "TOP" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "TOP" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "TOP TUNE" stepped lin 0 127 1 127 -
 panel PAD4_MCH METAL-HAT
-param PAD4.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "HIGH PASS" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "LOW PASS" stepped lin 0 127 1 127 -
 panel PAD4_MCH METAL-JINGLE
-param PAD4.KNOB_G "HEAD" stepped lin 0 127 1 0 -
-param PAD4.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "HEAD" stepped lin 0 127 1 64 -
+param PAD4.KNOB_H "SPREAD" stepped lin 0 127 1 127 -
 panel PAD4_MCH BODY-SHAKER
-param PAD4.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
 panel PAD4_MCH PLAIN-SINE
 panel PAD4_MCH PLAIN-NOISE
 panel PAD4_MCH PLAIN-IMPULSE
-param PAD4.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD4.KNOB_G "WIDTH" stepped lin 0 127 1 64 -
 panel PAD4_MCH NONE
 OK
 page 52 PAD4_FLT of 165
@@ -2131,34 +2131,34 @@ opt PAD4_FLT.MODE 4 "BP4"
 opt PAD4_FLT.MODE 5 "HP4"
 opt PAD4_FLT.MODE 6 "NOTCH1"
 opt PAD4_FLT.MODE 7 "NOTCH2"
-param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD4_FLT 2040
 param PAD4_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD4_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD4_FLT.VOICE 0 "REV2"
 opt PAD4_FLT.VOICE 1 "EXPNDR"
-param PAD4_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD4_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD4_FLT DIRTY
 param PAD4_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD4_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD4_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD4_FLT.MODE 0 "LP2"
 opt PAD4_FLT.MODE 1 "BP2"
 opt PAD4_FLT.MODE 2 "HP2"
 opt PAD4_FLT.MODE 3 "NOTCH1"
-param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD4_FLT LADDER
 param PAD4_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD4_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD4_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD4_FLT.MODE 0 "LP2"
 opt PAD4_FLT.MODE 1 "LP4"
 opt PAD4_FLT.MODE 2 "BP2"
 opt PAD4_FLT.MODE 3 "BP4"
 opt PAD4_FLT.MODE 4 "HP4"
-param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD4_FLT SEM
 param PAD4_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD4_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD4_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 53 PAD4_FMD of 165
 panel PAD4_FLT CLEAN
@@ -2191,7 +2191,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD4_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD4_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD4_FLT.MODE 0 "MODE"
 opt PAD4_FLT.MODE 1 "BP"
 OK
@@ -2201,12 +2201,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD4_FLT CLEAN
 panel PAD4_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD4_FLT DIRTY
 panel PAD4_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD4_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -2438,7 +2438,7 @@ param PAD4_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 61 PAD5_KIT of 165
 panel PAD5_KIT -
-param PAD5.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD5.MACHINE "MACHINE" choice lin 0 12 1 2 -
 opt PAD5.MACHINE 0 "TONE KICK"
 opt PAD5.MACHINE 1 "TONE SNARE"
 opt PAD5.MACHINE 2 "TONE TOM"
@@ -2483,86 +2483,86 @@ opt PAD5.RETRIG 1 "CUT"
 OK
 page 63 PAD5_MCH of 165
 panel PAD5_MCH TONE-KICK
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "CLICK" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "DRIVE" stepped lin 0 127 1 20 -
 panel PAD5_MCH TONE-SNARE
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "BUMP" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SNAP" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "SNAP DECAY" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "TONE" stepped lin 0 127 1 20 -
 panel PAD5_MCH TONE-TOM
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "NOISE" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "DAMP" stepped lin 0 127 1 20 -
 panel PAD5_MCH TONE-CLAP
-param PAD5.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "TONE" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "CLAPS" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "TAIL" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD5_MCH TONE-COWBELL
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "INTERVAL" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "DRIVE" stepped lin 0 127 1 20 -
 panel PAD5_MCH TONE-CYMBAL
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "TONE" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "SHIMMER" stepped lin 0 127 1 20 -
 panel PAD5_MCH METAL-HAT
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "TONE" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "NOISE" stepped lin 0 127 1 20 -
 panel PAD5_MCH METAL-JINGLE
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "JINGLES" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SHAKE" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "TONE" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD5_MCH BODY-SHAKER
-param PAD5.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD5.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "GRAINS" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD5.KNOB_E "SHAKE" stepped lin 0 127 1 20 -
+param PAD5.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD5_MCH PLAIN-SINE
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD5_MCH PLAIN-NOISE
-param PAD5.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "DECAY" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "TONE" stepped lin 0 127 1 70 -
 panel PAD5_MCH PLAIN-IMPULSE
-param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD5.KNOB_A "PITCH" stepped lin 0 127 1 30 -
+param PAD5.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD5.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD5.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD5_MCH NONE
 OK
 page 64 PAD5_MORE of 165
 panel PAD5_MORE -
-param PAD5.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD5.MACHINE "MACHINE" choice lin 0 12 1 2 -
 opt PAD5.MACHINE 0 "TONE KICK"
 opt PAD5.MACHINE 1 "TONE SNARE"
 opt PAD5.MACHINE 2 "TONE TOM"
@@ -2635,34 +2635,34 @@ opt PAD5_FLT.MODE 4 "BP4"
 opt PAD5_FLT.MODE 5 "HP4"
 opt PAD5_FLT.MODE 6 "NOTCH1"
 opt PAD5_FLT.MODE 7 "NOTCH2"
-param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD5_FLT 2040
 param PAD5_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD5_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD5_FLT.VOICE 0 "REV2"
 opt PAD5_FLT.VOICE 1 "EXPNDR"
-param PAD5_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD5_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD5_FLT DIRTY
 param PAD5_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD5_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD5_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD5_FLT.MODE 0 "LP2"
 opt PAD5_FLT.MODE 1 "BP2"
 opt PAD5_FLT.MODE 2 "HP2"
 opt PAD5_FLT.MODE 3 "NOTCH1"
-param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD5_FLT LADDER
 param PAD5_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD5_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD5_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD5_FLT.MODE 0 "LP2"
 opt PAD5_FLT.MODE 1 "LP4"
 opt PAD5_FLT.MODE 2 "BP2"
 opt PAD5_FLT.MODE 3 "BP4"
 opt PAD5_FLT.MODE 4 "HP4"
-param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD5_FLT SEM
 param PAD5_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD5_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD5_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 66 PAD5_FMD of 165
 panel PAD5_FLT CLEAN
@@ -2695,7 +2695,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD5_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD5_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD5_FLT.MODE 0 "MODE"
 opt PAD5_FLT.MODE 1 "BP"
 OK
@@ -2705,12 +2705,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD5_FLT CLEAN
 panel PAD5_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD5_FLT DIRTY
 panel PAD5_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD5_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -2942,7 +2942,7 @@ param PAD5_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 74 PAD6_KIT of 165
 panel PAD6_KIT -
-param PAD6.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD6.MACHINE "MACHINE" choice lin 0 12 1 2 -
 opt PAD6.MACHINE 0 "TONE KICK"
 opt PAD6.MACHINE 1 "TONE SNARE"
 opt PAD6.MACHINE 2 "TONE TOM"
@@ -2975,7 +2975,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 75 PAD6_KEYS of 165
 panel PAD6_KEYS -
-param PAD6.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD6.CHOKE "CHOKE" choice lin 0 4 1 2 -
 opt PAD6.CHOKE 0 "OFF"
 opt PAD6.CHOKE 1 "A"
 opt PAD6.CHOKE 2 "B"
@@ -2987,86 +2987,86 @@ opt PAD6.RETRIG 1 "CUT"
 OK
 page 76 PAD6_MCH of 165
 panel PAD6_MCH TONE-KICK
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "CLICK" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "DRIVE" stepped lin 0 127 1 20 -
 panel PAD6_MCH TONE-SNARE
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "BUMP" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SNAP" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "SNAP DECAY" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "TONE" stepped lin 0 127 1 20 -
 panel PAD6_MCH TONE-TOM
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "NOISE" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "DAMP" stepped lin 0 127 1 20 -
 panel PAD6_MCH TONE-CLAP
-param PAD6.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "TONE" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "CLAPS" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "TAIL" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD6_MCH TONE-COWBELL
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "INTERVAL" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "DRIVE" stepped lin 0 127 1 20 -
 panel PAD6_MCH TONE-CYMBAL
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "TONE" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "SHIMMER" stepped lin 0 127 1 20 -
 panel PAD6_MCH METAL-HAT
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "TONE" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "NOISE" stepped lin 0 127 1 20 -
 panel PAD6_MCH METAL-JINGLE
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "JINGLES" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SHAKE" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "TONE" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD6_MCH BODY-SHAKER
-param PAD6.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD6.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "GRAINS" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD6.KNOB_E "SHAKE" stepped lin 0 127 1 20 -
+param PAD6.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD6_MCH PLAIN-SINE
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD6_MCH PLAIN-NOISE
-param PAD6.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "DECAY" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "TONE" stepped lin 0 127 1 70 -
 panel PAD6_MCH PLAIN-IMPULSE
-param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD6.KNOB_A "PITCH" stepped lin 0 127 1 50 -
+param PAD6.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD6.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD6.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD6_MCH NONE
 OK
 page 77 PAD6_MORE of 165
 panel PAD6_MORE -
-param PAD6.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD6.MACHINE "MACHINE" choice lin 0 12 1 2 -
 opt PAD6.MACHINE 0 "TONE KICK"
 opt PAD6.MACHINE 1 "TONE SNARE"
 opt PAD6.MACHINE 2 "TONE TOM"
@@ -3139,34 +3139,34 @@ opt PAD6_FLT.MODE 4 "BP4"
 opt PAD6_FLT.MODE 5 "HP4"
 opt PAD6_FLT.MODE 6 "NOTCH1"
 opt PAD6_FLT.MODE 7 "NOTCH2"
-param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD6_FLT 2040
 param PAD6_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD6_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD6_FLT.VOICE 0 "REV2"
 opt PAD6_FLT.VOICE 1 "EXPNDR"
-param PAD6_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD6_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD6_FLT DIRTY
 param PAD6_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD6_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD6_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD6_FLT.MODE 0 "LP2"
 opt PAD6_FLT.MODE 1 "BP2"
 opt PAD6_FLT.MODE 2 "HP2"
 opt PAD6_FLT.MODE 3 "NOTCH1"
-param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD6_FLT LADDER
 param PAD6_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD6_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD6_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD6_FLT.MODE 0 "LP2"
 opt PAD6_FLT.MODE 1 "LP4"
 opt PAD6_FLT.MODE 2 "BP2"
 opt PAD6_FLT.MODE 3 "BP4"
 opt PAD6_FLT.MODE 4 "HP4"
-param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD6_FLT SEM
 param PAD6_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD6_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD6_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 79 PAD6_FMD of 165
 panel PAD6_FLT CLEAN
@@ -3199,7 +3199,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD6_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD6_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD6_FLT.MODE 0 "MODE"
 opt PAD6_FLT.MODE 1 "BP"
 OK
@@ -3209,12 +3209,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD6_FLT CLEAN
 panel PAD6_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD6_FLT DIRTY
 panel PAD6_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD6_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -3446,7 +3446,7 @@ param PAD6_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 87 PAD7_KIT of 165
 panel PAD7_KIT -
-param PAD7.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD7.MACHINE "MACHINE" choice lin 0 12 1 2 -
 opt PAD7.MACHINE 0 "TONE KICK"
 opt PAD7.MACHINE 1 "TONE SNARE"
 opt PAD7.MACHINE 2 "TONE TOM"
@@ -3479,7 +3479,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 88 PAD7_KEYS of 165
 panel PAD7_KEYS -
-param PAD7.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD7.CHOKE "CHOKE" choice lin 0 4 1 2 -
 opt PAD7.CHOKE 0 "OFF"
 opt PAD7.CHOKE 1 "A"
 opt PAD7.CHOKE 2 "B"
@@ -3491,86 +3491,86 @@ opt PAD7.RETRIG 1 "CUT"
 OK
 page 89 PAD7_MCH of 165
 panel PAD7_MCH TONE-KICK
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "CLICK" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "DRIVE" stepped lin 0 127 1 20 -
 panel PAD7_MCH TONE-SNARE
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "BUMP" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SNAP" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "SNAP DECAY" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "TONE" stepped lin 0 127 1 20 -
 panel PAD7_MCH TONE-TOM
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "NOISE" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "DAMP" stepped lin 0 127 1 20 -
 panel PAD7_MCH TONE-CLAP
-param PAD7.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "TONE" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "CLAPS" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "TAIL" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD7_MCH TONE-COWBELL
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "INTERVAL" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "DRIVE" stepped lin 0 127 1 20 -
 panel PAD7_MCH TONE-CYMBAL
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "TONE" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "SHIMMER" stepped lin 0 127 1 20 -
 panel PAD7_MCH METAL-HAT
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "TONE" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SPREAD" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "RING" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "NOISE" stepped lin 0 127 1 20 -
 panel PAD7_MCH METAL-JINGLE
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "JINGLES" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SHAKE" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "TONE" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD7_MCH BODY-SHAKER
-param PAD7.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD7.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "GRAINS" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "TONE" stepped lin 0 127 1 40 -
+param PAD7.KNOB_E "SHAKE" stepped lin 0 127 1 20 -
+param PAD7.KNOB_F "RING" stepped lin 0 127 1 20 -
 panel PAD7_MCH PLAIN-SINE
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD7_MCH PLAIN-NOISE
-param PAD7.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "TONE" stepped lin 0 127 1 70 -
 panel PAD7_MCH PLAIN-IMPULSE
-param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD7.KNOB_A "PITCH" stepped lin 0 127 1 70 -
+param PAD7.KNOB_B "DECAY" stepped lin 0 127 1 70 -
+param PAD7.KNOB_C "SWEEP" stepped lin 0 127 1 30 -
+param PAD7.KNOB_D "SWEEP TIME" stepped lin 0 127 1 40 -
 panel PAD7_MCH NONE
 OK
 page 90 PAD7_MORE of 165
 panel PAD7_MORE -
-param PAD7.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD7.MACHINE "MACHINE" choice lin 0 12 1 2 -
 opt PAD7.MACHINE 0 "TONE KICK"
 opt PAD7.MACHINE 1 "TONE SNARE"
 opt PAD7.MACHINE 2 "TONE TOM"
@@ -3643,34 +3643,34 @@ opt PAD7_FLT.MODE 4 "BP4"
 opt PAD7_FLT.MODE 5 "HP4"
 opt PAD7_FLT.MODE 6 "NOTCH1"
 opt PAD7_FLT.MODE 7 "NOTCH2"
-param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD7_FLT 2040
 param PAD7_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD7_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD7_FLT.VOICE 0 "REV2"
 opt PAD7_FLT.VOICE 1 "EXPNDR"
-param PAD7_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD7_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD7_FLT DIRTY
 param PAD7_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD7_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD7_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD7_FLT.MODE 0 "LP2"
 opt PAD7_FLT.MODE 1 "BP2"
 opt PAD7_FLT.MODE 2 "HP2"
 opt PAD7_FLT.MODE 3 "NOTCH1"
-param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD7_FLT LADDER
 param PAD7_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD7_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD7_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD7_FLT.MODE 0 "LP2"
 opt PAD7_FLT.MODE 1 "LP4"
 opt PAD7_FLT.MODE 2 "BP2"
 opt PAD7_FLT.MODE 3 "BP4"
 opt PAD7_FLT.MODE 4 "HP4"
-param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD7_FLT SEM
 param PAD7_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD7_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD7_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 92 PAD7_FMD of 165
 panel PAD7_FLT CLEAN
@@ -3703,7 +3703,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD7_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD7_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD7_FLT.MODE 0 "MODE"
 opt PAD7_FLT.MODE 1 "BP"
 OK
@@ -3713,12 +3713,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD7_FLT CLEAN
 panel PAD7_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD7_FLT DIRTY
 panel PAD7_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD7_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -3950,7 +3950,7 @@ param PAD7_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 100 PAD8_KIT of 165
 panel PAD8_KIT -
-param PAD8.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD8.MACHINE "MACHINE" choice lin 0 12 1 6 -
 opt PAD8.MACHINE 0 "TONE KICK"
 opt PAD8.MACHINE 1 "TONE SNARE"
 opt PAD8.MACHINE 2 "TONE TOM"
@@ -3983,7 +3983,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 101 PAD8_KEYS of 165
 panel PAD8_KEYS -
-param PAD8.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD8.CHOKE "CHOKE" choice lin 0 4 1 3 -
 opt PAD8.CHOKE 0 "OFF"
 opt PAD8.CHOKE 1 "A"
 opt PAD8.CHOKE 2 "B"
@@ -3995,86 +3995,86 @@ opt PAD8.RETRIG 1 "CUT"
 OK
 page 102 PAD8_MCH of 165
 panel PAD8_MCH TONE-KICK
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "CLICK" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "DRIVE" stepped lin 0 127 1 15 -
 panel PAD8_MCH TONE-SNARE
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "BUMP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "BUMP" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "SNAP DECAY" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "TONE" stepped lin 0 127 1 15 -
 panel PAD8_MCH TONE-TOM
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "NOISE" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "DAMP" stepped lin 0 127 1 15 -
 panel PAD8_MCH TONE-CLAP
-param PAD8.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "TONE" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "CLAPS" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "TAIL" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "RING" stepped lin 0 127 1 15 -
 panel PAD8_MCH TONE-COWBELL
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "INTERVAL" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "DRIVE" stepped lin 0 127 1 15 -
 panel PAD8_MCH TONE-CYMBAL
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "TONE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "TONE" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "SHIMMER" stepped lin 0 127 1 15 -
 panel PAD8_MCH METAL-HAT
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "TONE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "TONE" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "NOISE" stepped lin 0 127 1 15 -
 panel PAD8_MCH METAL-JINGLE
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "JINGLES" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "TONE" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "RING" stepped lin 0 127 1 15 -
 panel PAD8_MCH BODY-SHAKER
-param PAD8.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "GRAINS" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD8.KNOB_E "SHAKE" stepped lin 0 127 1 30 -
+param PAD8.KNOB_F "RING" stepped lin 0 127 1 15 -
 panel PAD8_MCH PLAIN-SINE
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 panel PAD8_MCH PLAIN-NOISE
-param PAD8.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "DECAY" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "TONE" stepped lin 0 127 1 20 -
 panel PAD8_MCH PLAIN-IMPULSE
-param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD8.KNOB_B "DECAY" stepped lin 0 127 1 20 -
+param PAD8.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD8.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 panel PAD8_MCH NONE
 OK
 page 103 PAD8_MORE of 165
 panel PAD8_MORE -
-param PAD8.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD8.MACHINE "MACHINE" choice lin 0 12 1 6 -
 opt PAD8.MACHINE 0 "TONE KICK"
 opt PAD8.MACHINE 1 "TONE SNARE"
 opt PAD8.MACHINE 2 "TONE TOM"
@@ -4089,35 +4089,35 @@ opt PAD8.MACHINE 10 "PLAIN NOISE"
 opt PAD8.MACHINE 11 "PLAIN IMPULSE"
 opt PAD8.MACHINE 12 "NONE"
 panel PAD8_MCH TONE-KICK
-param PAD8.KNOB_G "START" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "START" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "HARMONICS" stepped lin 0 127 1 127 -
 panel PAD8_MCH TONE-SNARE
-param PAD8.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "INTERVAL" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "DRIVE" stepped lin 0 127 1 127 -
 panel PAD8_MCH TONE-TOM
-param PAD8.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "DRIVE" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 127 -
 panel PAD8_MCH TONE-CLAP
-param PAD8.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "ROOM TONE" stepped lin 0 127 1 127 -
 panel PAD8_MCH TONE-COWBELL
-param PAD8.KNOB_G "DAMP" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "BUMP" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "DAMP" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "BUMP" stepped lin 0 127 1 127 -
 panel PAD8_MCH TONE-CYMBAL
-param PAD8.KNOB_G "TOP" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "TOP" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "TOP TUNE" stepped lin 0 127 1 127 -
 panel PAD8_MCH METAL-HAT
-param PAD8.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "HIGH PASS" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "LOW PASS" stepped lin 0 127 1 127 -
 panel PAD8_MCH METAL-JINGLE
-param PAD8.KNOB_G "HEAD" stepped lin 0 127 1 0 -
-param PAD8.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "HEAD" stepped lin 0 127 1 64 -
+param PAD8.KNOB_H "SPREAD" stepped lin 0 127 1 127 -
 panel PAD8_MCH BODY-SHAKER
-param PAD8.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
 panel PAD8_MCH PLAIN-SINE
 panel PAD8_MCH PLAIN-NOISE
 panel PAD8_MCH PLAIN-IMPULSE
-param PAD8.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD8.KNOB_G "WIDTH" stepped lin 0 127 1 64 -
 panel PAD8_MCH NONE
 OK
 page 104 PAD8_FLT of 165
@@ -4147,34 +4147,34 @@ opt PAD8_FLT.MODE 4 "BP4"
 opt PAD8_FLT.MODE 5 "HP4"
 opt PAD8_FLT.MODE 6 "NOTCH1"
 opt PAD8_FLT.MODE 7 "NOTCH2"
-param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD8_FLT 2040
 param PAD8_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD8_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD8_FLT.VOICE 0 "REV2"
 opt PAD8_FLT.VOICE 1 "EXPNDR"
-param PAD8_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD8_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD8_FLT DIRTY
 param PAD8_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD8_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD8_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD8_FLT.MODE 0 "LP2"
 opt PAD8_FLT.MODE 1 "BP2"
 opt PAD8_FLT.MODE 2 "HP2"
 opt PAD8_FLT.MODE 3 "NOTCH1"
-param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD8_FLT LADDER
 param PAD8_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD8_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD8_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD8_FLT.MODE 0 "LP2"
 opt PAD8_FLT.MODE 1 "LP4"
 opt PAD8_FLT.MODE 2 "BP2"
 opt PAD8_FLT.MODE 3 "BP4"
 opt PAD8_FLT.MODE 4 "HP4"
-param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD8_FLT SEM
 param PAD8_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD8_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD8_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 105 PAD8_FMD of 165
 panel PAD8_FLT CLEAN
@@ -4207,7 +4207,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD8_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD8_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD8_FLT.MODE 0 "MODE"
 opt PAD8_FLT.MODE 1 "BP"
 OK
@@ -4217,12 +4217,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD8_FLT CLEAN
 panel PAD8_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD8_FLT DIRTY
 panel PAD8_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD8_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -4454,7 +4454,7 @@ param PAD8_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 113 PAD9_KIT of 165
 panel PAD9_KIT -
-param PAD9.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD9.MACHINE "MACHINE" choice lin 0 12 1 6 -
 opt PAD9.MACHINE 0 "TONE KICK"
 opt PAD9.MACHINE 1 "TONE SNARE"
 opt PAD9.MACHINE 2 "TONE TOM"
@@ -4487,7 +4487,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 114 PAD9_KEYS of 165
 panel PAD9_KEYS -
-param PAD9.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD9.CHOKE "CHOKE" choice lin 0 4 1 3 -
 opt PAD9.CHOKE 0 "OFF"
 opt PAD9.CHOKE 1 "A"
 opt PAD9.CHOKE 2 "B"
@@ -4499,86 +4499,86 @@ opt PAD9.RETRIG 1 "CUT"
 OK
 page 115 PAD9_MCH of 165
 panel PAD9_MCH TONE-KICK
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "CLICK" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "DRIVE" stepped lin 0 127 1 15 -
 panel PAD9_MCH TONE-SNARE
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "BUMP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "BUMP" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "SNAP DECAY" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "TONE" stepped lin 0 127 1 15 -
 panel PAD9_MCH TONE-TOM
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "NOISE" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "DAMP" stepped lin 0 127 1 15 -
 panel PAD9_MCH TONE-CLAP
-param PAD9.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "TONE" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "CLAPS" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "TAIL" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "RING" stepped lin 0 127 1 15 -
 panel PAD9_MCH TONE-COWBELL
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "INTERVAL" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "DRIVE" stepped lin 0 127 1 15 -
 panel PAD9_MCH TONE-CYMBAL
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "TONE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "TONE" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "SHIMMER" stepped lin 0 127 1 15 -
 panel PAD9_MCH METAL-HAT
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "TONE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "TONE" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "NOISE" stepped lin 0 127 1 15 -
 panel PAD9_MCH METAL-JINGLE
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "JINGLES" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "TONE" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "RING" stepped lin 0 127 1 15 -
 panel PAD9_MCH BODY-SHAKER
-param PAD9.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "GRAINS" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD9.KNOB_E "SHAKE" stepped lin 0 127 1 30 -
+param PAD9.KNOB_F "RING" stepped lin 0 127 1 15 -
 panel PAD9_MCH PLAIN-SINE
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 panel PAD9_MCH PLAIN-NOISE
-param PAD9.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "DECAY" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "TONE" stepped lin 0 127 1 80 -
 panel PAD9_MCH PLAIN-IMPULSE
-param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD9.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD9.KNOB_C "SWEEP" stepped lin 0 127 1 80 -
 param PAD9.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
 panel PAD9_MCH NONE
 OK
 page 116 PAD9_MORE of 165
 panel PAD9_MORE -
-param PAD9.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD9.MACHINE "MACHINE" choice lin 0 12 1 6 -
 opt PAD9.MACHINE 0 "TONE KICK"
 opt PAD9.MACHINE 1 "TONE SNARE"
 opt PAD9.MACHINE 2 "TONE TOM"
@@ -4593,35 +4593,35 @@ opt PAD9.MACHINE 10 "PLAIN NOISE"
 opt PAD9.MACHINE 11 "PLAIN IMPULSE"
 opt PAD9.MACHINE 12 "NONE"
 panel PAD9_MCH TONE-KICK
-param PAD9.KNOB_G "START" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "START" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "HARMONICS" stepped lin 0 127 1 127 -
 panel PAD9_MCH TONE-SNARE
-param PAD9.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "INTERVAL" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "DRIVE" stepped lin 0 127 1 127 -
 panel PAD9_MCH TONE-TOM
-param PAD9.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "DRIVE" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 127 -
 panel PAD9_MCH TONE-CLAP
-param PAD9.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "ROOM TONE" stepped lin 0 127 1 127 -
 panel PAD9_MCH TONE-COWBELL
-param PAD9.KNOB_G "DAMP" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "BUMP" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "DAMP" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "BUMP" stepped lin 0 127 1 127 -
 panel PAD9_MCH TONE-CYMBAL
-param PAD9.KNOB_G "TOP" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "TOP" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "TOP TUNE" stepped lin 0 127 1 127 -
 panel PAD9_MCH METAL-HAT
-param PAD9.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "HIGH PASS" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "LOW PASS" stepped lin 0 127 1 127 -
 panel PAD9_MCH METAL-JINGLE
-param PAD9.KNOB_G "HEAD" stepped lin 0 127 1 0 -
-param PAD9.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "HEAD" stepped lin 0 127 1 64 -
+param PAD9.KNOB_H "SPREAD" stepped lin 0 127 1 127 -
 panel PAD9_MCH BODY-SHAKER
-param PAD9.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
 panel PAD9_MCH PLAIN-SINE
 panel PAD9_MCH PLAIN-NOISE
 panel PAD9_MCH PLAIN-IMPULSE
-param PAD9.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD9.KNOB_G "WIDTH" stepped lin 0 127 1 64 -
 panel PAD9_MCH NONE
 OK
 page 117 PAD9_FLT of 165
@@ -4651,34 +4651,34 @@ opt PAD9_FLT.MODE 4 "BP4"
 opt PAD9_FLT.MODE 5 "HP4"
 opt PAD9_FLT.MODE 6 "NOTCH1"
 opt PAD9_FLT.MODE 7 "NOTCH2"
-param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD9_FLT 2040
 param PAD9_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD9_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD9_FLT.VOICE 0 "REV2"
 opt PAD9_FLT.VOICE 1 "EXPNDR"
-param PAD9_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD9_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD9_FLT DIRTY
 param PAD9_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD9_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD9_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD9_FLT.MODE 0 "LP2"
 opt PAD9_FLT.MODE 1 "BP2"
 opt PAD9_FLT.MODE 2 "HP2"
 opt PAD9_FLT.MODE 3 "NOTCH1"
-param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD9_FLT LADDER
 param PAD9_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD9_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD9_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD9_FLT.MODE 0 "LP2"
 opt PAD9_FLT.MODE 1 "LP4"
 opt PAD9_FLT.MODE 2 "BP2"
 opt PAD9_FLT.MODE 3 "BP4"
 opt PAD9_FLT.MODE 4 "HP4"
-param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD9_FLT SEM
 param PAD9_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD9_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD9_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 118 PAD9_FMD of 165
 panel PAD9_FLT CLEAN
@@ -4711,7 +4711,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD9_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD9_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD9_FLT.MODE 0 "MODE"
 opt PAD9_FLT.MODE 1 "BP"
 OK
@@ -4721,12 +4721,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD9_FLT CLEAN
 panel PAD9_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD9_FLT DIRTY
 panel PAD9_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD9_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -4958,7 +4958,7 @@ param PAD9_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 126 PAD10_KIT of 165
 panel PAD10_KIT -
-param PAD10.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD10.MACHINE "MACHINE" choice lin 0 12 1 5 -
 opt PAD10.MACHINE 0 "TONE KICK"
 opt PAD10.MACHINE 1 "TONE SNARE"
 opt PAD10.MACHINE 2 "TONE TOM"
@@ -4991,7 +4991,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 127 PAD10_KEYS of 165
 panel PAD10_KEYS -
-param PAD10.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD10.CHOKE "CHOKE" choice lin 0 4 1 4 -
 opt PAD10.CHOKE 0 "OFF"
 opt PAD10.CHOKE 1 "A"
 opt PAD10.CHOKE 2 "B"
@@ -5003,86 +5003,86 @@ opt PAD10.RETRIG 1 "CUT"
 OK
 page 128 PAD10_MCH of 165
 panel PAD10_MCH TONE-KICK
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "CLICK" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "DRIVE" stepped lin 0 127 1 40 -
 panel PAD10_MCH TONE-SNARE
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "BUMP" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SNAP" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "SNAP DECAY" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "TONE" stepped lin 0 127 1 40 -
 panel PAD10_MCH TONE-TOM
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "NOISE" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "DAMP" stepped lin 0 127 1 40 -
 panel PAD10_MCH TONE-CLAP
-param PAD10.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "TONE" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "CLAPS" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SPREAD" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "TAIL" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "RING" stepped lin 0 127 1 40 -
 panel PAD10_MCH TONE-COWBELL
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "INTERVAL" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "TONE" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "DRIVE" stepped lin 0 127 1 40 -
 panel PAD10_MCH TONE-CYMBAL
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "TONE" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SPREAD" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "SHIMMER" stepped lin 0 127 1 40 -
 panel PAD10_MCH METAL-HAT
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "TONE" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SPREAD" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "NOISE" stepped lin 0 127 1 40 -
 panel PAD10_MCH METAL-JINGLE
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "JINGLES" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SHAKE" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "TONE" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "RING" stepped lin 0 127 1 40 -
 panel PAD10_MCH BODY-SHAKER
-param PAD10.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "GRAINS" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "TONE" stepped lin 0 127 1 30 -
+param PAD10.KNOB_E "SHAKE" stepped lin 0 127 1 30 -
+param PAD10.KNOB_F "RING" stepped lin 0 127 1 40 -
 panel PAD10_MCH PLAIN-SINE
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 30 -
 panel PAD10_MCH PLAIN-NOISE
-param PAD10.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "DECAY" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "TONE" stepped lin 0 127 1 80 -
 panel PAD10_MCH PLAIN-IMPULSE
-param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD10.KNOB_A "PITCH" stepped lin 0 127 1 64 -
+param PAD10.KNOB_B "DECAY" stepped lin 0 127 1 80 -
+param PAD10.KNOB_C "SWEEP" stepped lin 0 127 1 70 -
+param PAD10.KNOB_D "SWEEP TIME" stepped lin 0 127 1 30 -
 panel PAD10_MCH NONE
 OK
 page 129 PAD10_MORE of 165
 panel PAD10_MORE -
-param PAD10.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD10.MACHINE "MACHINE" choice lin 0 12 1 5 -
 opt PAD10.MACHINE 0 "TONE KICK"
 opt PAD10.MACHINE 1 "TONE SNARE"
 opt PAD10.MACHINE 2 "TONE TOM"
@@ -5097,35 +5097,35 @@ opt PAD10.MACHINE 10 "PLAIN NOISE"
 opt PAD10.MACHINE 11 "PLAIN IMPULSE"
 opt PAD10.MACHINE 12 "NONE"
 panel PAD10_MCH TONE-KICK
-param PAD10.KNOB_G "START" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "START" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "HARMONICS" stepped lin 0 127 1 64 -
 panel PAD10_MCH TONE-SNARE
-param PAD10.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "INTERVAL" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "DRIVE" stepped lin 0 127 1 64 -
 panel PAD10_MCH TONE-TOM
-param PAD10.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "DRIVE" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 64 -
 panel PAD10_MCH TONE-CLAP
-param PAD10.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "HARDNESS" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "ROOM TONE" stepped lin 0 127 1 64 -
 panel PAD10_MCH TONE-COWBELL
-param PAD10.KNOB_G "DAMP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "BUMP" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "DAMP" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "BUMP" stepped lin 0 127 1 64 -
 panel PAD10_MCH TONE-CYMBAL
-param PAD10.KNOB_G "TOP" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "TOP" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "TOP TUNE" stepped lin 0 127 1 64 -
 panel PAD10_MCH METAL-HAT
-param PAD10.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "HIGH PASS" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "LOW PASS" stepped lin 0 127 1 64 -
 panel PAD10_MCH METAL-JINGLE
-param PAD10.KNOB_G "HEAD" stepped lin 0 127 1 0 -
-param PAD10.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "HEAD" stepped lin 0 127 1 76 -
+param PAD10.KNOB_H "SPREAD" stepped lin 0 127 1 64 -
 panel PAD10_MCH BODY-SHAKER
-param PAD10.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "HARDNESS" stepped lin 0 127 1 76 -
 panel PAD10_MCH PLAIN-SINE
 panel PAD10_MCH PLAIN-NOISE
 panel PAD10_MCH PLAIN-IMPULSE
-param PAD10.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD10.KNOB_G "WIDTH" stepped lin 0 127 1 76 -
 panel PAD10_MCH NONE
 OK
 page 130 PAD10_FLT of 165
@@ -5155,34 +5155,34 @@ opt PAD10_FLT.MODE 4 "BP4"
 opt PAD10_FLT.MODE 5 "HP4"
 opt PAD10_FLT.MODE 6 "NOTCH1"
 opt PAD10_FLT.MODE 7 "NOTCH2"
-param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD10_FLT 2040
 param PAD10_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD10_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD10_FLT.VOICE 0 "REV2"
 opt PAD10_FLT.VOICE 1 "EXPNDR"
-param PAD10_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD10_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD10_FLT DIRTY
 param PAD10_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD10_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD10_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD10_FLT.MODE 0 "LP2"
 opt PAD10_FLT.MODE 1 "BP2"
 opt PAD10_FLT.MODE 2 "HP2"
 opt PAD10_FLT.MODE 3 "NOTCH1"
-param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD10_FLT LADDER
 param PAD10_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD10_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD10_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD10_FLT.MODE 0 "LP2"
 opt PAD10_FLT.MODE 1 "LP4"
 opt PAD10_FLT.MODE 2 "BP2"
 opt PAD10_FLT.MODE 3 "BP4"
 opt PAD10_FLT.MODE 4 "HP4"
-param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD10_FLT SEM
 param PAD10_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD10_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD10_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 131 PAD10_FMD of 165
 panel PAD10_FLT CLEAN
@@ -5215,7 +5215,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD10_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD10_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD10_FLT.MODE 0 "MODE"
 opt PAD10_FLT.MODE 1 "BP"
 OK
@@ -5225,12 +5225,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD10_FLT CLEAN
 panel PAD10_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD10_FLT DIRTY
 panel PAD10_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD10_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -5462,7 +5462,7 @@ param PAD10_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 139 PAD11_KIT of 165
 panel PAD11_KIT -
-param PAD11.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD11.MACHINE "MACHINE" choice lin 0 12 1 4 -
 opt PAD11.MACHINE 0 "TONE KICK"
 opt PAD11.MACHINE 1 "TONE SNARE"
 opt PAD11.MACHINE 2 "TONE TOM"
@@ -5495,7 +5495,7 @@ opt KIT.TONAL 12 "12"
 OK
 page 140 PAD11_KEYS of 165
 panel PAD11_KEYS -
-param PAD11.CHOKE "CHOKE" choice lin 0 4 1 0 -
+param PAD11.CHOKE "CHOKE" choice lin 0 4 1 4 -
 opt PAD11.CHOKE 0 "OFF"
 opt PAD11.CHOKE 1 "A"
 opt PAD11.CHOKE 2 "B"
@@ -5507,86 +5507,86 @@ opt PAD11.RETRIG 1 "CUT"
 OK
 page 141 PAD11_MCH of 165
 panel PAD11_MCH TONE-KICK
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "CLICK" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "DRIVE" stepped lin 0 127 1 30 -
 panel PAD11_MCH TONE-SNARE
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "BUMP" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SNAP" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "SNAP DECAY" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "TONE" stepped lin 0 127 1 30 -
 panel PAD11_MCH TONE-TOM
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "NOISE" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "DAMP" stepped lin 0 127 1 30 -
 panel PAD11_MCH TONE-CLAP
-param PAD11.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "TONE" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "CLAPS" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SPREAD" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "TAIL" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD11_MCH TONE-COWBELL
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "INTERVAL" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "TONE" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "RING" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "DRIVE" stepped lin 0 127 1 30 -
 panel PAD11_MCH TONE-CYMBAL
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "TONE" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SPREAD" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "RING" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "SHIMMER" stepped lin 0 127 1 30 -
 panel PAD11_MCH METAL-HAT
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "TONE" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SPREAD" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "RING" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "NOISE" stepped lin 0 127 1 30 -
 panel PAD11_MCH METAL-JINGLE
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "JINGLES" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SHAKE" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "TONE" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD11_MCH BODY-SHAKER
-param PAD11.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD11.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "GRAINS" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "TONE" stepped lin 0 127 1 70 -
+param PAD11.KNOB_E "SHAKE" stepped lin 0 127 1 40 -
+param PAD11.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD11_MCH PLAIN-SINE
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 70 -
 panel PAD11_MCH PLAIN-NOISE
-param PAD11.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "DECAY" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "TONE" stepped lin 0 127 1 50 -
 panel PAD11_MCH PLAIN-IMPULSE
-param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD11.KNOB_A "PITCH" stepped lin 0 127 1 55 -
+param PAD11.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD11.KNOB_C "SWEEP" stepped lin 0 127 1 60 -
+param PAD11.KNOB_D "SWEEP TIME" stepped lin 0 127 1 70 -
 panel PAD11_MCH NONE
 OK
 page 142 PAD11_MORE of 165
 panel PAD11_MORE -
-param PAD11.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD11.MACHINE "MACHINE" choice lin 0 12 1 4 -
 opt PAD11.MACHINE 0 "TONE KICK"
 opt PAD11.MACHINE 1 "TONE SNARE"
 opt PAD11.MACHINE 2 "TONE TOM"
@@ -5601,35 +5601,35 @@ opt PAD11.MACHINE 10 "PLAIN NOISE"
 opt PAD11.MACHINE 11 "PLAIN IMPULSE"
 opt PAD11.MACHINE 12 "NONE"
 panel PAD11_MCH TONE-KICK
-param PAD11.KNOB_G "START" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "START" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
 panel PAD11_MCH TONE-SNARE
-param PAD11.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "INTERVAL" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
 panel PAD11_MCH TONE-TOM
-param PAD11.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "DRIVE" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
 panel PAD11_MCH TONE-CLAP
-param PAD11.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "HARDNESS" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
 panel PAD11_MCH TONE-COWBELL
-param PAD11.KNOB_G "DAMP" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "DAMP" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "BUMP" stepped lin 0 127 1 0 -
 panel PAD11_MCH TONE-CYMBAL
-param PAD11.KNOB_G "TOP" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "TOP" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
 panel PAD11_MCH METAL-HAT
-param PAD11.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "HIGH PASS" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
 panel PAD11_MCH METAL-JINGLE
-param PAD11.KNOB_G "HEAD" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "HEAD" stepped lin 0 127 1 76 -
 param PAD11.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
 panel PAD11_MCH BODY-SHAKER
-param PAD11.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "HARDNESS" stepped lin 0 127 1 76 -
 panel PAD11_MCH PLAIN-SINE
 panel PAD11_MCH PLAIN-NOISE
 panel PAD11_MCH PLAIN-IMPULSE
-param PAD11.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD11.KNOB_G "WIDTH" stepped lin 0 127 1 76 -
 panel PAD11_MCH NONE
 OK
 page 143 PAD11_FLT of 165
@@ -5659,34 +5659,34 @@ opt PAD11_FLT.MODE 4 "BP4"
 opt PAD11_FLT.MODE 5 "HP4"
 opt PAD11_FLT.MODE 6 "NOTCH1"
 opt PAD11_FLT.MODE 7 "NOTCH2"
-param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD11_FLT 2040
 param PAD11_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD11_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD11_FLT.VOICE 0 "REV2"
 opt PAD11_FLT.VOICE 1 "EXPNDR"
-param PAD11_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD11_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD11_FLT DIRTY
 param PAD11_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD11_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD11_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD11_FLT.MODE 0 "LP2"
 opt PAD11_FLT.MODE 1 "BP2"
 opt PAD11_FLT.MODE 2 "HP2"
 opt PAD11_FLT.MODE 3 "NOTCH1"
-param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD11_FLT LADDER
 param PAD11_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD11_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD11_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD11_FLT.MODE 0 "LP2"
 opt PAD11_FLT.MODE 1 "LP4"
 opt PAD11_FLT.MODE 2 "BP2"
 opt PAD11_FLT.MODE 3 "BP4"
 opt PAD11_FLT.MODE 4 "HP4"
-param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD11_FLT SEM
 param PAD11_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD11_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD11_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 144 PAD11_FMD of 165
 panel PAD11_FLT CLEAN
@@ -5719,7 +5719,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD11_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD11_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD11_FLT.MODE 0 "MODE"
 opt PAD11_FLT.MODE 1 "BP"
 OK
@@ -5729,12 +5729,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD11_FLT CLEAN
 panel PAD11_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD11_FLT DIRTY
 panel PAD11_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD11_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -5966,7 +5966,7 @@ param PAD11_RT4.AMOUNT "AMOUNT" stepped lin -127 127 1 0 -
 OK
 page 152 PAD12_KIT of 165
 panel PAD12_KIT -
-param PAD12.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD12.MACHINE "MACHINE" choice lin 0 12 1 8 -
 opt PAD12.MACHINE 0 "TONE KICK"
 opt PAD12.MACHINE 1 "TONE SNARE"
 opt PAD12.MACHINE 2 "TONE TOM"
@@ -6011,86 +6011,86 @@ opt PAD12.RETRIG 1 "CUT"
 OK
 page 154 PAD12_MCH of 165
 panel PAD12_MCH TONE-KICK
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "CLICK" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "CLICK" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "DRIVE" stepped lin 0 127 1 30 -
 panel PAD12_MCH TONE-SNARE
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "BUMP" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SNAP" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "SNAP DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "TONE" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "BUMP" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SNAP" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "SNAP DECAY" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "TONE" stepped lin 0 127 1 30 -
 panel PAD12_MCH TONE-TOM
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "NOISE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "DAMP" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "NOISE" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "DAMP" stepped lin 0 127 1 30 -
 panel PAD12_MCH TONE-CLAP
-param PAD12.KNOB_A "TONE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "CLAPS" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "TAIL" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "TONE" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "CLAPS" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SPREAD" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "TAIL" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD12_MCH TONE-COWBELL
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "INTERVAL" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "DRIVE" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "INTERVAL" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "TONE" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "DRIVE" stepped lin 0 127 1 30 -
 panel PAD12_MCH TONE-CYMBAL
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "SHIMMER" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "TONE" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SPREAD" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "SHIMMER" stepped lin 0 127 1 30 -
 panel PAD12_MCH METAL-HAT
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "TONE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SPREAD" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "RING" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "NOISE" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "TONE" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SPREAD" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "RING" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "NOISE" stepped lin 0 127 1 30 -
 panel PAD12_MCH METAL-JINGLE
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "JINGLES" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SHAKE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "TONE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "JINGLES" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SHAKE" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "TONE" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD12_MCH BODY-SHAKER
-param PAD12.KNOB_A "GRAINS" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "TONE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_E "SHAKE" stepped lin 0 127 1 0 -
-param PAD12.KNOB_F "RING" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "GRAINS" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "GRAIN LENGTH" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "TONE" stepped lin 0 127 1 80 -
+param PAD12.KNOB_E "SHAKE" stepped lin 0 127 1 30 -
+param PAD12.KNOB_F "RING" stepped lin 0 127 1 30 -
 panel PAD12_MCH PLAIN-SINE
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
 panel PAD12_MCH PLAIN-NOISE
-param PAD12.KNOB_A "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "TONE" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "DECAY" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "TONE" stepped lin 0 127 1 50 -
 panel PAD12_MCH PLAIN-IMPULSE
-param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 0 -
-param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 0 -
-param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 0 -
-param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 0 -
+param PAD12.KNOB_A "PITCH" stepped lin 0 127 1 80 -
+param PAD12.KNOB_B "DECAY" stepped lin 0 127 1 50 -
+param PAD12.KNOB_C "SWEEP" stepped lin 0 127 1 40 -
+param PAD12.KNOB_D "SWEEP TIME" stepped lin 0 127 1 80 -
 panel PAD12_MCH NONE
 OK
 page 155 PAD12_MORE of 165
 panel PAD12_MORE -
-param PAD12.MACHINE "MACHINE" choice lin 0 12 1 0 -
+param PAD12.MACHINE "MACHINE" choice lin 0 12 1 8 -
 opt PAD12.MACHINE 0 "TONE KICK"
 opt PAD12.MACHINE 1 "TONE SNARE"
 opt PAD12.MACHINE 2 "TONE TOM"
@@ -6105,35 +6105,35 @@ opt PAD12.MACHINE 10 "PLAIN NOISE"
 opt PAD12.MACHINE 11 "PLAIN IMPULSE"
 opt PAD12.MACHINE 12 "NONE"
 panel PAD12_MCH TONE-KICK
-param PAD12.KNOB_G "START" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "START" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "HARMONICS" stepped lin 0 127 1 0 -
 panel PAD12_MCH TONE-SNARE
-param PAD12.KNOB_G "INTERVAL" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "INTERVAL" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "DRIVE" stepped lin 0 127 1 0 -
 panel PAD12_MCH TONE-TOM
-param PAD12.KNOB_G "DRIVE" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "DRIVE" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "DRIVE TYPE" stepped lin 0 127 1 0 -
 panel PAD12_MCH TONE-CLAP
-param PAD12.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "ROOM TONE" stepped lin 0 127 1 0 -
 panel PAD12_MCH TONE-COWBELL
-param PAD12.KNOB_G "DAMP" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "DAMP" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "BUMP" stepped lin 0 127 1 0 -
 panel PAD12_MCH TONE-CYMBAL
-param PAD12.KNOB_G "TOP" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "TOP" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "TOP TUNE" stepped lin 0 127 1 0 -
 panel PAD12_MCH METAL-HAT
-param PAD12.KNOB_G "HIGH PASS" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "HIGH PASS" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "LOW PASS" stepped lin 0 127 1 0 -
 panel PAD12_MCH METAL-JINGLE
-param PAD12.KNOB_G "HEAD" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "HEAD" stepped lin 0 127 1 64 -
 param PAD12.KNOB_H "SPREAD" stepped lin 0 127 1 0 -
 panel PAD12_MCH BODY-SHAKER
-param PAD12.KNOB_G "HARDNESS" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "HARDNESS" stepped lin 0 127 1 64 -
 panel PAD12_MCH PLAIN-SINE
 panel PAD12_MCH PLAIN-NOISE
 panel PAD12_MCH PLAIN-IMPULSE
-param PAD12.KNOB_G "WIDTH" stepped lin 0 127 1 0 -
+param PAD12.KNOB_G "WIDTH" stepped lin 0 127 1 64 -
 panel PAD12_MCH NONE
 OK
 page 156 PAD12_FLT of 165
@@ -6163,34 +6163,34 @@ opt PAD12_FLT.MODE 4 "BP4"
 opt PAD12_FLT.MODE 5 "HP4"
 opt PAD12_FLT.MODE 6 "NOTCH1"
 opt PAD12_FLT.MODE 7 "NOTCH2"
-param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD12_FLT 2040
 param PAD12_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD12_FLT.VOICE "VOICE" choice lin 0 1 1 0 -
 opt PAD12_FLT.VOICE 0 "REV2"
 opt PAD12_FLT.VOICE 1 "EXPNDR"
-param PAD12_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 -
+param PAD12_FLT.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 -
 panel PAD12_FLT DIRTY
 param PAD12_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD12_FLT.MODE "MODE" choice lin 0 3 1 0 -
+param PAD12_FLT.MODE "MODE" choice lin 0 3 1 2 -
 opt PAD12_FLT.MODE 0 "LP2"
 opt PAD12_FLT.MODE 1 "BP2"
 opt PAD12_FLT.MODE 2 "HP2"
 opt PAD12_FLT.MODE 3 "NOTCH1"
-param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD12_FLT LADDER
 param PAD12_FLT.RESO "Q" cont lin 0 1 0.0078125 0 -
-param PAD12_FLT.MODE "MODE" choice lin 0 4 1 1 -
+param PAD12_FLT.MODE "MODE" choice lin 0 4 1 2 -
 opt PAD12_FLT.MODE 0 "LP2"
 opt PAD12_FLT.MODE 1 "LP4"
 opt PAD12_FLT.MODE 2 "BP2"
 opt PAD12_FLT.MODE 3 "BP4"
 opt PAD12_FLT.MODE 4 "HP4"
-param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 panel PAD12_FLT SEM
 param PAD12_FLT.RESO "RES" cont lin 0 1 0.0078125 0 -
 param PAD12_FLT.MORPH "MODE" cont lin 0 1 0.0078125 0 -
-param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 -
+param PAD12_FLT.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 -
 OK
 page 157 PAD12_FMD of 165
 panel PAD12_FLT CLEAN
@@ -6223,7 +6223,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param PAD12_FLT.MODE "OUTPUT" choice lin 0 1 1 0 -
+param PAD12_FLT.MODE "OUTPUT" choice lin 0 1 1 2 -
 opt PAD12_FLT.MODE 0 "MODE"
 opt PAD12_FLT.MODE 1 "BP"
 OK
@@ -6233,12 +6233,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel PAD12_FLT CLEAN
 panel PAD12_FLT 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD12_FLT DIRTY
 panel PAD12_FLT LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel PAD12_FLT SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md

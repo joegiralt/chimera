@@ -57,7 +57,8 @@
 //! at its turn since the last answer (`edits::Refusals`, the newest four),
 //! in its toast's words, at the end of PART; one refused at `ERR` time is
 //! said in that answer alone. Only the followed Part's, and only while PART
-//! is a diff: a whole PART says none, and every answer drops them. The
+//! is a diff: a whole PART says none, and every answer to the number last
+//! issued drops them; another's leaves them (ADR 0337). The
 //! number moves before the answer is written, so an answer that never
 //! reached the editor leaves it asking with a stale one: everything again.
 //!
@@ -1040,8 +1041,12 @@ impl EdSince {
                 self.section(s, owed.has(s), at, Pass::Commit, w)?;
             }
         }
-        // Said, stale or not the followed Part's: none kept past an answer.
-        refused.clear();
+        // Said, stale or not the followed Part's: none kept past an answer
+        // to the number last issued. A stranger's (another client, or one
+        // that lost its place) clears none: the editor's are still owed.
+        if known {
+            refused.clear();
+        }
         w.write_str(OK.get())?;
         super::lit::uint(w, m.get())?;
         if self.owed != Sections::NONE {
@@ -1239,7 +1244,7 @@ impl EdSince {
         )?;
         if !texts && let Some(t) = source_text(ui, own) {
             w.write_str(SOURCE.get())?;
-            w.write_str(t.as_str())?;
+            super::lit::text(w, t.as_str())?;
             w.write_str(UNQUOTE.get())?;
         }
         // A whole PART is a new start: the refusals before it are stale.

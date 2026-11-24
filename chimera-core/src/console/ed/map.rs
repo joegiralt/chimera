@@ -15,7 +15,7 @@ use core::fmt::{self, Write};
 
 use super::EdAddr;
 use super::addr::{EdBlock, PartBlock};
-use super::lit::{QUOTE, QUOTE_SHUT, UNQUOTE, lit, quoted, uint};
+use super::lit::{QUOTE, QUOTE_SHUT, UNQUOTE, lit, quoted, text, uint};
 use super::project::EdName;
 use super::schema::Round;
 use crate::addr::{BlockRef, ParamAddr};
@@ -1313,7 +1313,7 @@ pub(super) fn rows(ui: &UiState, w: &mut dyn Write) -> fmt::Result {
     match ui.project().controller(p) {
         Some(n) => {
             w.write_str(QUOTE.get())?;
-            w.write_str(n.as_str())?;
+            text(w, n.as_str())?;
             w.write_char('"')?;
         }
         None => w.write_str(NONE_SP.get())?,
@@ -1450,10 +1450,10 @@ pub(super) fn describe(w: &mut dyn Write) -> fmt::Result {
         w.write_str(KIND_HEAD.get())?;
         k.write(w)?;
         w.write_str(QUOTE.get())?;
-        w.write_str(t.head.as_str())?;
+        text(w, t.head.as_str())?;
         w.write_str(QUOTE_SHUT.get())?;
         w.write_char('"')?;
-        w.write_str(t.tail.as_str())?;
+        text(w, t.tail.as_str())?;
         w.write_str(UNQUOTE.get())?;
     }
     w.write_str(CCS.get())?;

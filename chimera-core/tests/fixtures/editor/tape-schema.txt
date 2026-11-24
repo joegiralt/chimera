@@ -13,7 +13,7 @@ opt TAPE_ENG.MODEL 1 "STRCH"
 opt TAPE_ENG.MODEL 2 "SCRUB"
 opt TAPE_ENG.MODEL 3 "WAVE"
 panel MACHINE WALK
-param TAPE_ENG.SIZE "LENGTH" cont lin 0 1 0.0078125 1 md
+param TAPE_ENG.SIZE "LENGTH" cont lin 0 1 0.0078125 0.8 md
 param TAPE_ENG.DRAG "FADE" cont lin 0 1 0.0078125 0.3 m
 param TAPE_ENG.MODE "DIRECTION" choice lin 0 3 1 2 m
 opt TAPE_ENG.MODE 0 "FWD"
@@ -29,18 +29,18 @@ opt TAPE_ENG.TYPE 1 "CLS POLY"
 opt TAPE_ENG.TYPE 2 "GRAIN"
 param TAPE_ENG.MOTION "SPEED" cont lin -1 1 0.015625 0 md
 param TAPE_ENG.STRETCH_LENGTH "LENGTH" cont lin 0 1 0.0078125 0.6015625 m
-param TAPE_ENG.SIZE "D-TIME" cont lin 0 1 0.0078125 1 md
+param TAPE_ENG.SIZE "D-TIME" cont lin 0 1 0.0078125 0.8 md
 param TAPE_ENG.POSITION "POSITION" cont lin 0 1 0.0078125 0 md
 panel MACHINE SCRUB
 param TAPE_ENG.POSITION "FINGER" cont lin 0 1 0.0078125 0 md
 param TAPE_ENG.MOTION "SPEED" cont lin -1 1 0.015625 0 md
-param TAPE_ENG.SIZE "LENGTH" cont lin 0 1 0.0078125 1 md
+param TAPE_ENG.SIZE "LENGTH" cont lin 0 1 0.0078125 0.8 md
 param TAPE_ENG.XFADE "XFADE" cont lin 0 0.5 0.0039063 0.1 m
 param TAPE_ENG.DRAG "DRAG" cont lin 0 1 0.0078125 0.3 m
 panel MACHINE WAVE
 param TAPE_ENG.POSITION "FRAME" cont lin 0 1 0.0078125 0 md
 param TAPE_ENG.MOTION "SCAN" cont lin -1 1 0.015625 0 md
-param TAPE_ENG.SIZE "RANGE" cont lin 0 1 0.0078125 1 md
+param TAPE_ENG.SIZE "RANGE" cont lin 0 1 0.0078125 0.8 md
 OK
 page 2 MCH of 19
 panel MCH -
@@ -108,34 +108,34 @@ opt FILTER.MODE 4 "BP4"
 opt FILTER.MODE 5 "HP4"
 opt FILTER.MODE 6 "NOTCH1"
 opt FILTER.MODE 7 "NOTCH2"
-param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 md
+param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 md
 panel FILTER 2040
 param FILTER.RESO "RES" cont lin 0 1 0.0078125 0 md
 param FILTER.VOICE "VOICE" choice lin 0 1 1 0 m
 opt FILTER.VOICE 0 "REV2"
 opt FILTER.VOICE 1 "EXPNDR"
-param FILTER.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 1000 md
+param FILTER.CUTOFF "CUTOFF" cont oct 20 20000 0.0416667 20000 md
 panel FILTER DIRTY
 param FILTER.RESO "Q" cont lin 0 1 0.0078125 0 md
-param FILTER.MODE "MODE" choice lin 0 3 1 0 m
+param FILTER.MODE "MODE" choice lin 0 3 1 2 m
 opt FILTER.MODE 0 "LP2"
 opt FILTER.MODE 1 "BP2"
 opt FILTER.MODE 2 "HP2"
 opt FILTER.MODE 3 "NOTCH1"
-param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 md
+param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 md
 panel FILTER LADDER
 param FILTER.RESO "Q" cont lin 0 1 0.0078125 0 md
-param FILTER.MODE "MODE" choice lin 0 4 1 1 m
+param FILTER.MODE "MODE" choice lin 0 4 1 2 m
 opt FILTER.MODE 0 "LP2"
 opt FILTER.MODE 1 "LP4"
 opt FILTER.MODE 2 "BP2"
 opt FILTER.MODE 3 "BP4"
 opt FILTER.MODE 4 "HP4"
-param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 md
+param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 md
 panel FILTER SEM
 param FILTER.RESO "RES" cont lin 0 1 0.0078125 0 md
 param FILTER.MORPH "MODE" cont lin 0 1 0.0078125 0 md
-param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 1000 md
+param FILTER.CUTOFF "FREQ" cont oct 20 20000 0.0416667 20000 md
 OK
 page 5 FMD of 19
 panel FILTER CLEAN
@@ -168,7 +168,7 @@ route "KEYBOARD" NOTE:FILTER.CUTOFF route
 route "FREQ MOD" FM3IN route
 param FILTER.FB "FEEDBACK" cont lin -1 1 0.015625 0 md
 route "RES MOD" QMIN route
-param FILTER.MODE "OUTPUT" choice lin 0 1 1 0 m
+param FILTER.MODE "OUTPUT" choice lin 0 1 1 2 m
 opt FILTER.MODE 0 "MODE"
 opt FILTER.MODE 1 "BP"
 OK
@@ -178,12 +178,12 @@ param FILTER.LEVEL "INPUT" cont lin 0 1 0.0078125 0.5 md
 param VOICEFX.MIX "MIX" cont lin 0 1 0.0078125 1 md
 panel FILTER CLEAN
 panel FILTER 2040
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FILTER DIRTY
 panel FILTER LADDER
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FILTER SEM
-param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 1 md
+param FILTER.STAB "STABILITY" cont lin 0 1 0.0078125 0.5 md
 panel FX OFF
 panel FX SOFT
 param VOICEFX.P1 "DRIVE" cont lin 0 1 0.0078125 0 md
@@ -511,7 +511,7 @@ param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
 param ENV3.SUS "SUSTAIN" cont lin 0 1 0.0078125 0.7 m
 param ENV3.REL "RELEASE" cont lin 0 1 0.0078125 0.559 m
 param ENV3.H "HOLD" cont lin 0 1 0.0078125 0 m
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 A-MED
@@ -520,7 +520,7 @@ param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
 param ENV3.SUS "SUSTAIN" cont lin 0 1 0.0078125 0.7 m
 param ENV3.REL "RELEASE" cont lin 0 1 0.0078125 0.559 m
 param ENV3.H "HOLD" cont lin 0 1 0.0078125 0 m
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 A-SLOW
@@ -529,7 +529,7 @@ param ENV3.DEC "DECAY" cont lin 0 1 0.0078125 0.559 m
 param ENV3.SUS "SUSTAIN" cont lin 0 1 0.0078125 0.7 m
 param ENV3.REL "RELEASE" cont lin 0 1 0.0078125 0.559 m
 param ENV3.H "HOLD" cont lin 0 1 0.0078125 0 m
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-ENV
@@ -544,7 +544,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "AD"
 opt ENV3.FORM 1 "AHR"
 opt ENV3.FORM 2 "CYCLE"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-LFO
@@ -559,7 +559,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "FREE"
 opt ENV3.FORM 1 "SYNC"
 opt ENV3.FORM 2 "LFV"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-LFV
@@ -574,7 +574,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "FREE"
 opt ENV3.FORM 1 "SYNC"
 opt ENV3.FORM 2 "LFV"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 panel ENV3 B-BURST
@@ -589,7 +589,7 @@ param ENV3.FORM "FORM" choice lin 0 2 1 0 -
 opt ENV3.FORM 0 "AD"
 opt ENV3.FORM 1 "AHR"
 opt ENV3.FORM 2 "CYCLE"
-param ENV3.TYPE "TYPE" choice lin 0 1 1 0 m
+param ENV3.TYPE "TYPE" choice lin 0 1 1 1 m
 opt ENV3.TYPE 0 "A"
 opt ENV3.TYPE 1 "B"
 OK
@@ -633,7 +633,7 @@ param LFO1.SYNC "SYNC" choice lin 0 1 1 0 m
 opt LFO1.SYNC 0 "FREE"
 opt LFO1.SYNC 1 "RETRIG"
 param LFO1.PHASE "PHASE" cont lin 0 1 0.0078125 0 m
-param LFO1.DEPTH "DEPTH" cont lin 0 1 0.0078125 1 md
+param LFO1.DEPTH "DEPTH" cont lin 0 1 0.0078125 0 md
 param LFO1.TYPE "TYPE" choice lin 0 1 1 0 m
 opt LFO1.TYPE 0 "CLASSIC"
 opt LFO1.TYPE 1 "FUNC"

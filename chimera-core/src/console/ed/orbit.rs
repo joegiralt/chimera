@@ -20,7 +20,7 @@
 
 use core::fmt::{self, Write};
 
-use super::lit::{QUOTE, QUOTE_SHUT, lit, uint};
+use super::lit::{QUOTE, QUOTE_SHUT, lit, text, uint};
 use crate::orbit::clock::ClockSource;
 use crate::orbit::scene::{OrbitSong, SCENES, Scene, SceneIdx, SlotRev};
 use crate::orbit::walk::Pool;
@@ -39,7 +39,7 @@ const STEPS: usize = MAX_STEPS as usize;
 pub(super) fn act_line(c: OrbitCell, w: &mut dyn Write) -> fmt::Result {
     w.write_str(ACT.get())?;
     w.write_str(QUOTE.get())?;
-    w.write_str(c.label())?;
+    text(w, c.label())?;
     w.write_str(QUOTE_SHUT.get())?;
     w.write_str(cell_token(c))?;
     w.write_char('\n')

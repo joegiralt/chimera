@@ -363,7 +363,7 @@ fn sources(engine: EngineType) -> impl Iterator<Item = RouteSrc> {
 pub(super) fn knob_line(label: &str, r: RouteView, w: &mut dyn Write) -> fmt::Result {
     w.write_str(ROUTE.get())?;
     w.write_char('"')?;
-    w.write_str(label)?;
+    super::lit::text(w, label)?;
     w.write_str(super::lit::QUOTE_SHUT.get())?;
     RouteCell::of_view(r).write(w)?;
     w.write_str(match r {

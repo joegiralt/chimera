@@ -656,6 +656,19 @@ impl UiState {
         self.prime_status
     }
 
+    /// The band's status, taken: the editor's route asks whether its pass
+    /// set one. Always inlined, so bank 1 holds no copy (ADR 0198).
+    #[inline(always)]
+    pub(crate) fn take_prime_status(&mut self) -> Option<PrimeStatus> {
+        self.prime_status.take()
+    }
+
+    /// The band's status, put back (`take_prime_status`).
+    #[inline(always)]
+    pub(crate) fn put_prime_status(&mut self, s: Option<PrimeStatus>) {
+        self.prime_status = s;
+    }
+
     /// The browser's refusal, the line under `POOL FULL`: `NEEDS 1.2K,
     /// 0.4K FREE`, or empty with every slot taken.
     pub fn refusal(&self) -> Option<&str> {
