@@ -152,14 +152,15 @@ fn rubber_bass() -> Sound {
 }
 
 /// #487: a fast release ends without a click. The voice ended on its DC
-/// blocker's tail: RUBBER BASS read 3071×, INIT at RR 10 363×. RR 13 to 15
-/// keep their snap: the release's own corner reads 3.5–4× on INIT's bass,
-/// and only a release of 13 ms or more reads under the bar.
+/// blocker's tail: RUBBER BASS read 3071×, INIT at RR 10 363×. RR 12 to 15
+/// keep their snap: the release's own corner, which INIT's fully open LP4
+/// passes (ADR 0327), reads 3.5–10.8× on INIT's bass (owner, 2026-11-23:
+/// inaudible, accepted).
 #[test]
 fn algo_short_release_does_not_click() {
     let r = ratio(&rubber_bass(), PartMode::Poly, &BASS, 1.8);
     assert!(r <= CLICK_RATIO, "RUBBER BASS: {r:.2}×");
-    for rr in [8, 10, 12] {
+    for rr in [8, 10, 11] {
         let mut s = Sound::init(EngineType::Algo);
         for o in &mut s.params.algo.ops {
             o.rr = rr;

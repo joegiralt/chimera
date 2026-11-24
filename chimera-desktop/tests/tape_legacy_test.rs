@@ -81,9 +81,13 @@ fn old_machine_sounds_render_bit_identically() {
     assert!(checked >= 45, "{checked}");
 }
 
+/// Re-trimmed for their brighter sources (ADR 0327).
+const RETRIMMED: [&str; 3] = ["PLUCK HIT", "PLUCK LOW", "HARP HIT"];
+
 /// Each factory TAPE Sound, re-pointed to WALK and built now, renders as
 /// its file from before WALK did. STRETCH's three are rebuilt on GRAIN
-/// with ONE's ENV 1 (ADR 0204), so they are not WALK's to keep.
+/// with ONE's ENV 1 (ADR 0204), so they are not WALK's to keep; `RETRIMMED`
+/// differ from their files by their trims.
 #[test]
 fn factory_sounds_on_play_render_as_before() {
     let mut checked = 0;
@@ -98,7 +102,7 @@ fn factory_sounds_on_play_render_as_before() {
             TapeMachine::Stretch => true,
             TapeMachine::Walk | TapeMachine::Scrub | TapeMachine::Wave => false,
         };
-        if rebuilt {
+        if rebuilt || RETRIMMED.contains(&name) {
             continue;
         }
         assert_eq!(

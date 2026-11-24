@@ -18,6 +18,8 @@ pub const DECAY_OVER_ATTACK_OCTAVES: f32 = 3.0;
 const _: () = assert!(DECAY_SECONDS == ATTACK_SECONDS * 8.0);
 /// -80 dB: a decay or release below this is over.
 pub const ENV_FLOOR: f32 = 1.0e-4;
+/// The floor's fade to silence: a block.
+const FADE: u32 = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EnvRates {
@@ -161,6 +163,9 @@ pub enum Stage {
     Decay1,
     Decay2,
     Release,
+    /// From the floor to silence, a straight line over `FADE` samples
+    /// (#695): a snap there is a step an open filter lets through.
+    Fade,
 }
 
 /// Each sample is `level * mul + add`. A stage's length is counted when it
@@ -321,6 +326,10 @@ impl OpEnv {
                 self.enter(Stage::Decay2);
             }
             Stage::Decay2 | Stage::Release => {
+                self.level = ENV_FLOOR;
+                self.enter(Stage::Fade);
+            }
+            Stage::Fade => {
                 self.level = 0.0;
                 self.enter(Stage::Idle);
             }
@@ -328,6 +337,9 @@ impl OpEnv {
         }
     }
 
+    /// Out of line: once a stage, and the kernel's bank 2 calls bank 1's
+    /// one copy.
+    #[inline(never)]
     fn enter(&mut self, stage: Stage) {
         let c = self.coefs;
         self.stage = stage;
@@ -339,8 +351,10 @@ impl OpEnv {
             }
             Stage::Attack => self.hold(),
             Stage::Decay1 => self.decay(c.d1_log2, c.d1_level.max(ENV_FLOOR), Stage::Decay2),
-            Stage::Decay2 => self.decay(c.d2_log2, ENV_FLOOR, Stage::Idle),
-            Stage::Release => self.decay(c.rr_log2, ENV_FLOOR, Stage::Idle),
+            Stage::Decay2 => self.decay(c.d2_log2, ENV_FLOOR, Stage::Fade),
+            Stage::Release => self.decay(c.rr_log2, ENV_FLOOR, Stage::Fade),
+            Stage::Fade if self.level > 0.0 => self.set(1.0, -self.level / FADE as f32, FADE),
+            Stage::Fade => self.enter(Stage::Idle),
         }
     }
 

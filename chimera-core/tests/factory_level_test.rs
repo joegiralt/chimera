@@ -466,16 +466,17 @@ fn block_rms(out: &[f32]) -> Vec<f32> {
 /// and exact divides (#57) move the cutoff a little, 0.09 dB at most.
 /// CLEAN's k law (ADR 0096) gives RES a little more `k` swing: 4 (RES 0.3)
 /// 0.065 dB, 5 (SQR BASS, RES 0.4) 0.73; the others' RES 0 moves k from
-/// 2.01 to 2, within their old allowances.
+/// 2.01 to 2, within their old allowances. CLEAN LP4 fully open (ADR 0327)
+/// passes their top: 0 0.2 dB, 1 0.15, 2 0.46, 3 0.36, 7 0.4.
 const KNOWN: [(usize, f32); V1_FACTORY] = [
-    (0, 0.04),
-    (1, 0.03),
-    (2, 0.09),
-    (3, 0.07),
+    (0, 0.2),
+    (1, 0.15),
+    (2, 0.46),
+    (3, 0.36),
     (4, 0.07),
     (5, 0.74),
     (6, 1.15),
-    (7, 0.09),
+    (7, 0.4),
 ];
 
 #[test]

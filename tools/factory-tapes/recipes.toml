@@ -431,7 +431,8 @@ source = "PLUCK C3"
 model = "WALK"
 mode = "FORWARD"
 # ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
-trim = "-0.5"
+# Fully open LP4 (ADR 0327) brightens its source: re-trimmed.
+trim = "+0.0"
 
 [[sound]]
 name = "PLUCK LOW"
@@ -439,7 +440,8 @@ source = "PLUCK E2"
 model = "WALK"
 mode = "FORWARD"
 # ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
-trim = "+0.0"
+# Fully open LP4 (ADR 0327) brightens its source: re-trimmed.
+trim = "+0.5"
 
 [[sound]]
 name = "HARP HIT"
@@ -447,7 +449,8 @@ source = "HARP C5"
 model = "WALK"
 mode = "FORWARD"
 # ONE's hit at ENV 1's floor, held full (ADR 0180): re-trimmed.
-trim = "-1.5"
+# Fully open LP4 (ADR 0327) brightens its source: re-trimmed.
+trim = "-0.5"
 
 [[sound]]
 name = "BOWED LOOP"

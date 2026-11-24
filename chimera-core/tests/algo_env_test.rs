@@ -5,7 +5,7 @@
 //! fastest attack is at most 16 samples; stage times follow the rate.
 
 use chimera_core::MidiNote;
-use chimera_core::dsp::algo::env::{EnvCoefs, EnvRates, OpEnv, Stage, key_scale};
+use chimera_core::dsp::algo::env::{ENV_FLOOR, EnvCoefs, EnvRates, OpEnv, Stage, key_scale};
 use chimera_core::dsp::algo::math::log2;
 use chimera_core::dsp::algo::tx::d1l_level;
 
@@ -119,8 +119,38 @@ fn release_ends_idle_and_silent() {
     samples_in(&mut e, Stage::Attack);
     e.note_off();
     samples_in(&mut e, Stage::Release);
+    samples_in(&mut e, Stage::Fade);
     assert!(e.is_idle());
     assert_eq!(e.step(), 0.0);
+}
+
+/// #695: a release or second decay that reaches its −80 dB floor fades to
+/// silence over a block instead of snapping there, so a voice that ends
+/// under an open filter ends without a step.
+#[test]
+fn the_floor_fades_to_silence_never_snaps() {
+    let release = |e: &mut OpEnv| e.note_off();
+    let held = |_: &mut OpEnv| {};
+    for (end, rates) in [
+        (release as fn(&mut OpEnv), HOLD),
+        (held, EnvRates { d2r: 20, ..HOLD }),
+    ] {
+        let mut e = started(rates, MidiNote::A4);
+        samples_in(&mut e, Stage::Attack);
+        end(&mut e);
+        let (mut last, mut worst, mut n) = (e.step(), 0.0f32, 0);
+        while !e.is_idle() {
+            let y = e.step();
+            if last < 2.0 * ENV_FLOOR {
+                worst = worst.max((y - last).abs());
+            }
+            last = y;
+            n += 1;
+            assert!(n < 50_000_000, "never idle");
+        }
+        assert_eq!(last, 0.0);
+        assert!(worst <= ENV_FLOOR / 32.0, "a {worst:e} step at the floor");
+    }
 }
 
 #[test]

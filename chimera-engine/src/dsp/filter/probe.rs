@@ -331,6 +331,11 @@ mod tests {
             match block {
                 2 => (p.cutoff, p.resonance) = (3000.0, 0.4),
                 3 => p.resonance = 0.5,
+                // LP4's open top is bank 2's own path, not a probed loop
+                // (#695): its jump stays under the band.
+                4 if mode == FilterMode::Lp24 => {
+                    p.cutoff = 0.9 * super::super::clean::OpenTop::FROM_HZ
+                }
                 4 => p.cutoff = SAMPLE_RATE as f32 * 0.6,
                 _ => {}
             }

@@ -556,36 +556,36 @@ const FIXTURE_RENDERS: &[(&str, u64)] = &[
     // row for the harness's 1.6 s release (`OFF_BLOCKS`, ADR 0063); every
     // row for CLEAN's ACCURATE tan and exact divides (#57); every row for
     // CLEAN's k law and trims (ADR 0096).
-    ("factory_0.snd", 0x2b0219df38902ede),
-    ("factory_1.snd", 0x0e3d85b43ff9ccf9),
-    ("factory_2.snd", 0xfe00848f39d1981e),
-    ("factory_3.snd", 0x901698e789a3ccf9),
-    ("factory_4.snd", 0x68328532bf9779a7),
+    ("factory_0.snd", 0x1cbfa2a144a266a5),
+    ("factory_1.snd", 0x1bd3d1c2f05c4f8f),
+    ("factory_2.snd", 0x795fd276f0cc224b),
+    ("factory_3.snd", 0x8aafe4b466d74229),
+    ("factory_4.snd", 0x62fbdd207ea6ef12),
     // Then the voice-end fade (ADR 0096): SQR BASS's −65 dB filter tail.
     // Re-recorded in Task 14: its DRV loads as SOFT with LEVEL cancelling its
     // `MAKE_UP` 0.483 (same loudness, not the same bits).
-    ("factory_5.snd", 0xa778b804866845e5),
-    ("factory_6.snd", 0xb010734cb5f7e131),
+    ("factory_5.snd", 0xfa8a040324329443),
+    ("factory_6.snd", 0x8e3348ab90b89d95),
     // Then the voice-end fade past −80 dB (#487): its −69 dB DC tail.
-    ("factory_7.snd", 0x13448df1ea3c0499),
-    ("init_algo.snd", 0x889c731ceb1c7089),
+    ("factory_7.snd", 0x54f583a5c0edc2d4),
+    ("init_algo.snd", 0x39ae97c133decef7),
     // Re-recorded: Modal 2 step A's resonators (spec § Tests), then ADR 0058's gain,
     // then Task 18's DAMP make-up and relative silence (ADR 0056),
     // then the free ring on release (ADR 0062), then CLEAN's ACCURATE tan
     // and exact divides (#57), and STRING's out_gain 5.7 for it, then
     // CLEAN's k law and trims (ADR 0096).
-    ("init_modal.snd", 0x12099b1d30a46e52),
+    ("init_modal.snd", 0x765987bf0ff72ac6),
     // On the rig's second of saw (`common::rig`); re-recorded for TAPE's
     // `out_gain` (ADR 0063, TAPE Task 19), then its smoothstep note-on ramp
     // (#385), then CLEAN's ACCURATE tan, exact divides, k law and trims
     // (#57, ADR 0096), then PLAY's FADE release in LOOP (ADR 0170), then
     // AMP's release the one release a note and the fades' power (ADRs 0179,
     // 0182).
-    ("init_tape.snd", 0xcaf4315437e08679),
+    ("init_tape.snd", 0x622941b46488873f),
     // Factory 0's render: the stamp changes no sound.
-    ("library_1.snd", 0x2b0219df38902ede),
+    ("library_1.snd", 0x1cbfa2a144a266a5),
     // Factory 1's render: the Note changes no sound.
-    ("described_1.snd", 0x0e3d85b43ff9ccf9),
+    ("described_1.snd", 0x1bd3d1c2f05c4f8f),
     // On the rig's second of saw, at VA Task 10.
     ("init_va.snd", 0x3739e2ecc6befaf5),
 ];

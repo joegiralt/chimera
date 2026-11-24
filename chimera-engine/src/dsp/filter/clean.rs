@@ -12,6 +12,7 @@
 //! all-passes with the dry, and `G₁` takes the divide.
 
 use super::coef::{g_of, sat_c1};
+use super::fed::OpenCall;
 use super::level::{FilterMods, LevelRamp, LevelStage, level_gain};
 use super::{CLEAN_MODES, Fed, FilterMode, SUB, TapShape, g_at, ramps, step_to, tap_g_range};
 use crate::hw::BLOCK_SIZE;
@@ -90,6 +91,109 @@ struct Ends {
     g: f32,
     k: f32,
     pre: f32,
+}
+
+/// LP4's open top (#695): over CUTOFF's top third of an octave, from
+/// `FROM_HZ` to `TOP_HZ`, `g` lifts to `2^RISE` times itself, so the
+/// cascade opens toward Nyquist, where it passes everything; over the
+/// band's last quarter, where it lags under 20° at 15 kHz, the dry comes
+/// in, so fully open LP4 is its LEVEL'd input, bit for bit. Both are
+/// continuous in CUTOFF and ramp across the block as `g` does. Bank 2's
+/// (`fed`): with the door closed LP4 plays as it always has.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenTop {
+    lo: f32,
+    top: f32,
+    /// The lifted `g`s where the dry starts and at the top.
+    dry_from: f32,
+    dry_top: f32,
+}
+
+impl OpenTop {
+    pub const FROM_HZ: f32 = 15_874.01;
+    pub const TOP_HZ: f32 = 20_000.0;
+    /// Octaves `g` lifts by at the top.
+    pub const RISE: f32 = 4.0;
+    /// Where in the band the dry starts.
+    pub const DRY_FROM: f32 = 0.75;
+    /// The `k` the band damps to at its top: where `trim` reaches 1.
+    pub const K_OPEN: f32 = 0.5;
+
+    /// The band at `fs`: two `tan`s and two lifts, taken at compile time
+    /// for 48 kHz (`for_rate`); inlined, so another rate's is bank 2's.
+    #[inline(always)]
+    pub const fn at(fs: u32) -> OpenTop {
+        let (lo, top) = (
+            g_of(Self::FROM_HZ, fs as f32),
+            g_of(Self::TOP_HZ, fs as f32),
+        );
+        let t = OpenTop {
+            lo,
+            top,
+            dry_from: 0.0,
+            dry_top: 0.0,
+        };
+        OpenTop {
+            dry_from: t.lifted(lo + Self::DRY_FROM * (top - lo)),
+            dry_top: t.lifted(top),
+            ..t
+        }
+    }
+
+    const AT_48K: OpenTop = OpenTop::at(crate::hw::SAMPLE_RATE);
+
+    /// The band at `fs`: 48 kHz's constant, any other rate's taken.
+    #[inline(always)]
+    pub fn for_rate(fs: u32) -> OpenTop {
+        if fs == crate::hw::SAMPLE_RATE {
+            Self::AT_48K
+        } else {
+            Self::at(fs)
+        }
+    }
+
+    /// Where `g` lies in the band, 0 to 1.
+    #[inline(always)]
+    const fn u(&self, g: f32) -> f32 {
+        crate::dsp::clampf((g - self.lo) / (self.top - self.lo), 0.0, 1.0)
+    }
+
+    /// `k` under `K_OPEN` damped toward it as `u` rises through the band,
+    /// so a resonant peak the lift carries toward Nyquist fades instead
+    /// of ringing there (#1135's review, minor 4). The trim, linear in `k`
+    /// to `K_OPEN`, rises with it to 1 at the top, the dry's level; a `k`
+    /// past it, already untrimmed, is kept.
+    #[inline(always)]
+    fn damped(k: f32, u: f32) -> f32 {
+        k.max(k + (Self::K_OPEN - k) * u)
+    }
+
+    /// `g` lifted: itself under the band, `2^(RISE·u)` times itself in it.
+    #[inline(always)]
+    const fn lifted(&self, g: f32) -> f32 {
+        self.lifted_at(g, self.u(g))
+    }
+
+    /// `g` lifted at band position `u`.
+    #[inline(always)]
+    const fn lifted_at(&self, g: f32, u: f32) -> f32 {
+        if u == 0.0 {
+            g
+        } else {
+            g * crate::dsp::fast_exp2(Self::RISE * u)
+        }
+    }
+
+    /// The dry's weight at lifted `g`: 0 to `dry_from`, 1 at `dry_top`,
+    /// linear in the lifted `g` between.
+    #[inline(always)]
+    fn weight(&self, g: f32) -> f32 {
+        crate::dsp::clampf(
+            (g - self.dry_from) / (self.dry_top - self.dry_from),
+            0.0,
+            1.0,
+        )
+    }
 }
 
 /// The modes that run the second stage: the four-pole cascades.
@@ -175,7 +279,15 @@ impl Clean {
         match p.mode() {
             FilterMode::Lp6 => self.run::<0>(buf, r, t, mods.glide, mods.fb, fs),
             FilterMode::Lp12 => self.run::<1>(buf, r, t, mods.glide, mods.fb, fs),
-            FilterMode::Lp24 => self.run::<2>(buf, r, t, mods.glide, mods.fb, fs),
+            // Through its open top in bank 2 (#695); closed, the plain path,
+            // a held block on the moving loop: the same bits as `steady`'s
+            // (equal ends, `held`'s cascade `tick`'s arithmetic), and bank 1
+            // keeps no held copy for a path only the closed door plays.
+            FilterMode::Lp24 => {
+                if !self.open_top(buf, r, mods, fs) {
+                    self.closed_lp4(buf, r, t, mods.glide, mods.fb, fs)
+                }
+            }
             FilterMode::Bp12 => self.run::<3>(buf, r, t, mods.glide, mods.fb, fs),
             FilterMode::Bp24 => self.run::<4>(buf, r, t, mods.glide, mods.fb, fs),
             // DIRTY's HP2 isn't CLEAN's; were it handed one, HP4.
@@ -185,8 +297,12 @@ impl Clean {
             FilterMode::Notch => self.run::<6>(buf, r, t, mods.glide, mods.fb, fs),
             FilterMode::Phaser => self.run::<7>(buf, r, t, mods.glide, mods.fb, fs),
         }
-        // A NaN or infinite input poisons the states for good: start the
-        // next block from rest.
+        self.settle()
+    }
+
+    /// A block's end: a NaN or infinite input poisons the states for good,
+    /// so the next block starts from rest; LEVEL's clip.
+    fn settle(&mut self) -> Clip {
         let ap: f32 = self.ap.iter().sum();
         if !(self.s1[0] + self.s1[1] + self.s2[0] + self.s2[1] + ap + self.w).is_finite() {
             self.rest();
@@ -260,6 +376,50 @@ impl Clean {
         if !fb.on() {
             self.fbp = 0.0;
         }
+    }
+
+    /// LP4 with the door closed (#695): `run::<2>` less `steady`.
+    #[inline(always)]
+    fn closed_lp4(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        t: Option<TapShape>,
+        glide: bool,
+        fb: Fed,
+        fs: u32,
+    ) {
+        if t.is_none() && !fb.on() && glide && (r.g.0 != r.g.1 || r.k.0 != r.k.1) {
+            self.stepped::<2>(buf, r);
+        } else if !(fb.on() && self.fed_play(2, buf, r, t.as_ref(), fb, tap_g_range(fs))) {
+            self.moving::<2>(buf, r, t.as_ref());
+        }
+        if !fb.on() {
+            self.fbp = 0.0;
+        }
+    }
+
+    /// LP4's block through its open top, whole, in bank 2 (#695,
+    /// `fed::OpenTop::call`). False while the door is closed: the plain
+    /// path plays it.
+    #[inline(never)]
+    fn open_top(
+        &mut self,
+        buf: &mut [f32; BLOCK_SIZE],
+        r: Ramps,
+        mods: &FilterMods,
+        fs: u32,
+    ) -> bool {
+        super::fed::through(|d| {
+            (d.open)(OpenCall {
+                clean: self,
+                buf,
+                r,
+                mods,
+                fs,
+            })
+        })
+        .is_some()
     }
 
     /// FB's block (ADR 0190): `moving`'s arrays, built here, and the loop
@@ -583,6 +743,39 @@ mod tests {
             assert!((a - b).abs() <= 1e-6 * peak, "sample {i}: {a} vs {b}");
         }
     }
+    /// LP4 with the door closed plays `run::<2>`'s bits (#695): a held
+    /// block on the moving loop, glided or not, moving and RES 1 blocks.
+    #[test]
+    fn closed_lp4_is_run_to_the_bit() {
+        let saw = |b: usize| -> [f32; BLOCK_SIZE] {
+            core::array::from_fn(|i| 0.8 * (((b * BLOCK_SIZE + i) % 218) as f32 / 109.0 - 1.0))
+        };
+        let mut p = FilterParams::default();
+        for res in [0.0, 0.6, 1.0] {
+            for glide in [false, true] {
+                let (mut a, mut b) = (Clean::new(), Clean::new());
+                for blk in 0..12 {
+                    // Held, then a jump, then held again.
+                    (p.cutoff, p.resonance) = (
+                        if (4..8).contains(&blk) {
+                            6_000.0
+                        } else {
+                            700.0
+                        },
+                        res,
+                    );
+                    let (mut x, mut y) = (saw(blk), saw(blk));
+                    let r = a.ramps(&p, SAMPLE_RATE);
+                    a.run::<2>(&mut x, r, None, glide, Fed::OFF, SAMPLE_RATE);
+                    let r = b.ramps(&p, SAMPLE_RATE);
+                    b.closed_lp4(&mut y, r, None, glide, Fed::OFF, SAMPLE_RATE);
+                    let bits = |v: [f32; BLOCK_SIZE]| v.map(f32::to_bits);
+                    assert_eq!(bits(x), bits(y), "RES {res} glide {glide} block {blk}");
+                }
+            }
+        }
+    }
+
     /// `held`'s cascades a sample apart are `tick` a sample at a time, to
     /// the bit, states too: driven hard, so `sat_c1` bends, and at self-
     /// oscillation.
@@ -661,6 +854,123 @@ mod fed {
                     _ => self.tick::<7>(*s, &coef::<7>(gi, k[i], tr)),
                 };
                 fb.feed(&mut self.fbp, *s);
+            }
+        }
+    }
+}
+
+/// LP4's open top (#695), bank 2's through `FedDoor::open`: its own
+/// module, so it links in an S4 group (`clean::open`), not FB's in S0-S3.
+mod open {
+    use super::super::fed::OpenCall;
+    use super::super::{Fed, TapShape, g_at, ramps, tap_g_range};
+    use super::{CLEAN_MODES, Clean, OpenTop, Ramps, clean_k, coef, trim};
+    use crate::hw::BLOCK_SIZE;
+
+    impl OpenTop {
+        /// The door's one entry (#695): LP4's block on the raw ramps
+        /// `c.r`. A block whose `g` moves per sample (a tap, FB, or a
+        /// sweep that reaches the band) lifts, damps and weighs each
+        /// sample's `g` after the taps and FB (`moved`); a held or glided
+        /// one its ends, the dry mixed by their weights.
+        #[inline(never)]
+        pub(in crate::dsp::filter) fn call(c: OpenCall<'_, '_>) {
+            let OpenCall {
+                clean,
+                buf,
+                r,
+                mods,
+                fs,
+            } = c;
+            let top = OpenTop::for_rate(fs);
+            let gr = tap_g_range(fs);
+            let t = TapShape::new(mods, gr, clean_k);
+            let raw = r.g;
+            let sweeps = raw.0 != raw.1 && raw.0.max(raw.1) > top.lo;
+            if t.is_some() || mods.fb.on() || sweeps {
+                clean.moved(&top, buf, r, t.as_ref(), mods.fb, gr);
+                return;
+            }
+            let (u0, u1) = (top.u(raw.0), top.u(raw.1));
+            let r = Ramps {
+                g: (top.lifted(raw.0), top.lifted(raw.1)),
+                k: (OpenTop::damped(r.k.0, u0), OpenTop::damped(r.k.1, u1)),
+                ..r
+            };
+            let w = (top.weight(r.g.0), top.weight(r.g.1));
+            if w == (0.0, 0.0) {
+                clean.run::<2>(buf, r, None, mods.glide, Fed::OFF, fs);
+            } else {
+                let dry = *buf;
+                clean.run::<2>(buf, r, None, mods.glide, Fed::OFF, fs);
+                Clean::open(&dry, buf, w);
+            }
+        }
+    }
+
+    impl Clean {
+        /// LP4's moving block through its open top (#695): each sample's
+        /// `g` after the taps and FB lifted, its `k` damped and its dry
+        /// weighed, so modulation and sweeps reach the top (#1135's
+        /// review, I1). Under the band it is `moving::<2>`'s, or FB's
+        /// `fed`, bit for bit.
+        fn moved(
+            &mut self,
+            top: &OpenTop,
+            buf: &mut [f32; BLOCK_SIZE],
+            r: Ramps,
+            tap: Option<&TapShape>,
+            fb: Fed,
+            gr: (f32, f32),
+        ) {
+            let n = BLOCK_SIZE as f32;
+            let (g_step, k_step) = ((r.g.1 - r.g.0) / n, (r.k.1 - r.k.0) / n);
+            let (mut g, mut k) = ([0.0f32; BLOCK_SIZE], [0.0f32; BLOCK_SIZE]);
+            ramps(&mut g, &mut k, (r.g.0, g_step), (r.k.0, k_step), false);
+            if let Some(t) = tap {
+                t.apply(&mut g, &mut k);
+            }
+            let mode = CLEAN_MODES[2];
+            let tr = (trim(mode, r.k.0), trim(mode, r.k.1));
+            let t_step = (tr.1 - tr.0) / n;
+            let on = fb.on();
+            for (i, s) in buf.iter_mut().enumerate() {
+                let gi = if on {
+                    fb.g(g[i], i, self.fbp, gr)
+                } else {
+                    g[i]
+                };
+                // A tap or FB moving `g` up keeps the band's lift (the ramp's
+                // place in it), toward the dry; moving it down takes the band
+                // back as CUTOFF would, so it reaches as deep as under it.
+                let gb = g_at(r.g.0, g_step, i);
+                let u = top.u(gb.min(gi));
+                let x = *s;
+                *s = if u <= 0.0 {
+                    self.tick::<2>(x, &coef::<2>(gi, k[i], g_at(tr.0, t_step, i)))
+                } else {
+                    let (gl, ki) = (top.lifted_at(gi, u), OpenTop::damped(k[i], u));
+                    let w = top.weight(gl);
+                    self.tick::<2>(x, &coef::<2>(gl, ki, trim(mode, ki))) * (1.0 - w) + x * w
+                };
+                if on {
+                    fb.feed(&mut self.fbp, *s);
+                }
+            }
+            if !on {
+                self.fbp = 0.0;
+            }
+        }
+
+        /// LP4 near the top (#695): `wet·(1 − w) + dry·w`, `w` ramped
+        /// across the block as `g` is, landing on `w.1` on its last
+        /// sample; at 1, the dry exactly.
+        #[inline(always)]
+        fn open(dry: &[f32; BLOCK_SIZE], wet: &mut [f32; BLOCK_SIZE], w: (f32, f32)) {
+            let step = (w.1 - w.0) / BLOCK_SIZE as f32;
+            for (i, (y, &x)) in wet.iter_mut().zip(dry).enumerate() {
+                let wi = g_at(w.0, step, i);
+                *y = *y * (1.0 - wi) + x * wi;
             }
         }
     }

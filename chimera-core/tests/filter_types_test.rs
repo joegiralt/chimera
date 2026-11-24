@@ -22,7 +22,8 @@ use chimera_hal::BLOCK_SIZE;
 use common::Rig;
 use common::codec_util::{decode, encode, filter_payload, sound_file};
 use common::filter_ref::{
-    OSC_BAND_DB, clean_ref, fft, g_track, grid_input, mag_db, ramp_track, rms_db, trim_ref,
+    OSC_BAND_DB, clean_ref, fft, g_track, grid_input, mag_db, open_top_ref, open_u, ramp_track,
+    rms_db, trim_ref,
 };
 
 const SR: u32 = 48_000;
@@ -100,10 +101,34 @@ fn jump_error(mode: FilterMode, blocks: &[(f32, f32)]) -> f64 {
         g.extend(g_track(from.into(), fc.into(), FS.into()));
         let (k0, k1) = (clean_k(from_res), clean_k(res));
         k.extend(ramp_track(k0, k1));
-        // The trim ramps across the block as `k` does, end to end.
+        // The trim ramps across the block as `k` does, end to end; in LP4's
+        // open band it is the damped `k`'s.
         t.extend(ramp_track(trim_ref(mode, k0), trim_ref(mode, k1)));
     }
-    let r = clean_ref(&x, &g, &k, &t, mode);
+    // LP4's open top (#695): each sample's `g` lifted, `k` damped toward
+    // RES 0's, its dry weighed in.
+    let open = mode == FilterMode::Lp24;
+    let w: Vec<f64> = if open {
+        let mut w = vec![0.0; g.len()];
+        for i in 0..g.len() {
+            let u = open_u(g[i], FS.into());
+            if u > 0.0 {
+                (g[i], w[i]) = open_top_ref(g[i], u, FS.into());
+                let open = f64::from(chimera_core::dsp::filter::clean::OpenTop::K_OPEN);
+                k[i] = k[i].max(k[i] + (open - k[i]) * u);
+                t[i] = f64::from(trim_ref(mode, k[i] as f32));
+            }
+        }
+        w
+    } else {
+        vec![0.0; g.len()]
+    };
+    let r: Vec<f64> = clean_ref(&x, &g, &k, &t, mode)
+        .iter()
+        .zip(&x)
+        .zip(&w)
+        .map(|((&y, &x), &w)| y * (1.0 - w) + f64::from(x) * w)
+        .collect();
     let peak = r.iter().fold(0.0f64, |m, v| m.max(v.abs()));
     let err = y
         .iter()

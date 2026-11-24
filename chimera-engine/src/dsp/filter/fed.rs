@@ -12,7 +12,7 @@
 //! moving path: FB is off until the door opens.
 
 use super::Fed;
-use super::clean::Clean;
+use super::clean::{Clean, OpenTop, Ramps};
 use super::dirty::Dirty;
 use super::k2040::{K2040, voice};
 use super::ladder::Ladder;
@@ -27,6 +27,18 @@ pub type CleanFed = fn(&mut Clean, u8, &mut Buf, &Buf, &Buf, Pair, Fed, Pair);
 pub type DirtyFed = fn(&mut Dirty, u8, &mut Buf, &Buf, &Buf, Pair, Fed, Pair) -> f32;
 pub type LadderFed = fn(&mut Ladder, &mut Buf, &Buf, &Buf, super::ladder::FedMix, Fed, Pair);
 pub type K2040Fed = fn(&mut K2040, &mut Buf, &Buf, &Buf, Pair, Fed, Pair) -> Pair;
+/// CLEAN LP4's block through its open top (#695, `clean::OpenTop`), whole:
+/// its `g` lifted, a moving block's per sample after its taps and FB, the
+/// dry mixed; the taps' shape is built behind the door. `r` is the block's
+/// raw ramps, as the closed door plays them.
+pub struct OpenCall<'a, 'm> {
+    pub(super) clean: &'a mut Clean,
+    pub(super) buf: &'a mut Buf,
+    pub(super) r: Ramps,
+    pub(super) mods: &'a super::level::FilterMods<'m>,
+    pub(super) fs: u32,
+}
+pub type CleanOpen = fn(OpenCall<'_, '_>);
 
 /// The kernels' entries in the door's table.
 #[repr(C)]
@@ -36,6 +48,7 @@ pub struct FedDoor {
     pub ladder: LadderFed,
     pub rev2: K2040Fed,
     pub exp: K2040Fed,
+    pub open: CleanOpen,
 }
 
 impl FedDoor {
@@ -45,6 +58,7 @@ impl FedDoor {
         ladder: Ladder::fed,
         rev2: K2040::fed::<voice::Rev2>,
         exp: K2040::fed::<voice::Exp>,
+        open: OpenTop::call,
     };
 }
 

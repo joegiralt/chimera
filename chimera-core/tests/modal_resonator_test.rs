@@ -632,7 +632,8 @@ fn kink(out: &[f32]) -> f32 {
 /// Each step glides the chain's delay 2 samples a block (`DISP_SLEW`), so
 /// at BRIGHT 1 nothing clicks past the strike; at BRIGHT 0, where a step
 /// would show, the kinks stay within 3× a held STRUCTURE's (unglided,
-/// 4.2×).
+/// 4.2×). LP4 at 15 kHz, under its open top: fully open it passes the
+/// string's top octave (#695, ADR 0327), whose kinks are not the chain's.
 #[test]
 fn a_structure_step_at_g1_does_not_click() {
     let second = SR as usize / BLOCK_SIZE;
@@ -643,6 +644,7 @@ fn a_structure_step_at_g1_does_not_click() {
         p.modal.structure = 0.5;
         p.modal.bright = bright;
         p.modal.damp = 1.0;
+        p.filter.cutoff = 15_000.0;
         p.lfos[0].rate = 2.0;
         p.lfos[0].shape = chimera_core::dsp::lfo::LfoShape::Square as u8;
         let routed = play_voice_at(31, &p, &routes(addr, 127), 2 * second, &[]);

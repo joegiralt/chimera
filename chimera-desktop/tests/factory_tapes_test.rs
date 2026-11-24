@@ -425,7 +425,9 @@ fn factory_sounds_save_as_loaded() {
         // Re-pinned for the 0x001F map record (34 B a default map): only the map
         // record differs; the old layout still hashes to 0xEF0F_4F49.
         // ADR 0278: TINZ's sends re-voiced for the send taper.
-        assert_eq!(all.finish(), 0xB612_750D, "{} Sounds", r.sounds.len());
+        // ADR 0327: 18 sources re-rendered (their CRCs in each head), PLUCK
+        // HIT, PLUCK LOW and HARP HIT re-trimmed.
+        assert_eq!(all.finish(), 0xE49A_B3B1, "{} Sounds", r.sounds.len());
     } else {
         let absent = r.sources.iter().zip(built).filter(|(_, b)| b.is_none());
         let names: Vec<_> = absent.map(|(x, _)| x.name.as_str()).collect();

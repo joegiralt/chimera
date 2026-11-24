@@ -93,19 +93,19 @@ fn sounds() -> Vec<Sound> {
 
 /// Taken on main before the move (bc20ae7c), bank 1's own path.
 const BEFORE: &[u64] = &[
-    0xa5740946fc1344fd,
-    0xd5e9f3445e81d5de,
-    0x33898a23f5f362fa,
-    0x7e5886d3543041a3,
-    0x898a71c53977288e,
-    0x85d874a693bbc522,
-    0x9a0526a4b6fe7d7c,
+    0x5dbbd9934cb41307,
+    0x39cf14bdaf73360d,
+    0x69a89a9a526d3aba,
+    0x6d942e30bab3d7c1,
+    0xf68be0b5a42ed2f1,
+    0x16731b03a8558cb9,
+    0x53519f387585fa4a,
     0x0066615f9d116c31,
-    0x225fe1d97e44b25d,
+    0x56d87973969cd990,
     0x547570ece616094c,
-    0xc3f2e7b223030f63,
+    0x9b26bd5501773380,
     0x8bf931a905da35af,
-    0x1df6c5dafd6a0d0a, // #164: its ENV 3 → PITCH swoop ramps (ADR 0316)
+    0x215c8502144850ad, // #164: its ENV 3 → PITCH swoop ramps (ADR 0316)
 ];
 
 fn hashes() -> Vec<u64> {
@@ -126,7 +126,7 @@ fn algo_plays_as_before_the_move() {
     // not their DSP, differs.
     let mut before = BEFORE.to_vec();
     if cfg!(feature = "master-tape") {
-        (before[9], before[12]) = (0x5817_f5ef_944f_c7d2, 0x7764_9f79_f21b_1039);
+        (before[9], before[12]) = (0x5817_f5ef_944f_c7d2, 0x9043_b83d_761b_8ab6);
     }
     assert_eq!(h, before);
 }
@@ -163,7 +163,7 @@ fn decaying() -> Sound {
 }
 
 /// Taken on main before the move (5ec76841).
-const DECAYING_BEFORE: u64 = 0x87d5_2bb9_d182_925b;
+const DECAYING_BEFORE: u64 = 0xa487_c7fe_8e3c_e8bf;
 
 #[test]
 fn a_silent_op_lit_mid_decay_plays_as_before() {

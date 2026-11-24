@@ -474,11 +474,14 @@ ASSERT(__bank2_ui_door == 0x08100300, \"the UI's table at its slot\");",
     // file and the card's listing, reached from bank 2's `ui::midi`; an S4
     // group (S0-S3 is full).
     let maps = "    *(.text.*8midi_map3ctl* .rodata.*8midi_map3ctl*);\n";
+    // CLEAN LP4's open top (ADR 0327, `FedDoor::open`): `filter::clean::open`,
+    // the whole LP4 block it plays; an S4 group (S0-S3 is full on ORBIT).
+    let open_top = "    *(.text.*6filter5clean4open* .rodata.*6filter5clean4open*);\n";
     // TRON's run-out onset (#1126): `tape_engine::run_out`, called from
     // bank 2's TAPE render a block a note; an S4 group (S0-S3 is full).
     let tron = "    *(.text.*11tape_engine7run_out* .rodata.*11tape_engine7run_out*);\n";
     let s4 = format!(
-        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{panel}{kit_library}{maps}{tron}"
+        "{ed}{groups}{voices}{feel}{pointing}{notes}{meters}{duck}{dump}{delay_sync}{panel}{kit_library}{maps}{open_top}{tron}"
     );
     fs::write(
         out_dir.join("bank2.x"),

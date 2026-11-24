@@ -129,6 +129,33 @@ pub fn g_track(from_hz: f64, to_hz: f64, fs: f64) -> Vec<f64> {
     )
 }
 
+/// `g`'s place in LP4's open band (#695, `OpenTop`), 0 to 1.
+pub fn open_u(g: f64, fs: f64) -> f64 {
+    use chimera_core::dsp::filter::clean::OpenTop as T;
+    let (lo, top) = (
+        f64::from(g_of(T::FROM_HZ, fs as f32)),
+        f64::from(g_of(T::TOP_HZ, fs as f32)),
+    );
+    f64::from(clampf(((g - lo) / (top - lo)) as f32, 0.0, 1.0))
+}
+
+/// LP4's open top at `g` and band place `u` (#695, `OpenTop`), in f64 from
+/// its constants: `g` lifted `2^(RISE·u)`, and the dry's weight, linear in
+/// the lifted `g` from `DRY_FROM` of the band to its top.
+pub fn open_top_ref(g: f64, u: f64, fs: f64) -> (f64, f64) {
+    use chimera_core::dsp::filter::clean::OpenTop as T;
+    let (lo, top) = (
+        f64::from(g_of(T::FROM_HZ, fs as f32)),
+        f64::from(g_of(T::TOP_HZ, fs as f32)),
+    );
+    let lift = |g: f64, u: f64| g * (f64::from(T::RISE) * u).exp2();
+    let at = lo + f64::from(T::DRY_FROM) * (top - lo);
+    let (from, to) = (lift(at, open_u(at, fs)), lift(top, 1.0));
+    let l = lift(g, u);
+    let w = f64::from(clampf(((l - from) / (to - from)) as f32, 0.0, 1.0));
+    (l, w)
+}
+
 /// One block of a coefficient CLEAN ramps from `a` to `b`, sample by sample.
 pub fn ramp_track(a: f32, b: f32) -> Vec<f64> {
     let step = (b - a) / BLOCK_SIZE as f32;

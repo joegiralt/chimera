@@ -20,7 +20,7 @@ const P11: f64 = P9 * PI * PI;
 /// adds one at 0.497, where it reads 6.7 (21.7 kHz).
 #[inline(always)]
 #[allow(clippy::excessive_precision)] // stmlib's digits, as written
-pub fn tan_accurate(f: f32) -> f32 {
+pub const fn tan_accurate(f: f32) -> f32 {
     const A: f32 = (3.333314036e-01f32 as f64 * P3) as f32;
     const B: f32 = (1.333923995e-01f32 as f64 * P5) as f32;
     const C: f32 = (5.33740603e-02f32 as f64 * P7) as f32;
@@ -34,7 +34,7 @@ pub fn tan_accurate(f: f32) -> f32 {
 /// The clamp is ours (stmlib's `FREQUENCY_EXACT` uses the same 0.497); a
 /// NaN cutoff lands on it too.
 #[inline(always)]
-pub fn g_of(fc: f32, fs: f32) -> f32 {
+pub const fn g_of(fc: f32, fs: f32) -> f32 {
     tan_accurate((fc / fs).min(0.497))
 }
 
