@@ -39,7 +39,7 @@ const P1: PartId = PartId::ALL[0];
 /// (TONAL OFF), on twice rev V's budget: these pin how hits play, eight at
 /// once (`PLAY_BUDGET`).
 fn rig(kit: &Kit) -> (MutexGuard<'static, KitWriter>, InstRig) {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let r = drum_rig(&mut w, PLAY_BUDGET, &Kit::DEFAULT, kit);
     (w, r)
 }

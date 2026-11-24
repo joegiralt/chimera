@@ -75,7 +75,7 @@ fn kit(r: PadRoutes) -> Kit {
 }
 
 fn rig(kit: &Kit, part: &ParamSnapshot) -> (MutexGuard<'static, KitWriter>, InstRig) {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     for p in PartId::ALL {
         w.publish(p, &Kit::DEFAULT);
         let _ = w.take_hit(p);

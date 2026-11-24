@@ -195,7 +195,7 @@ fn a_volume_route_bills_mods_not_a_move() {
 
 #[test]
 fn the_view_carries_each_parts_bill() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let kit = pad5_on(FilterKind::Sem);
     let (p1, p2) = (PartId::ALL[0], PartId::ALL[1]);
     w.publish(p1, &kit);
@@ -265,7 +265,7 @@ fn reading(n: PadId) -> Option<u32> {
 /// booked at least its unit reading × 1.1 (ADR 0056's margin).
 #[test]
 fn every_pad_books_its_reading() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     for (n, read) in READ {
         let mut r = drum_rig(&mut w, &Kit::DEFAULT);
         let k = key(pad(n));
@@ -332,7 +332,7 @@ fn a_part_bills_its_costliest_machine() {
 /// one steal can't make room for are refused.
 #[test]
 fn init_drum_roll_stays_in_budget() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     let budget = REV_V_BUDGET;
     let gap = (0.06 * common::SR as f32) as usize / chimera_hal::BLOCK_SIZE;
@@ -421,7 +421,7 @@ fn booked(r: &common::InstRig, key: u8) -> Cost {
 /// never under what a fresh snapshot bills.
 #[test]
 fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let kicks = kicks();
     let mut r = drum_rig(&mut w, &kicks);
     // Pad 2's KICK: the block's Part bills are worked out on the KICKs.
@@ -454,7 +454,7 @@ fn a_pad_switched_before_the_next_snapshot_bills_its_machine() {
 /// keeps LADDER's bill for the rest of its ring, never CLEAN's (#977).
 #[test]
 fn a_ringing_hit_bills_the_filter_it_runs() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let ladder = pad5_on(FilterKind::Ladder);
     let mut r = drum_rig(&mut w, &ladder);
     r.note_on_vel(0, key(pad(5)), 127);
@@ -474,7 +474,7 @@ fn a_ringing_hit_bills_the_filter_it_runs() {
 fn a_followed_publish_books_its_hits_decode_and_glide() {
     use chimera_core::dsp::Hz;
     use chimera_core::dsp::drum::engine::{FOLLOW_DECODE_COST, FOLLOW_GLIDE_COST};
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     r.note_on_vel(0, key(pad(5)), 127);
     r.render(2);
@@ -502,7 +502,7 @@ fn gliding(kind: FilterKind) -> Cost {
 #[test]
 fn a_landed_glide_books_nothing() {
     use chimera_core::dsp::Hz;
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     r.note_on_vel(0, key(pad(10)), 127);
     r.render(2);
@@ -545,7 +545,7 @@ fn route(s: &mut PadSound, i: usize, src: RouteSource, dest: RouteDest, a: i8) {
 /// books less its follow (`VoiceSlot::glide`) as struck, two blocks into
 /// the glide, and once the glide has landed.
 fn rebooked(n: u8, struck: &Kit, then: &Kit) -> [Cost; 3] {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, struck);
     let k = key(pad(n));
     let own = |r: &common::InstRig| {
@@ -614,7 +614,7 @@ fn a_hit_whose_filter_route_rises_books_its_moving_path() {
 /// 1's kit, unpublished since the strike: no follow billed (#962).
 #[test]
 fn a_stolen_hit_follows_its_own_parts_kit() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let budget = chimera_core::hw::SampleBudget::for_cpu(u32::MAX);
     let mut r = common::drum::drum_rig(&mut w, budget, &Kit::DEFAULT, &Kit::DEFAULT);
     // The other Parts' kits a publish off Part 1's, so reading theirs
@@ -712,7 +712,7 @@ fn hat_after_kicks(w: &mut KitWriter, n: usize) -> (bool, u32) {
 /// it is refused, as the one tail a hit may steal frees too little.
 #[test]
 fn a_hat_among_kick_tails_on_rev_v() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     assert_eq!(hat_after_kicks(&mut w, 4), (true, 0));
     assert_eq!(hat_after_kicks(&mut w, 8), (false, 1));
 }
@@ -727,7 +727,7 @@ fn a_hat_among_kick_tails_on_rev_v() {
 /// pad is counted refused either way.
 #[test]
 fn twelve_pads_a_block_apart_on_rev_v() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     let mut heard = [false; 12];
     let (mut chokes, mut refusals) = (0, 0);
@@ -775,7 +775,7 @@ fn twelve_pads_a_block_apart_on_rev_v() {
 /// ringing KICK is.
 #[test]
 fn the_load_net_sheds_only_a_sounding_voice() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, &Kit::DEFAULT);
     r.note_on_vel(0, key(pad(8)), 127);
     r.render(SR_BLOCKS / 2);
@@ -872,7 +872,7 @@ fn at(v: u8) -> KnobValue {
 /// spent; at BUMP 0 (INIT) its plateau from the strike.
 #[test]
 fn a_bumped_cowbell_bills_its_head_then_its_plateau() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let bell = key(pad(11));
     let mut k = Kit::DEFAULT;
     k.pad_mut(pad(11)).knobs_mut().set(Knob::B, at(127));
@@ -891,7 +891,7 @@ fn a_bumped_cowbell_bills_its_head_then_its_plateau() {
 /// (estimated 1,300) until the sweep is spent, then its plateau (600).
 #[test]
 fn a_swept_impulse_bills_its_sweep_then_its_plateau() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let imp = key(pad(3));
     let mut k = Kit::DEFAULT;
     k.pad_mut(pad(3)).knobs_mut().set(Knob::B, at(127));
@@ -912,7 +912,7 @@ fn a_swept_impulse_bills_its_sweep_then_its_plateau() {
 /// pending the unit (ADR 0287).
 #[test]
 fn a_floored_impulse_bills_its_floor_and_its_sweep() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut k = Kit::DEFAULT;
     k.set_tonal(Tonal::Pad(pad(3)));
     let knobs = k.pad_mut(pad(3)).knobs_mut();
@@ -948,7 +948,7 @@ fn a_floored_impulse_bills_its_floor_and_its_sweep() {
 /// though the kit's bill no longer folds the pad.
 #[test]
 fn a_ringing_hit_whose_pad_turns_none_keeps_its_bill() {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let ladder = pad5_on(FilterKind::Ladder);
     let mut r = drum_rig(&mut w, &ladder);
     r.note_on_vel(0, key(pad(5)), 127);
@@ -971,7 +971,7 @@ fn a_ringing_hit_whose_pad_turns_none_keeps_its_bill() {
 
 /// The hits Part 1 holds after `n` STACK KICKs a block apart on rev V.
 fn kicks_held(kit: &Kit, n: usize) -> usize {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     let mut r = drum_rig(&mut w, kit);
     for _ in 0..n {
         r.note_on_vel(0, key(pad(1)), 127);

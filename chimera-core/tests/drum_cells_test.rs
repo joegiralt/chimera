@@ -25,9 +25,13 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 /// The one `KitWriter`, shared by the tests that publish.
 fn writer() -> MutexGuard<'static, KitWriter> {
     static W: OnceLock<Mutex<KitWriter>> = OnceLock::new();
-    W.get_or_init(|| Mutex::new(KitWriter::take().expect("the kit writer, once")))
+    let mut w = W
+        .get_or_init(|| Mutex::new(KitWriter::take().expect("the kit writer, once")))
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(|e| e.into_inner());
+    // The process's one view, as at boot for each test (#1138).
+    w.reset();
+    w
 }
 
 const P1: PartId = PartId::ALL[0];

@@ -22,6 +22,17 @@ pub const REV_V_BUDGET: SampleBudget = SampleBudget::for_cpu(CPU_HZ_REV_V);
 /// which `drum_bill_test` pins (#951).
 pub const PLAY_BUDGET: SampleBudget = SampleBudget::for_cpu(2 * CPU_HZ_REV_V);
 
+/// `writer` locked for one test, the view reset to boot: the tests in a
+/// binary share the process's one view, and each starts from the same one
+/// whatever ran before it (#1138).
+pub fn locked(
+    writer: &'static std::sync::Mutex<KitWriter>,
+) -> std::sync::MutexGuard<'static, KitWriter> {
+    let mut w = writer.lock().unwrap_or_else(|e| e.into_inner());
+    w.reset();
+    w
+}
+
 /// A rig on `budget` whose Part 1 (channel 1) is DRUM playing `kit`, the
 /// other Parts on channel 16 playing `others`; every Part's struck pads
 /// taken.

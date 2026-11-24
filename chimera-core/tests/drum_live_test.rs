@@ -75,7 +75,7 @@ fn kit() -> Kit {
 /// The writer, every Part on `Kit::DEFAULT` but Part 1 on `kit`; Part 1
 /// (channel 1) DRUM, Part 2 (channel 2) ALGO, the rest on channel 16.
 fn rig(kit: &Kit) -> (MutexGuard<'static, KitWriter>, InstRig) {
-    let mut w = WRITER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut w = common::drum::locked(&WRITER);
     for p in PartId::ALL {
         w.publish(p, &Kit::DEFAULT);
         let _ = w.take_hit(p);

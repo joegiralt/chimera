@@ -216,6 +216,25 @@ impl KitWriter {
         Some(KitWriter { _once: () })
     }
 
+    /// Every Part's view as at boot: no kit published, no hit, no seed
+    /// drawn. The host tests share the process's one view; each starts
+    /// here, so none sees what an earlier one left (#1138). Never linked
+    /// in the firmware, which boots to it.
+    pub fn reset(&mut self) {
+        for v in &KIT_VIEW.parts {
+            v.seq.store(0, Ordering::Relaxed);
+            v.tonal.store(0, Ordering::Relaxed);
+            v.hit.store(0, Ordering::Relaxed);
+            v.struck.store(0, Ordering::Relaxed);
+            v.sounding.store(0, Ordering::Relaxed);
+            v.seed.store(0, Ordering::Relaxed);
+            v.bill.store(0, Ordering::Relaxed);
+            for a in v.slots.iter().flatten().flatten() {
+                a.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
     /// `kit` as `part`'s, if it changed: one publish an edit. TONAL is
     /// stored apart from the pads' slots each publish, the bill (the pads'
     /// alone) as they change: a hit may play its first block on the last
