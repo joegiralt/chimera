@@ -66,6 +66,17 @@ fn old_machine_sounds_render_bit_identically() {
     let mut checked = 0;
     for c in cases() {
         let Some(b) = source(&c.source) else {
+            assert!(
+                ABSENT_OK.contains(&c.source.as_str()),
+                "{}: source {} is missing and not one the public tree may lack",
+                c.name,
+                c.source
+            );
+            assert!(
+                c.source != "VOICE AH" || !cc0_present(),
+                "{}: VOICE AH's CC0 original is here but did not load",
+                c.name
+            );
             eprintln!("{}: its CC0 original is absent, skipped", c.name);
             continue;
         };
@@ -78,7 +89,19 @@ fn old_machine_sounds_render_bit_identically() {
         }
         checked += 1;
     }
-    assert!(checked >= 45, "{checked}");
+    // 46 with every original, 44 on the public tree (no VOICE AH).
+    assert!(checked >= if cc0_present() { 46 } else { 44 }, "{checked}");
+}
+
+/// Sources a tree may lack: VOICE AH's CC0 recording is not in the public
+/// tree, and KIT 16 is out of the recipes (#779).
+const ABSENT_OK: [&str; 2] = ["VOICE AH", "KIT 16"];
+
+/// The full tree's marker: VOICE AH's CC0 recording is on this machine.
+fn cc0_present() -> bool {
+    chimera_desktop::factory_tapes::originals()
+        .join("Female-vibrato-1.wav")
+        .exists()
 }
 
 /// Re-trimmed for their brighter sources (ADR 0327).
@@ -96,6 +119,10 @@ fn factory_sounds_on_play_render_as_before() {
             continue;
         };
         let Some((s, b)) = factory(name) else {
+            assert!(
+                name.starts_with("VOICE ") && !cc0_present(),
+                "{name}: missing, and not a VOICE AH Sound on a tree without its original"
+            );
             continue;
         };
         let rebuilt = match s.params.tape.machine {
@@ -112,7 +139,8 @@ fn factory_sounds_on_play_render_as_before() {
         );
         checked += 1;
     }
-    assert!(checked >= 23, "{checked}");
+    // 23 with every original, 22 on the public tree (no VOICE LOOP).
+    assert!(checked >= if cc0_present() { 23 } else { 22 }, "{checked}");
 }
 
 /// What each old machine loads as: a factory Sound as its recipe now
