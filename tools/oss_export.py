@@ -41,8 +41,8 @@ EXCLUDE_PREFIXES = (
     "editor/dist/",
 )
 EXCLUDE_DIRS = {".claude", ".superpowers"}
-# Build output.
-EXCLUDE_FILES = {"chimera.bin", "chimera.bk2", "chimera.map"}
+# Build output, and the private audit against stock (it grades someone else's firmware).
+EXCLUDE_FILES = {"chimera.bin", "chimera.bk2", "chimera.map", "docs/parity.md"}
 EXCLUDE_SUFFIXES = (".elf", ".bk2")
 # Published although under an excluded prefix.
 KEEP = set()

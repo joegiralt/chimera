@@ -61,12 +61,12 @@ fn reply_bytes_golden() {
     let got = drain(&ring);
     assert_eq!(got.len(), 15);
     assert_eq!(got, golden());
-    // The workspace is 0.3.0 today: the bytes in full.
-    if env!("CARGO_PKG_VERSION") == "0.3.0" {
+    // The workspace is 0.4.0 today: the bytes in full.
+    if env!("CARGO_PKG_VERSION") == "0.4.0" {
         assert_eq!(
             got,
             [
-                0xF0, 0x7E, 0x00, 0x06, 0x02, 0x7D, 0x43, 0x48, 0x01, 0x00, 0x00, 0x03, 0x00, 0x00,
+                0xF0, 0x7E, 0x00, 0x06, 0x02, 0x7D, 0x43, 0x48, 0x01, 0x00, 0x00, 0x04, 0x00, 0x00,
                 0xF7
             ]
         );

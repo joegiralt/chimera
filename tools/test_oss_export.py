@@ -41,6 +41,7 @@ class Private(unittest.TestCase):
             "chimera.bin",
             "target/chimera.bk2",
             "tools/factory-sounds/private/p.toml",
+            "docs/parity.md",
         ):
             self.assertTrue(oss.private(p), p)
 

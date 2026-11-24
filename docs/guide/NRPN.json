@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "firmware": "0.3.0",
+  "firmware": "0.4.0",
   "cells": [
     {
       "section": "ALGO",

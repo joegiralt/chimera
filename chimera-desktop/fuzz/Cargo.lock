@@ -176,7 +176,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "chimera-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-engine",
  "chimera-hal",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-hal",
  "chimera-image",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-hal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-midi",
  "embedded-graphics-core",
@@ -238,25 +238,25 @@ dependencies = [
 
 [[package]]
 name = "chimera-image"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "chimera-midi"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "usb-device",
 ]
 
 [[package]]
 name = "chimera-theory"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "chimera-waves"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libm",
 ]

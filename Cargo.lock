@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-board"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-fat",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-circuits"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-engine",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-engine",
  "chimera-hal",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-fat"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-hal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-midi",
  "embedded-graphics-core",
@@ -355,11 +355,11 @@ dependencies = [
 
 [[package]]
 name = "chimera-image"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "chimera-midi"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "proptest",
  "usb-device",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-screen"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-core",
  "chimera-hal",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-stm32"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-board",
  "chimera-core",
@@ -394,7 +394,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-theory"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "libm",
  "proptest",
@@ -402,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-utils"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-circuits",
  "chimera-core",
@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "chimera-waves"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chimera-waves",
  "libm",
