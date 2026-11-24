@@ -37,6 +37,7 @@ pub mod machine;
 pub mod oneshot;
 pub mod params;
 pub mod read;
+pub mod run_out;
 pub mod scrub;
 #[cfg(feature = "tape")]
 pub mod span;
@@ -2226,11 +2227,14 @@ impl TapeDeck {
             }
         } else {
             self.render_heads(out, reads, (p, first), sample_rate);
+            // The gain's fall a sample before the tape ran out this block.
+            let mut was = None;
             if let TapeState::Rolling(left) = self.tape.state() {
                 // TRON: the tape runs out, a 2 ms fall.
                 let left = left.saturating_sub(BLOCK_SIZE as u32);
                 self.tape = if left == 0 {
                     let k = libm::expf(-1.0 / (tron::RUN_OUT_S * sample_rate as f32));
+                    was = Some(self.rel_k);
                     self.rel_k = self.rel_k.min(k);
                     Tape::OUT
                 } else {
@@ -2240,9 +2244,13 @@ impl TapeDeck {
             if self.rel_k != 1.0 {
                 // WALK's FADE after note-off: TRON's one-pole release.
                 let (mut g, k) = (self.rel, self.rel_k);
-                for y in out.iter_mut() {
-                    *y *= g;
-                    g *= k;
+                if let Some(was) = was {
+                    g = run_out::onset(out, g, (was, k));
+                } else {
+                    for y in out.iter_mut() {
+                        *y *= g;
+                        g *= k;
+                    }
                 }
                 self.rel = g;
                 if g < tron::TRON_FLOOR {

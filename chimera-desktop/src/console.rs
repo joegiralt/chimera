@@ -29,6 +29,14 @@ struct Client {
 pub struct SocketConsole {
     listener: TcpListener,
     client: Option<Client>,
+    /// The clock an answer's deadlines read: the wall's, or a test's.
+    clock: fn() -> Ms,
+}
+
+/// Milliseconds since the console's first read of it.
+fn wall_ms() -> Ms {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    Ms(EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u32)
 }
 
 /// A loopback socket address, or why not: the console can `rm`, `put`
@@ -63,6 +71,7 @@ impl SocketConsole {
         Ok(SocketConsole {
             listener,
             client: None,
+            clock: wall_ms,
         })
     }
 
@@ -120,7 +129,7 @@ impl SocketConsole {
             match c.stream.read(&mut byte) {
                 Ok(1) => {
                     if let Some(req) = c.line.push(byte[0]) {
-                        let out = &mut StreamOut::new(&mut c.stream);
+                        let out = &mut StreamOut::new(&mut c.stream, self.clock);
                         if answer(req, unit, out).is_err() {
                             self.client = None;
                         }
@@ -201,27 +210,23 @@ impl Unit for DeskUnit<'_> {
 /// until its `AnswerClock` expires; any other failure means the client left.
 struct StreamOut<'a> {
     s: &'a mut TcpStream,
-    epoch: Instant,
+    now: fn() -> Ms,
     clock: AnswerClock,
 }
 
 impl<'a> StreamOut<'a> {
-    fn new(s: &'a mut TcpStream) -> Self {
+    fn new(s: &'a mut TcpStream, now: fn() -> Ms) -> Self {
         StreamOut {
             s,
-            epoch: Instant::now(),
-            clock: AnswerClock::start(Ms(0)),
+            now,
+            clock: AnswerClock::start(now()),
         }
-    }
-
-    fn now(&self) -> Ms {
-        Ms(self.epoch.elapsed().as_millis() as u32)
     }
 }
 
 impl Out for StreamOut<'_> {
     fn now(&self) -> Ms {
-        StreamOut::now(self)
+        (self.now)()
     }
 
     fn put(&mut self, mut bytes: &[u8]) -> Result<(), Stalled> {
@@ -230,10 +235,12 @@ impl Out for StreamOut<'_> {
                 Ok(0) => return Err(Stalled),
                 Ok(n) => {
                     bytes = &bytes[n..];
-                    self.clock.progress(self.now());
+                    self.clock.progress((self.now)());
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(e) if e.kind() == ErrorKind::WouldBlock && !self.clock.expired(self.now()) => {
+                Err(e)
+                    if e.kind() == ErrorKind::WouldBlock && !self.clock.expired((self.now)()) =>
+                {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(_) => return Err(Stalled),
@@ -246,12 +253,14 @@ impl Out for StreamOut<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chimera_core::console::{ANSWER_MS, STALL_MS};
     use chimera_core::ui::theme;
     use chimera_core::ui::theme_settings::{Accent, Palette, ThemeSettings, palette};
     use chimera_hal::FB_SIZE;
     use embedded_graphics_core::pixelcolor::raw::{RawData, RawU16};
     use std::io::{Read, Write};
     use std::net::TcpStream;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{Duration, Instant};
 
     fn client(con: &SocketConsole) -> TcpStream {
@@ -472,12 +481,22 @@ mod tests {
         assert!(read_until_terminal(&mut new).ends_with("OK\n"));
     }
 
+    /// The stall test's clock: a millisecond a read, however loaded the
+    /// machine (#1120).
+    static TICKS: AtomicU32 = AtomicU32::new(0);
+
+    fn tick_ms() -> Ms {
+        Ms(TICKS.fetch_add(1, Ordering::Relaxed))
+    }
+
     #[test]
     fn a_client_that_stops_reading_stalls_a_shot_in_250_ms() {
         // The client never reads. Loopback buffers hold some shots; ask for
-        // shots until one answer can't go out, then time that one.
+        // shots until the shell drops the client, then read that answer's
+        // time on the shell's clock.
         let (ui, fb, pal) = fb_unit();
         let mut con = SocketConsole::bind("127.0.0.1:0").unwrap();
+        con.clock = tick_ms;
         let mut c = client(&con);
         let mut unit = DeskUnit {
             hands: None,
@@ -491,15 +510,15 @@ mod tests {
         let mut stalled = None;
         for _ in 0..200 {
             c.write_all(b"shot\n").unwrap();
-            let t = Instant::now();
+            let t = TICKS.load(Ordering::Relaxed);
             serve_until_answered(&mut con, &mut unit);
-            if t.elapsed() >= Duration::from_millis(250) {
-                stalled = Some(t.elapsed());
+            if con.client.is_none() {
+                stalled = Some(TICKS.load(Ordering::Relaxed) - t);
                 break;
             }
         }
         let took = stalled.expect("a reader that never reads stalls a shot");
-        assert!(took < Duration::from_millis(1500), "{took:?}");
+        assert!((STALL_MS..ANSWER_MS).contains(&took), "{took} ms");
         c.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         assert!(
             c.read_to_end(&mut Vec::new()).is_ok(),

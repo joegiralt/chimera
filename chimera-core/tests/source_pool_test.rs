@@ -7,7 +7,6 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use chimera_core::name::SoundName;
 use chimera_core::params::EngineType;
@@ -920,36 +919,25 @@ fn pass_one_counts_the_whole_arena() {
             tok.store_sounding(old.bit());
             tok
         });
-        let stop: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
-        let thread = match (case, audio) {
-            // The audio: the voice holds the source until the load's
-            // epoch kills it, every block answering the gate.
-            ("fades", Some(mut tok)) => {
-                q.set_gate_clock(now_ms);
-                let at = link.epoch();
-                Some(std::thread::spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
-                        let _ = tok.begin_block();
-                        let killed = link.epoch() != at;
-                        tok.store_sounding(if killed { 0 } else { old.bit() });
-                        if killed {
-                            link.ack(link.epoch());
-                        }
-                        std::thread::sleep(std::time::Duration::from_micros(200));
-                    }
-                }))
-            }
-            _ => None,
-        };
+        // The audio: the voice holds the source until the load's epoch
+        // kills it, a block each read of the UI's clock, so the load's
+        // waits never race a thread (#1118).
+        if let ("fades", Some(tok)) = (case, audio) {
+            *FADES.lock().unwrap() = Some(SlowAudio {
+                tok,
+                link,
+                old,
+                at: link.epoch(),
+                ms: 0,
+                period: 1,
+            });
+            q.set_gate_clock(fades_ms);
+        }
         let vol = s.mount().unwrap();
         let id = ProjectId::new(1).unwrap();
         let go = ReplaceGuard::check(&q, t, ProjectSource::File { id, vol })
             .unwrap_or_else(|n| n.into_pending().anyway(&q));
         let out = load_project(&mut Card::new(), &mut s, &mut q, go, link);
-        stop.store(true, Ordering::Relaxed);
-        if let Some(h) = thread {
-            h.join().unwrap();
-        }
         assert!(out.swap.is_some(), "{case}: always published");
         if case == "stuck" {
             assert_eq!(out.note, Some(ProjectNote::Busy(Subject::File(id))));
@@ -1053,26 +1041,40 @@ fn a_stalled_audio_refuses_untouched() {
 }
 
 /// The audio of `a_long_audio_period_still_loads`: a block every 200 ms
-/// of the UI's clock, as a long desktop buffer renders them.
+/// of the UI's clock, as a long desktop buffer renders them; of
+/// `pass_one_counts_the_whole_arena`'s `fades`, a block every read.
 struct SlowAudio {
     tok: AudioToken,
     link: &'static LoadLink,
     old: SourceId,
     at: u32,
     ms: u32,
+    /// UI clock ms a block.
+    period: u32,
 }
 
-static SLOW: std::sync::Mutex<Option<SlowAudio>> = std::sync::Mutex::new(None);
+type AudioCell = std::sync::Mutex<Option<SlowAudio>>;
+
+static SLOW: AudioCell = std::sync::Mutex::new(None);
+static FADES: AudioCell = std::sync::Mutex::new(None);
 
 const SLOW_PERIOD_MS: u32 = 200;
 
-/// The UI's clock: a millisecond a read, and a block of the slow audio
-/// each `SLOW_PERIOD_MS`. Its voice holds the old source until the kill.
 fn slow_ms() -> u32 {
-    let mut g = SLOW.lock().unwrap();
-    let a = g.as_mut().expect("the slow audio");
+    clocked(&SLOW)
+}
+
+fn fades_ms() -> u32 {
+    clocked(&FADES)
+}
+
+/// The UI's clock: a millisecond a read, and a block of `cell`'s audio
+/// each `period`. Its voice holds the old source until the kill.
+fn clocked(cell: &AudioCell) -> u32 {
+    let mut g = cell.lock().unwrap();
+    let a = g.as_mut().expect("the clocked audio");
     a.ms += 1;
-    if a.ms.is_multiple_of(SLOW_PERIOD_MS) {
+    if a.ms.is_multiple_of(a.period) {
         let _ = a.tok.begin_block();
         let killed = a.link.epoch() != a.at;
         a.tok.store_sounding(if killed { 0 } else { a.old.bit() });
@@ -1104,6 +1106,7 @@ fn a_long_audio_period_still_loads() {
         old,
         at: link.epoch(),
         ms: 1,
+        period: SLOW_PERIOD_MS,
     });
     q.set_gate_clock(slow_ms);
     let vol = s.mount().unwrap();
@@ -1115,14 +1118,6 @@ fn a_long_audio_period_still_loads() {
     assert_eq!(q.meta().name(), src.meta().name());
     assert_eq!(q.pool().find_source(sref(99, 0)), None, "retired");
     assert_eq!(q.pool().sound_count(), src.pool().sound_count());
-}
-
-/// The UI loop's clock for a gate's wait, in ms.
-fn now_ms() -> u32 {
-    static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    T0.get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u32
 }
 
 /// A small source at offset 0 and a large one above it, both retired, the

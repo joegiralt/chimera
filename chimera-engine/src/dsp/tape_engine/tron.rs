@@ -13,6 +13,7 @@ use crate::dsp::algo::math::{clampf, exp2};
 /// SIZE 1's tape: an M400 strip.
 pub const TRON_LEN_MAX_S: f32 = 8.0;
 /// The run-out's fall, a one-pole: 2 ms, so a run-out ends within 20 ms.
+/// Its first block eases into it (`run_out::onset`).
 pub const RUN_OUT_S: f32 = 0.002;
 /// Under −80 dB a released note ends.
 pub const TRON_FLOOR: f32 = 1e-4;

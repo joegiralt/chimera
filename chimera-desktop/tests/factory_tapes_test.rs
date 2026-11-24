@@ -336,6 +336,55 @@ fn scrub_take_that_turns_is_click_free() {
     }
 }
 
+/// WALK FORWARD with TRON on, as `factory-tapes qa` plays it (#1126): a
+/// short source goes round until the 8 s tape runs out, and the run-out
+/// adds no click the source played straight hasn't got.
+#[test]
+fn tron_runs_out_click_free() {
+    use chimera_core::dsp::tape_engine::StretchType;
+    use chimera_desktop::factory_tapes::pitch;
+    use chimera_desktop::listen::{CLICK_RATIO, Way, qa_takes, render, root_note, take_starts};
+    let (r, built) = set();
+    for name in ["EPIANO C4", "TX BASS C2"] {
+        let b = r
+            .sources
+            .iter()
+            .zip(built)
+            .find(|(s, _)| s.name.as_str() == name)
+            .and_then(|(_, b)| b.as_ref())
+            .unwrap();
+        let (h, p) = (held(b), pitch(&b.head));
+        let one = Way::One.script(TapeModel::Walk);
+        let straight = render(
+            Way::One.base(TapeModel::Walk, StretchType::Mono),
+            &h,
+            p,
+            root_note(p),
+            &one,
+        );
+        let own = qa_takes(
+            &straight[..straight.len().min(48_000 * 5 / 2)],
+            &take_starts(&one),
+        )
+        .click_ratio;
+        let s = Way::Tron.script(TapeModel::Walk);
+        let y = render(
+            Way::Tron.base(TapeModel::Walk, StretchType::Mono),
+            &h,
+            p,
+            root_note(p),
+            &s,
+        );
+        let q = qa_takes(&y, &take_starts(&s));
+        assert!(
+            q.click_ratio <= CLICK_RATIO.max(own * 1.05),
+            "{name}: click {:.2}x at {:.3} s (straight {own:.2}x)",
+            q.click_ratio,
+            q.click_at as f32 / 48_000.0
+        );
+    }
+}
+
 #[path = "../../chimera-core/tests/common/codec_util.rs"]
 mod codec_util;
 

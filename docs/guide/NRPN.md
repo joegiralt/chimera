@@ -9,7 +9,7 @@ The **Value** column says what the value carries:
 - **MSB**: a step count from the cell's lowest value, in CC 6 alone (CC 38 is ignored); the range in brackets is the value shown on screen.
 - **MSB code**: a choice, its code in CC 6. The codes never change; they are not the choices' order on screen.
 
-An ENGINE's cells move only on a Part playing that engine. The master FX are shared by every Part: their NRPNs work on any Part's channel. ORBIT's ring cells move the playing scene. Addresses not listed here are reserved and do nothing.
+An ENGINE's cells move only on a Part playing that engine. The master FX are shared by every Part: their NRPNs work on any Part's channel. ORBIT's ring cells move the playing scene. Addresses not listed here are reserved and do nothing. How an ALGO operator's rates (AR, D1R, D2R, RR) become seconds, and what RS does, is in [ALGO operator envelopes](ALGO-ENVELOPES.md).
 
 With SETTINGS › MIDI CONFIG › ECHO › PARAM OUT at `NRPN`, Chimera sends these same NRPNs, on the Part's channel, for every cell you turn on the panel, so a sequencer can record your edits. A master FX or ORBIT ring cell goes out on the active Part's channel.
 

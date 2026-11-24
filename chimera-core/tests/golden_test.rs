@@ -511,10 +511,14 @@ const TAPE_GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
             ],
         ),
     ),
+    // Re-recorded for #1126: the block its 1.41 s tape runs out in eases
+    // into the run-out (`run_out::onset`); the engine plays every
+    // other sample as before, and the voice's filter carries the block's
+    // change under −80 dB until the note ends.
     (
         "tape_tron_held",
         (
-            0x08979866971225ef,
+            0x230167383fbdf924,
             [
                 0, 3194043769, 3167776144, 1051385461, 3188220587, 3188087319, 3197822067,
                 1032249790,
