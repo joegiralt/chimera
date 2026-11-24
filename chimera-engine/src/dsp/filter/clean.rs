@@ -103,7 +103,9 @@ struct Ends {
 #[derive(Clone, Copy, Debug)]
 pub struct OpenTop {
     lo: f32,
-    top: f32,
+    /// `1/(top − lo)`, the band's width in `g`: `u` multiplies by it
+    /// instead of dividing a sample.
+    per: f32,
     /// The lifted `g`s where the dry starts and at the top.
     dry_from: f32,
     dry_top: f32,
@@ -129,7 +131,7 @@ impl OpenTop {
         );
         let t = OpenTop {
             lo,
-            top,
+            per: 1.0 / (top - lo),
             dry_from: 0.0,
             dry_top: 0.0,
         };
@@ -155,7 +157,7 @@ impl OpenTop {
     /// Where `g` lies in the band, 0 to 1.
     #[inline(always)]
     const fn u(&self, g: f32) -> f32 {
-        crate::dsp::clampf((g - self.lo) / (self.top - self.lo), 0.0, 1.0)
+        crate::dsp::clampf((g - self.lo) * self.per, 0.0, 1.0)
     }
 
     /// `k` under `K_OPEN` damped toward it as `u` rises through the band,
@@ -274,7 +276,11 @@ impl Clean {
         mods: &FilterMods,
     ) -> Clip {
         let r = self.prelude(buf, p, fs, mods);
-        let t = TapShape::new(mods, tap_g_range(fs), clean_k);
+        // LP4 builds its taps' shape behind the door, or for the closed
+        // door's path: once a block either way.
+        let tap = || TapShape::new(mods, tap_g_range(fs), clean_k);
+        let lp4 = p.mode() == FilterMode::Lp24;
+        let t = if lp4 { None } else { tap() };
         // The mode and the loop matched once a block: each is its own loop.
         match p.mode() {
             FilterMode::Lp6 => self.run::<0>(buf, r, t, mods.glide, mods.fb, fs),
@@ -285,7 +291,7 @@ impl Clean {
             // keeps no held copy for a path only the closed door plays.
             FilterMode::Lp24 => {
                 if !self.open_top(buf, r, mods, fs) {
-                    self.closed_lp4(buf, r, t, mods.glide, mods.fb, fs)
+                    self.closed_lp4(buf, r, tap(), mods.glide, mods.fb, fs)
                 }
             }
             FilterMode::Bp12 => self.run::<3>(buf, r, t, mods.glide, mods.fb, fs),
@@ -951,7 +957,14 @@ mod open {
                 } else {
                     let (gl, ki) = (top.lifted_at(gi, u), OpenTop::damped(k[i], u));
                     let w = top.weight(gl);
-                    self.tick::<2>(x, &coef::<2>(gl, ki, trim(mode, ki))) * (1.0 - w) + x * w
+                    // The trim is the ramp's, as under the band, and moves
+                    // only by the band's damping of the ramp's `k`: 0 at the
+                    // band's edge, so a tap's RES crossing it never steps
+                    // the gain (#1135's re-review).
+                    let kr = g_at(r.k.0, k_step, i);
+                    let tri = g_at(tr.0, t_step, i)
+                        + (trim(mode, OpenTop::damped(kr, u)) - trim(mode, kr));
+                    self.tick::<2>(x, &coef::<2>(gl, ki, tri)) * (1.0 - w) + x * w
                 };
                 if on {
                     fb.feed(&mut self.fbp, *s);

@@ -225,10 +225,12 @@ fn fixed_routes_drive_the_voice_as_registry_routes_did() {
     assert!(ms.set_route_addr(ModSource::Lfo1.index(), CUTOFF, 64));
     assert_eq!(ms.num_dests(), 0, "CUTOFF is fixed FREQ");
     // Recorded from the registry route (LFO 1 → a CUTOFF column at 64)
-    // before the fixed columns existed.
+    // before the fixed columns existed. Re-recorded for LP4's open band's
+    // place by its reciprocal width (#1135's re-review): the route sweeps
+    // CUTOFF through the band, an ulp moved.
     assert_eq!(
         common::fnv1a(&common::render_sound(&p, &ms)),
-        0x75af_66cc_a54d_5a0f
+        0x11dd_3e66_014d_c64a
     );
 }
 

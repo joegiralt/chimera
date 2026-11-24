@@ -50,12 +50,14 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then STRING's out_gain 5.7 for it (ADR 0063's peak rule).
     // Then CLEAN's k law and trims (ADR 0096).
+    // Then LP4's open band's place by its reciprocal width (#1135's
+    // re-review): the LFO sweeps CUTOFF through the band, an ulp moved.
     (
         "modal_lfo_cutoff",
         (
-            0x5cf8581ab079e1f1,
+            0xb5ea89077536c3f8,
             [
-                0, 1045961661, 1053105303, 3182675859, 1048548423, 1048597142, 1040497259,
+                0, 1045961661, 1053105301, 3182675859, 1048548423, 1048597142, 1040497259,
                 996145808,
             ],
         ),
@@ -95,13 +97,15 @@ const GOLDENS: &[(&str, (u64, [u32; 8]))] = &[
     // Re-recorded: CUTOFF routes in octaves, g ramped per block (filter-routing spec § 3).
     // Then CLEAN's ACCURATE tan and exact divides (#57).
     // Then CLEAN's k law and trims (ADR 0096).
+    // Then LP4's open band's place by its reciprocal width (#1135's
+    // re-review): the LFO sweeps CUTOFF through the band, an ulp moved.
     (
         "algo_lfo_cutoff",
         (
-            0xb30988bc006b988c,
+            0x948953155782e9a5,
             [
                 986521787, 3198534240, 1049134767, 1046346072, 3197429057, 3197919334, 3169520018,
-                1023773427,
+                1023773430,
             ],
         ),
     ),

@@ -256,3 +256,50 @@ fn a_resonant_sweep_through_the_top_stays_smooth() {
         assert!(s <= 1.05, "RES {res}: a sweep {s}× the input's");
     }
 }
+
+/// 260 blocks of a 750 Hz sine (a period a block) through LP4 at RES ½, CUTOFF swept 14 to
+/// 18 kHz, through the band's lower edge (15.87 kHz), a Q tap holding
+/// RES `q` up (a row of 1s): each block's level, dB.
+fn q_tapped_sweep(q: f32) -> Vec<f32> {
+    let mut p = lp4();
+    p.resonance = 0.5;
+    let x = sine(750.0, 260 * BLOCK_SIZE);
+    let (mut f, mut lv) = (Clean::new(), Vec::new());
+    let mut rows = TapRows::new([false, true]);
+    let [_, row] = rows.rows_mut();
+    row.unwrap().fill(1.0);
+    for (b, blk) in x.as_chunks::<BLOCK_SIZE>().0.iter().enumerate() {
+        p.cutoff = 14_000.0 * (18_000.0f32 / 14_000.0).powf(b as f32 / 259.0);
+        let mods = FilterMods {
+            q: Some(TapLane {
+                rows: rows.rows().unwrap(),
+                from: [0.0, q],
+                to: [0.0, q],
+            }),
+            ..FilterMods::NONE
+        };
+        let mut buf = *blk;
+        f.process(&mut buf, &p, SR, &mods);
+        lv.push(rms_db(&buf));
+    }
+    lv
+}
+
+/// A Q tap's RES through the band's lower edge never steps the gain
+/// (#1135's re-review): the trim is the ramp's on both sides of `lo`.
+/// RES ½ tapped up 0.4 is `k` 0.1, whose trim took 3.6 dB off a block
+/// as CUTOFF crossed `lo`; now its steepest block is the untapped
+/// sweep's, 0.0003 dB.
+#[test]
+fn a_q_tap_through_the_band_edge_never_steps_the_gain() {
+    let worst = |lv: &[f32]| {
+        lv[4..]
+            .windows(2)
+            .fold(0.0f32, |m, w| m.max((w[1] - w[0]).abs()))
+    };
+    let (plain, tapped) = (worst(&q_tapped_sweep(0.0)), worst(&q_tapped_sweep(0.4)));
+    assert!(
+        tapped <= 0.01,
+        "a block's level stepped {tapped} dB (plain {plain})"
+    );
+}

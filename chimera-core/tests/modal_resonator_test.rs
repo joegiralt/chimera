@@ -631,9 +631,10 @@ fn kink(out: &[f32]) -> f32 {
 /// A square LFO swings STRUCTURE end to end on G1, the longest chain.
 /// Each step glides the chain's delay 2 samples a block (`DISP_SLEW`), so
 /// at BRIGHT 1 nothing clicks past the strike; at BRIGHT 0, where a step
-/// would show, the kinks stay within 3× a held STRUCTURE's (unglided,
-/// 4.2×). LP4 at 15 kHz, under its open top: fully open it passes the
-/// string's top octave (#695, ADR 0327), whose kinks are not the chain's.
+/// would show, the glided kinks stay within 3× a held STRUCTURE's (1.81×;
+/// a step left unglided read 4.2×). LP4 at 15 kHz, under its open top:
+/// fully open it passes the string's top octave (#695, ADR 0327), whose
+/// kinks are not the chain's.
 #[test]
 fn a_structure_step_at_g1_does_not_click() {
     let second = SR as usize / BLOCK_SIZE;
